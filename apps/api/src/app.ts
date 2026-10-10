@@ -9,6 +9,8 @@ import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { z, ZodError } from "zod";
 import {
   DomainError,
+  noteDateInput,
+  noteDateCandidates,
   projectInput,
   taskInput,
   snapshotImport,
@@ -263,6 +265,8 @@ export async function buildApp(options: {
       const data = projectInput.parse(req.body);
       const p: Project = {
         ...data,
+        reportedAt: data.latestUpdate.trim() ? new Date().toISOString() : null,
+        reportedBy: data.latestUpdate.trim() ? a.name : null,
         id: randomUUID(),
         version: 1,
         updatedAt: new Date().toISOString(),
@@ -285,6 +289,18 @@ export async function buildApp(options: {
       repo.checkVersion(old, input.version);
       const p = {
         ...input,
+        reportedAt:
+          input.latestUpdate === old.latestUpdate
+            ? (old.reportedAt ?? null)
+            : input.latestUpdate.trim()
+              ? new Date().toISOString()
+              : null,
+        reportedBy:
+          input.latestUpdate === old.latestUpdate
+            ? (old.reportedBy ?? null)
+            : input.latestUpdate.trim()
+              ? a.name
+              : null,
         id: old.id,
         version: old.version + 1,
         updatedAt: new Date().toISOString(),
@@ -292,6 +308,48 @@ export async function buildApp(options: {
       repo.putProject(a.workspaceId, p);
       repo.record(a, "project", "Updated project", old, p);
       return p;
+    }),
+  );
+  app.post("/api/projects/:id/note-dates", (req) =>
+    mutate(req, (a) => {
+      const input = noteDateInput.parse(req.body);
+      const p = repo.get<Project>(
+        "projects",
+        a.workspaceId,
+        (req.params as { id: string }).id,
+      );
+      repo.checkVersion(p, input.projectVersion);
+      const candidate = noteDateCandidates(p.notes).find(
+        (n) => n.sourceLine === input.sourceLine,
+      );
+      if (!candidate)
+        throw new HttpError(400, "Date source no longer matches saved notes");
+      const old = repo.get<Task>("tasks", a.workspaceId, input.taskId);
+      repo.checkVersion(old, input.taskVersion);
+      if (old.projectId !== p.id)
+        throw new HttpError(400, "Choose a task in this project");
+      if (
+        old.dueDate &&
+        old.dueDate !== input.dueDate &&
+        !input.overwriteConfirmed
+      )
+        throw new HttpError(400, "Confirm replacing the existing due date");
+      const next = {
+        ...old,
+        dueDate: input.dueDate,
+        version: old.version + 1,
+        updatedAt: new Date().toISOString(),
+      };
+      repo.putTask(a.workspaceId, next);
+      repo.record(
+        a,
+        "task",
+        "Confirmed date from notes",
+        old,
+        next,
+        `Project notes ${p.id} v${p.version}, line ${candidate.sourceLine}: ${candidate.context}`,
+      );
+      return next;
     }),
   );
   app.post("/api/tasks", (req) =>
@@ -480,7 +538,13 @@ export async function buildApp(options: {
   app.post("/api/proposals", (req) =>
     mutate(req, (a) => {
       const { source } = z
-        .object({ source: z.string().trim().min(1).max(20000) })
+        .object({
+          source: z
+            .string()
+            .min(1)
+            .max(20000)
+            .refine((s) => !!s.trim(), "Enter source text"),
+        })
         .strict()
         .parse(req.body);
       const proposal: Proposal = {
@@ -515,6 +579,10 @@ export async function buildApp(options: {
       if (new Set(suggestions.map((s) => s.id)).size !== suggestions.length)
         throw new HttpError(400, "Duplicate suggestion");
       const saved: Suggestion[] = [];
+      const updates = new Map<
+        string,
+        { before: Project; titles: string[]; sources: string[] }
+      >();
       for (const s of suggestions) {
         const original = proposal.suggestions.find((x) => x.id === s.id);
         if (!original)
@@ -532,14 +600,14 @@ export async function buildApp(options: {
               "Confirm replacement of the latest project update",
             );
           repo.checkVersion(p, s.projectVersion ?? 0);
-          const next = {
-            ...p,
-            latestUpdate: s.title,
-            version: p.version + 1,
-            updatedAt: new Date().toISOString(),
+          const group = updates.get(p.id) ?? {
+            before: p,
+            titles: [],
+            sources: [],
           };
-          repo.putProject(a.workspaceId, next);
-          repo.record(a, "project", "Applied reviewed update", p, next, source);
+          group.titles.push(s.title);
+          group.sources.push(source);
+          updates.set(p.id, group);
         } else {
           const t: Task = {
             id: randomUUID(),
@@ -559,6 +627,27 @@ export async function buildApp(options: {
           repo.record(a, "task", "Applied reviewed task", null, t, source);
         }
         saved.push({ ...original, ...s });
+      }
+      for (const group of updates.values()) {
+        const next = {
+          ...group.before,
+          latestUpdate: group.titles.join("\n"),
+          version: group.before.version + 1,
+          updatedAt: new Date().toISOString(),
+          reportedAt: new Date().toISOString(),
+          reportedBy: a.name,
+        };
+        if (next.latestUpdate.length > 4000)
+          throw new HttpError(400, "Combined update exceeds 4000 characters");
+        repo.putProject(a.workspaceId, next);
+        repo.record(
+          a,
+          "project",
+          "Applied reviewed update",
+          group.before,
+          next,
+          group.sources.join("\n"),
+        );
       }
       const result = {
         ...proposal,

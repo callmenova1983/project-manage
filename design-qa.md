@@ -1,6 +1,6 @@
 # Design QA
 
-final result: blocked
+final result: blocked — final reference re-review pending
 
 ## Reference acquisition blocker
 
@@ -23,8 +23,8 @@ final result: blocked
 | Surface | Current implementation check | Reference comparison |
 |---|---|---|
 | Typography | Locally bundled Inter, hierarchy and truncation inspected | Blocked: source unavailable |
-| Spacing/layout | Desktop list, default collapsed rail; narrow cards with no document overflow | Blocked |
-| Colors/tokens | Dark neutral surfaces; accessible controls; corrected small metadata contrast | Blocked |
+| Spacing/layout | Desktop list, default closed overlay menu and horizontal navigation; narrow cards with no document overflow | Blocked |
+| Colors/tokens | Blue-black surfaces; accessible controls; corrected small metadata contrast | Blocked |
 | Assets | Phosphor icon library and text initials; no reference raster used as the UI | Cannot catalog source imagery without source pixels |
 | Copy/content | Latest reported update / This week's work / This week summary; rule-assisted disclosure; real computed counts | Structural brief checked, source copy fidelity blocked |
 
@@ -35,12 +35,26 @@ These are product/browser corrections, **not** visual-match iterations:
 1. Initial Chromium/axe pass found metadata/footer contrast below 4.5:1. Raised text colors (`#8b93a5`, `#8791a4`); subsequent desktop WCAG 2 A/AA and 2.1 AA automated scan reported zero violations.
 2. Initial browser console captured favicon 404. Added an explicit empty favicon to avoid missing resource requests. Subsequent E2E reports no unexpected console/page errors.
 3. Inline closure review found unsaved state could be lost by row collapse. Added shared unsaved checks and explicit editor cancellation; route-return/cancel E2E passed.
-4. Narrow view condensed the metrics into four small counts and a work-scope row. Both collapsed and expanded states tested at 390px without horizontal page overflow.
+4. Narrow view condensed the metrics into four small counts and a work-scope row. Both collapsed and expanded states tested at 390px without horizontal page overflow. This initial KPI layout was superseded by the compact list below.
 
 ## Interactions actually tested
 
-Authenticated Web → real Fastify API → SQLite: search and combined filters; empty state; route to project and back; inline edit/save/reload; cancellation; unsaved navigation; create project/task/subtask; parent-derived completion; status update; TSV preview and save; repeated save; today/week views; source review, ambiguity and replacement confirmation; stale edit and current version display; export; invalid/cancelled/confirmed imports; network failure with draft preservation and stable retry identity; login/invalid credentials/logout; keyboard expansion; narrow screens. Exact pass counts are in `docs/verification.md`.
+Authenticated Web → real Fastify API → SQLite: search and combined filters; empty state; route to project and back; inline edit/save/reload; cancellation; unsaved navigation; create project/task/subtask; parent completion counts derived from leaves; status update; TSV preview and save; repeated save; today/week views; source review, ambiguity and replacement confirmation; stale edit and current version display; export; invalid/cancelled/confirmed imports; network failure with draft preservation and stable retry identity; login/invalid credentials/logout; keyboard expansion; narrow screens. Exact pass counts are in `docs/verification.md`.
 
 ## Required next step
 
 Deliver the readable exact version-2 reference into this consumer environment. Open its pixels; create a same-viewport combined source/implementation comparison; inspect focused typography and table regions; fix all P0/P1/P2 differences and capture again. Only then may `final result` become `passed`. No approval is required for this already-authorized work, but the source bytes are currently missing.
+
+## Follow-up reference feedback and implemented corrections
+
+The parent independently opened the actual version-2 reference and supplied concrete findings: reference header y≈161, first project y≈190, 40–48px collapsed rows and approximately 14 projects with an expanded row. This consumer has not claimed to see unavailable source pixels.
+
+- Replaced tall KPI cards and persistent icon rail with horizontal brand/navigation, one-line totals, work-scope controls and dense rows. Actual first row **y=195.25**, **45px** height at **1536×1024**, approximately 14 projects visible with the first row expanded.
+- Today / This week now changes named tasks with status shapes and each project's four-state summary in place. Owner is not a substitute for work content.
+- Independent `reportedAt` and `reportedBy`; ordinary property/notes edits do not become reports. Legacy unknown time remains unknown.
+- Editable original notes and subtasks appear in two columns on desktop and stack on narrow screens. Final same-state screenshot includes nonempty TSV notes, a pending date candidate and **2/3** completed subtasks.
+- Date review shows neighboring source lines and requires task/date confirmation and an additional overwrite confirmation.
+- Project names 16px, factual text 14px, report metadata 12px; mobile names remain readable. Rocket brand, blue-black surfaces, purple actions and distinct lifecycle/status icons.
+- 390px first screen now contains the first project's factual report, report time/person and complete named tasks. 768/1024px table is contained in a keyboard-scrollable region.
+
+Final implementation screenshots have been opened and visually inspected. The remaining gate is the parent's same-state source/implementation comparison; no visual pass is claimed without it. All routine verification and the limitations are separately recorded in `docs/verification.md`.

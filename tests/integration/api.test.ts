@@ -418,13 +418,136 @@ describe("additional boundary checks", () => {
   it("migrates only once and leaves data intact", async () => {
     expect(
       context.repo.db.prepare("SELECT count(*) AS n FROM migrations").get()!.n,
-    ).toBe(1);
+    ).toBe(2);
     const s = await snapshot();
     await context.app.close();
     context = await buildApp({ databasePath: db, origin });
     expect(
       context.repo.db.prepare("SELECT count(*) AS n FROM migrations").get()!.n,
-    ).toBe(1);
+    ).toBe(2);
     expect((await snapshot()).tasks).toHaveLength(s.tasks.length);
+  });
+});
+
+describe("review batch regression", () => {
+  it("applies two reviewed updates to one project without a self-conflict or lost text", async () => {
+    const p = (await snapshot()).projects[0]!;
+    const proposal = (
+      await request("POST", "/api/proposals", {
+        source:
+          "Atlas: design review completed\nAtlas: acceptance meeting booked",
+      })
+    ).json();
+    const result = await request(
+      "POST",
+      `/api/proposals/${proposal.id}/apply`,
+      {
+        suggestions: proposal.suggestions.map(
+          (s: { id: string; title: string }) => ({
+            id: s.id,
+            selectedProjectId: p.id,
+            title: s.title,
+            action: "update",
+            status: "todo",
+            confirmed: true,
+            overwriteConfirmed: true,
+            projectVersion: p.version,
+          }),
+        ),
+      },
+    );
+    expect(result.statusCode).toBe(200);
+    const saved = (await snapshot()).projects.find((x) => x.id === p.id)!;
+    expect(saved.latestUpdate).toContain("design review completed");
+    expect(saved.latestUpdate).toContain("acceptance meeting booked");
+    expect(saved.version).toBe(p.version + 1);
+  });
+});
+
+describe("reported facts and exact provenance", () => {
+  it("keeps report metadata on ordinary edits and stamps actual reports", async () => {
+    const p = (await snapshot()).projects[0]!;
+    const edited = await request("PUT", "/api/projects/" + p.id, {
+      ...projectInput.strip().parse(p),
+      owner: "New owner",
+      notes: "Working notes changed",
+      version: p.version,
+    });
+    expect(edited.statusCode).toBe(200);
+    expect(edited.json()).toMatchObject({
+      reportedAt: p.reportedAt,
+      reportedBy: p.reportedBy,
+    });
+    const next = edited.json<Project>();
+    const reported = await request("PUT", "/api/projects/" + p.id, {
+      ...projectInput.strip().parse(next),
+      latestUpdate: "Acceptance completed",
+      version: next.version,
+    });
+    expect(reported.statusCode).toBe(200);
+    expect(reported.json()).toMatchObject({
+      reportedBy: "First Member",
+      latestUpdate: "Acceptance completed",
+    });
+    expect(Date.parse(reported.json().reportedAt)).toBeGreaterThanOrEqual(
+      Date.parse(p.reportedAt!),
+    );
+  });
+  it("retains leading blank lines, indentation, TSV, Unicode and trailing spaces", async () => {
+    const source = "\n\n  Atlas:\t完成验收 ✓  \r\n\tMeridian: review\n  ";
+    const response = await request("POST", "/api/proposals", { source });
+    expect(response.statusCode).toBe(200);
+    const proposal = response.json();
+    expect(proposal.source).toBe(source);
+    expect(proposal.suggestions[0]).toMatchObject({
+      sourceLine: 3,
+      sourceText: "  Atlas:\t完成验收 ✓  ",
+    });
+    expect(proposal.suggestions[1]).toMatchObject({
+      sourceLine: 4,
+      sourceText: "\tMeridian: review",
+    });
+    const stored = JSON.parse(
+      String(
+        context.repo.db
+          .prepare("SELECT data FROM proposals WHERE id=?")
+          .get(proposal.id)!.data,
+      ),
+    );
+    expect(stored.source).toBe(source);
+  });
+  it("requires date source, version and overwrite confirmation and audits neighboring lines", async () => {
+    const s = await snapshot(),
+      p = s.projects[0]!,
+      t = s.tasks.find((t) => t.id === "task-1")!;
+    const body = {
+      projectVersion: p.version,
+      sourceLine: 4,
+      taskId: t.id,
+      taskVersion: t.version,
+      dueDate: "2027-02-01",
+      confirmed: true,
+      overwriteConfirmed: false,
+    };
+    const url = "/api/projects/" + p.id + "/note-dates";
+    expect(
+      (await request("POST", url, { ...body, sourceLine: 99 })).statusCode,
+    ).toBe(400);
+    expect((await request("POST", url, body)).statusCode).toBe(400);
+    const applied = await request("POST", url, {
+      ...body,
+      overwriteConfirmed: true,
+    });
+    expect(applied.statusCode).toBe(200);
+    expect(applied.json().dueDate).toBe("2027-02-01");
+    const after = await snapshot();
+    expect(after.projects.find((x) => x.id === p.id)).toEqual(p);
+    expect(after.activities[0]!.source).toContain(
+      "Acceptance checklist follows",
+    );
+    expect(
+      (await request("POST", url, { ...body, overwriteConfirmed: true }))
+        .statusCode,
+    ).toBe(409);
   });
 });

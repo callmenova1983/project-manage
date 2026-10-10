@@ -50,6 +50,8 @@ export const taskInput = z
   })
   .strict();
 export const projectSchema = projectInput.extend({
+  reportedAt: z.string().datetime().nullable().default(null),
+  reportedBy: z.string().max(80).nullable().default(null),
   id: text(100),
   version: z.number().int().positive(),
   updatedAt: z.string().datetime(),
@@ -223,4 +225,38 @@ export function parsePaste(
         dueDate: due?.trim() || null,
       };
     });
+}
+
+export const noteDateInput = z
+  .object({
+    projectVersion: z.number().int().positive(),
+    sourceLine: z.number().int().positive(),
+    taskId: text(100),
+    taskVersion: z.number().int().positive(),
+    dueDate: dateSchema,
+    confirmed: z.literal(true),
+    overwriteConfirmed: z.boolean(),
+  })
+  .strict();
+export type NoteDateInput = z.infer<typeof noteDateInput>;
+export function noteDateCandidates(notes: string) {
+  const lines = notes.split(/\r?\n/);
+  return lines.flatMap((line, index) => {
+    const match = line.match(
+      /\b(?:\d{4}-\d{2}-\d{2}|tomorrow|next\s+(?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i,
+    );
+    return match
+      ? [
+          {
+            sourceLine: index + 1,
+            sourceText: line,
+            context: lines.slice(Math.max(0, index - 1), index + 2).join("\n"),
+            proposedDate: dateSchema.safeParse(match[0]).success
+              ? match[0]
+              : "",
+            phrase: match[0],
+          },
+        ]
+      : [];
+  });
 }

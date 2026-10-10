@@ -1,5 +1,7 @@
 import { createSeed } from "../../../../packages/domain/seed";
 import {
+  noteDateInput,
+  noteDateCandidates,
   projectInput,
   taskInput,
   snapshotImport,
@@ -37,9 +39,9 @@ export function createLocalApi(): WorkspaceApi {
     } else {
       try {
         const data = JSON.parse(raw);
-        snapshotImport.parse(data);
-        validateGraph(data.projects, data.tasks);
-        state = data;
+        const parsed = snapshotImport.parse(data);
+        validateGraph(parsed.projects, parsed.tasks);
+        state = { ...data, ...parsed };
       } catch {
         throw new ApiError(
           "Local demo data is invalid. Export your browser storage before resetting this demo.",
@@ -94,6 +96,18 @@ export function createLocalApi(): WorkspaceApi {
       );
     const p: Project = {
       ...data,
+      reportedAt:
+        data.latestUpdate === old?.latestUpdate
+          ? old.reportedAt
+          : data.latestUpdate.trim()
+            ? new Date().toISOString()
+            : null,
+      reportedBy:
+        data.latestUpdate === old?.latestUpdate
+          ? old.reportedBy
+          : data.latestUpdate.trim()
+            ? actor.name
+            : null,
       id: id ?? crypto.randomUUID(),
       version: (old?.version ?? 0) + 1,
       updatedAt: new Date().toISOString(),
@@ -146,6 +160,45 @@ export function createLocalApi(): WorkspaceApi {
     },
     saveProject,
     saveTask,
+    async confirmNoteDate(projectId, data) {
+      read();
+      const input = noteDateInput.parse(data);
+      const p = state.projects.find((p) => p.id === projectId);
+      const old = state.tasks.find((t) => t.id === input.taskId);
+      if (!p || !old || old.projectId !== p.id)
+        throw new ApiError("Choose a task in this project");
+      if (
+        p.version !== input.projectVersion ||
+        old.version !== input.taskVersion
+      )
+        throw new ApiError("Notes or task changed. Review again.", 409);
+      const candidate = noteDateCandidates(p.notes).find(
+        (n) => n.sourceLine === input.sourceLine,
+      );
+      if (!candidate)
+        throw new ApiError("Date source no longer matches saved notes");
+      if (
+        old.dueDate &&
+        old.dueDate !== input.dueDate &&
+        !input.overwriteConfirmed
+      )
+        throw new ApiError("Confirm replacing the existing due date");
+      const next = {
+        ...old,
+        dueDate: input.dueDate,
+        version: old.version + 1,
+        updatedAt: new Date().toISOString(),
+      };
+      state.tasks = state.tasks.map((t) => (t.id === old.id ? next : t));
+      record(
+        "task",
+        old,
+        next,
+        `Project notes ${p.id} v${p.version}, line ${candidate.sourceLine}: ${candidate.context}`,
+      );
+      persist();
+      return next;
+    },
     async addTasks(tasks) {
       read();
       const result = tasks.map((data) => ({
@@ -196,6 +249,10 @@ export function createLocalApi(): WorkspaceApi {
       if (!original || original.status === "applied")
         throw new ApiError("Proposal is missing or already applied", 409);
       const copy = structuredClone(state);
+      const updates = new Map<
+        string,
+        { before: Project; titles: string[]; sources: string[] }
+      >();
       try {
         for (const s of suggestions) {
           const source = original.suggestions.find((x) => x.id === s.id);
@@ -210,15 +267,16 @@ export function createLocalApi(): WorkspaceApi {
                 409,
                 p,
               );
-            const next = {
-              ...p,
-              latestUpdate: s.title,
-              version: p.version + 1,
+            const group = updates.get(p.id) ?? {
+              before: p,
+              titles: [],
+              sources: [],
             };
-            state.projects = state.projects.map((x) =>
-              x.id === p.id ? next : x,
+            group.titles.push(s.title);
+            group.sources.push(
+              `Meeting source ${original.id} v1, line ${source.sourceLine}: ${source.sourceText}`,
             );
-            record("project", p, next, source.sourceText);
+            updates.set(p.id, group);
           } else {
             const t: Task = {
               ...taskInput.parse({
@@ -239,6 +297,21 @@ export function createLocalApi(): WorkspaceApi {
             state.tasks.push(t);
             record("task", null, t, source.sourceText);
           }
+        }
+        for (const group of updates.values()) {
+          const next = {
+            ...group.before,
+            latestUpdate: group.titles.join("\n"),
+            version: group.before.version + 1,
+            updatedAt: new Date().toISOString(),
+            reportedAt: new Date().toISOString(),
+            reportedBy: actor.name,
+          };
+          projectInput.strip().parse(next);
+          state.projects = state.projects.map((p) =>
+            p.id === next.id ? next : p,
+          );
+          record("project", group.before, next, group.sources.join("\n"));
         }
         persist();
         original.status = "applied";

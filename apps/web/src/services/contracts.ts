@@ -1,4 +1,5 @@
 import type {
+  NoteDateInput,
   Actor,
   Project,
   ProjectInput,
@@ -40,6 +41,7 @@ export interface WorkspaceApi {
     version?: number,
   ): Promise<Project>;
   saveTask(data: TaskInput, id?: string, version?: number): Promise<Task>;
+  confirmNoteDate(projectId: string, data: NoteDateInput): Promise<Task>;
   addTasks(tasks: TaskInput[]): Promise<Task[]>;
   exportData(): Promise<Snapshot>;
   importData(data: unknown, revision: number): Promise<Snapshot>;

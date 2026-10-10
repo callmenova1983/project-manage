@@ -47,7 +47,11 @@ const week = computed({
   get: () => draft.value.workWeek === weekKey(),
   set: (v: boolean) => {
     draft.value.workWeek = v ? weekKey() : null;
-    if (!v) draft.value.workDates = [];
+    draft.value.workDates = v
+      ? draft.value.workDates.filter(
+          (date) => weekKey(new Date(date)) === weekKey(),
+        )
+      : [];
   },
 });
 const today = computed({

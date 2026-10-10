@@ -31,3 +31,9 @@ Meeting apply sends `id`, `selectedProjectId`, `title`, `action` (`task`/`update
 Errors: 400 invalid input; 401 unauthenticated; 403 origin/CSRF mismatch; 404 inaccessible or missing record; 409 stale version, idempotency mismatch or applied proposal; 429 rate limit; 500 generic internal error. Version conflicts return the latest same-workspace record in `current`. Zod errors provide `issues` with paths. SQL is parameterized; audit and mutation share one transaction.
 
 The web adapter retains an idempotency key across ambiguous network failures until a definite response arrives. Cancel performs no mutation. Authentication rate limit: 10 attempts/min/IP; general API limit: 300/min/IP. Reverse proxy trust is disabled; production proxy/rate-limit design requires explicit deployment review.
+
+## Report metadata and reviewed dates
+
+`reportedAt` / `reportedBy` belong to the latest factual report; ordinary notes/owner/stage edits leave them unchanged. Legacy records without an attributable report retain null metadata. Confirmed meeting updates for one project are combined into one version with all source lines recorded. Proposal source text is stored verbatim; parsing retains original line offsets.
+
+`POST /api/projects/:id/note-dates` accepts `projectVersion`, `sourceLine`, `taskId`, `taskVersion`, `dueDate`, `confirmed: true`, `overwriteConfirmed`. The server verifies the saved source candidate, same-project task, both versions and overwrite confirmation; it changes only the task due date and records neighboring source lines in the audit. It does not infer relative dates or change work scope.

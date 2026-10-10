@@ -45,20 +45,25 @@ async function openFirst(page: Page) {
 test("desktop composition, derived statistics, navigation and accessibility", async ({
   page,
 }) => {
-  await expect(page.locator(".metric").nth(1)).toContainText("150");
-  await expect(page.locator(".metric").nth(2)).toContainText("90");
-  await expect(page.locator(".metric").nth(3)).toContainText("60");
-  await expect(page.locator(".scope-metric")).toContainText("24");
-  await expect(page.locator(".scope-metric")).toContainText(
-    "8 planned for today",
-  );
+  await expect(page.locator(".workspace-totals")).toContainText("150 tasks");
+  await expect(page.locator(".workspace-totals")).toContainText("90 completed");
+  await expect(page.locator(".workspace-totals")).toContainText("60 open");
+  await expect(
+    page.getByRole("button", { name: "This week 24", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("button", { name: "Today 8", exact: true }),
+  ).toBeVisible();
+  expect(
+    (await page.locator(".project-row").first().boundingBox())!.y,
+  ).toBeLessThan(230);
   expect(
     await page
       .getByRole("button", { name: "Toggle sidebar" })
       .getAttribute("aria-expanded"),
   ).toBe("false");
   mkdirSync("artifacts", { recursive: true });
-  await page.screenshot({ path: "artifacts/desktop-projects.png" });
+  await page.screenshot({ path: "artifacts/desktop-collapsed.png" });
   const a11y = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
     .analyze();
@@ -93,7 +98,7 @@ test("project edits, cancellation, unsaved navigation and reload persistence", a
   page,
 }) => {
   await openFirst(page);
-  await page.getByRole("button", { name: "Edit project & notes" }).click();
+  await page.getByRole("button", { name: "Edit project" }).click();
   await page
     .getByLabel("Latest reported update", { exact: true })
     .fill("A reviewed and saved delivery update.");
@@ -101,7 +106,7 @@ test("project edits, cancellation, unsaved navigation and reload persistence", a
   await expect(page.getByRole("status")).toContainText("Project updated");
   await page.reload();
   await openFirst(page);
-  await page.getByRole("button", { name: "Edit project & notes" }).click();
+  await page.getByRole("button", { name: "Edit project" }).click();
   await expect(
     page.getByLabel("Latest reported update", { exact: true }),
   ).toHaveValue("A reviewed and saved delivery update.");
@@ -180,7 +185,7 @@ test("new project, task, subtask, status, paste review and repeated save", async
   ).toBeVisible();
 });
 test("today/week scopes and task editing cancellation", async ({ page }) => {
-  await page.getByRole("link", { name: "Tasks", exact: true }).click();
+  await page.getByRole("link", { name: "All tasks", exact: true }).click();
   await expect(page.locator(".task-row")).toHaveCount(24);
   await page.getByRole("button", { name: "Today 8", exact: true }).click();
   await expect(page.locator(".task-row")).toHaveCount(8);
@@ -199,7 +204,9 @@ test("today/week scopes and task editing cancellation", async ({ page }) => {
 test("meeting source, ambiguous match, overwrite confirmation and single apply", async ({
   page,
 }) => {
-  await page.getByRole("link", { name: "Meeting notes", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Review meeting notes", exact: true })
+    .click();
   await expect(
     page.getByText("Rule-assisted review · AI is not connected"),
   ).toBeVisible();
@@ -234,7 +241,7 @@ test("stale editor exposes current version without overwriting it", async ({
   page,
 }) => {
   await openFirst(page);
-  await page.getByRole("button", { name: "Edit project & notes" }).click();
+  await page.getByRole("button", { name: "Edit project" }).click();
   await page.getByLabel("Project name", { exact: true }).fill("My stale edit");
   const p = await (await page.request.get("/api/projects/project-1")).json();
   const updated = await page.request.put("/api/projects/project-1", {
@@ -320,7 +327,7 @@ test("narrow screen keyboard navigation and accessible controls", async ({
     .focus();
   await page.keyboard.press("Enter");
   await expect(
-    page.getByRole("button", { name: "Edit project & notes" }),
+    page.getByRole("button", { name: "Edit project" }),
   ).toBeVisible();
   expect(
     await page.evaluate(
@@ -337,7 +344,7 @@ test("network failure preserves drafts and retry reuses its request identifier",
   page,
 }) => {
   await openFirst(page);
-  await page.getByRole("button", { name: "Edit project & notes" }).click();
+  await page.getByRole("button", { name: "Edit project" }).click();
   await page
     .getByLabel("Project name", { exact: true })
     .fill("Saved after connection returns");
@@ -399,8 +406,190 @@ test("confirmed import updates real data and empty state supports recovery", asy
     page.getByRole("heading", { name: "Projects 0", exact: true }),
   ).toBeVisible();
 });
+test("switching the subtask parent resets the editor draft", async ({
+  page,
+}) => {
+  await page
+    .getByRole("link", { name: "Atlas Customer Portal", exact: true })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Add subtask to Confirm project scope",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Add subtask to Share discovery notes",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Task title", exact: true })
+    .fill("Child of the selected parent");
+  await page.getByRole("button", { name: "Save task", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Task created");
+  const tasks = await (
+    await page.request.get("/api/tasks?projectId=project-1")
+  ).json();
+  expect(
+    tasks.find(
+      (t: { title: string }) => t.title === "Child of the selected parent",
+    ).parentId,
+  ).toBe("task-2");
+});
+test("moving an old task into this week clears old planned days", async ({
+  page,
+}) => {
+  const task = await (
+    await page.request.get("/api/tasks?projectId=project-1")
+  ).json();
+  const t = task.find((x: { id: string }) => x.id === "task-1");
+  const { id, version, updatedAt, ...input } = t;
+  void updatedAt;
+  const result = await page.request.put("/api/tasks/" + id, {
+    headers: { "x-csrf-token": csrf, "idempotency-key": randomUUID() },
+    data: {
+      ...input,
+      version,
+      workWeek: "2020-01-06",
+      workDates: ["2020-01-07"],
+    },
+  });
+  expect(result.ok()).toBe(true);
+  await page.goto("/projects/project-1");
+  await page
+    .getByRole("button", { name: "Edit Confirm project scope", exact: true })
+    .click();
+  await page.getByRole("checkbox", { name: "This week", exact: true }).check();
+  await page.getByRole("button", { name: "Save task", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Task updated");
+  const after = await (
+    await page.request.get("/api/tasks?projectId=project-1")
+  ).json();
+  expect(
+    after.find((x: { id: string }) => x.id === "task-1").workDates,
+  ).toEqual([]);
+});
+test("inline notes preserve text, cancellation and reviewed dates", async ({
+  page,
+}) => {
+  await openFirst(page);
+  const notes = page.getByRole("textbox", {
+    name: "Original notes for Atlas Customer Portal",
+  });
+  const original = await notes.inputValue();
+  await notes.fill("Unsaved notes");
+  page.once("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "Cancel notes", exact: true }).click();
+  await expect(notes).toHaveValue(original);
+  const exact =
+    "\n  Decision\tOwner\nAtlas access ready\tAlex\nReview next Friday\n  Acceptance follows ✓  ";
+  await notes.fill(exact);
+  await page.getByRole("button", { name: "Save notes", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Project updated");
+  await page.reload();
+  await openFirst(page);
+  await expect(notes).toHaveValue(exact);
+  await page.getByRole("button", { name: /Review date/ }).click();
+  await expect(page.locator(".date-review pre")).toContainText(
+    "Acceptance follows ✓",
+  );
+  await page.getByLabel("Apply to task").selectOption("task-1");
+  await page.getByLabel("Confirmed due date").fill("2027-01-18");
+  await page.getByLabel("I checked the source, task and date").check();
+  await expect(
+    page.getByRole("button", { name: "Apply reviewed date" }),
+  ).toBeDisabled();
+  await page.getByLabel("Replace the existing due date").check();
+  await page.getByRole("button", { name: "Apply reviewed date" }).click();
+  await expect(page.getByRole("status")).toContainText("Reviewed date saved");
+  const tasks = await (
+    await page.request.get("/api/tasks?projectId=project-1")
+  ).json();
+  expect(tasks.find((t: { id: string }) => t.id === "task-1").dueDate).toBe(
+    "2027-01-18",
+  );
+});
+test("project work scope switches named work and all four counts", async ({
+  page,
+}) => {
+  const meridian = page.locator(".project-record").filter({
+    has: page.getByRole("link", { name: "Meridian Workspace", exact: true }),
+  });
+  await expect(meridian.locator(".project-week")).toContainText(
+    "Confirm project scope",
+  );
+  await expect(meridian.locator(".scope-counts")).toHaveText(
+    /○ 0.*◐ 6.*✓ 2.*△ 0/,
+  );
+  await page.getByRole("button", { name: "Today 8", exact: true }).click();
+  await expect(meridian.locator(".project-week")).toContainText(
+    "No work planned",
+  );
+  await expect(
+    page.locator(".project-record").first().locator(".project-week"),
+  ).toContainText("Confirm project scope");
+  await page.getByRole("button", { name: "This week 24", exact: true }).click();
+  await expect(meridian.locator(".project-week")).toContainText(
+    "Confirm project scope",
+  );
+});
+test("multiple reviewed updates retain exact source and combine once", async ({
+  page,
+}) => {
+  await page.getByRole("link", { name: "Review meeting notes" }).click();
+  const source =
+    "\n  Atlas: completed scope ✓\tAlex  \n\nAtlas: agreed acceptance checks";
+  await page
+    .getByRole("textbox", { name: "Meeting notes", exact: true })
+    .fill(source);
+  await page.getByRole("button", { name: "Review suggestions" }).click();
+  await page.getByText("Original source · version 1", { exact: true }).click();
+  expect(await page.locator(".original-source pre").textContent()).toBe(source);
+  for (let i = 1; i <= 2; i++) {
+    await page.getByLabel("Action for suggestion " + i).selectOption("update");
+    const card = page.locator(".suggestion-card").nth(i - 1);
+    await card
+      .getByLabel("I reviewed and confirm replacing this update")
+      .check();
+    await page.getByLabel("Confirm suggestion " + i).check();
+  }
+  await expect(
+    page.getByRole("heading", {
+      name: "Combined update · Atlas Customer Portal",
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Apply 2 confirmed changes" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Reviewed and recorded" }),
+  ).toBeVisible();
+  const p = await (await page.request.get("/api/projects/project-1")).json();
+  expect(p.latestUpdate).toContain("completed scope ✓");
+  expect(p.latestUpdate).toContain("agreed acceptance checks");
+});
+test("tablet widths contain the table and keep keyboard scrolling available", async ({
+  page,
+}) => {
+  for (const width of [768, 1024]) {
+    await page.setViewportSize({ width, height: 1024 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    const table = page.getByRole("region", { name: "Projects list" });
+    await table.focus();
+    await expect(table).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(
+      page.getByRole("link", { name: "Atlas Customer Portal", exact: true }),
+    ).toBeVisible();
+  }
+});
 test("login, invalid credentials and sign out", async ({ page }) => {
   page.once("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "Toggle sidebar" }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Welcome back" }),

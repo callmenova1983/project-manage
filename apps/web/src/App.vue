@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from "vue";
-import { useRoute } from "vue-router";
+import { ref, onMounted, onBeforeUnmount, watch } from "vue";
+import { useRouter } from "vue-router";
 import {
-  PhStack,
+  PhRocketLaunch,
   PhSidebarSimple,
-  PhMagnifyingGlass,
   PhSquaresFour,
   PhCheckSquare,
   PhClockCounterClockwise,
@@ -14,10 +13,11 @@ import {
   PhArrowClockwise,
   PhArrowRight,
   PhSpinnerGap,
+  PhX,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "./stores/workspace";
 const store = useWorkspace(),
-  route = useRoute();
+  router = useRouter();
 const expanded = ref(false),
   email = ref(""),
   password = ref(""),
@@ -25,15 +25,24 @@ const expanded = ref(false),
   signingIn = ref(false);
 const nav = [
   { path: "/projects", label: "Projects", icon: PhSquaresFour },
-  { path: "/tasks", label: "Tasks", icon: PhCheckSquare },
+  { path: "/tasks", label: "All tasks", icon: PhCheckSquare },
   { path: "/activity", label: "Activity", icon: PhClockCounterClockwise },
   { path: "/meetings", label: "Meeting notes", icon: PhNotePencil },
 ];
-const pageLabel = computed(
-  () => nav.find((n) => route.path.startsWith(n.path))?.label ?? "Workspace",
+watch(
+  () => router.currentRoute.value.path,
+  () => {
+    expanded.value = false;
+  },
 );
 let interval: ReturnType<typeof setInterval>;
 function shortcut(event: KeyboardEvent) {
+  if (event.key === "Escape" && expanded.value) {
+    expanded.value = false;
+    document
+      .querySelector<HTMLButtonElement>('[aria-label="Toggle sidebar"]')
+      ?.focus();
+  }
   if (
     event.key === "/" &&
     !(event.target instanceof HTMLInputElement) &&
@@ -83,7 +92,9 @@ function search() {
   </div>
   <main v-else-if="!store.user" class="login-shell">
     <form class="login-card" @submit.prevent="signIn">
-      <div class="brand-mark"><PhStack :size="30" weight="duotone" /></div>
+      <div class="brand-mark">
+        <PhRocketLaunch :size="30" weight="duotone" />
+      </div>
       <h1>Project Manage</h1>
       <p class="muted">A shared space for work that moves forward.</p>
       <h2>Welcome back</h2>
@@ -114,71 +125,73 @@ function search() {
     </form>
   </main>
   <div v-else class="app-shell" :class="{ 'sidebar-expanded': expanded }">
-    <aside class="sidebar">
-      <RouterLink to="/projects" class="brand" aria-label="Project Manage home"
-        ><PhStack :size="25" weight="duotone" /><span v-if="expanded"
-          >Project Manage</span
-        ></RouterLink
-      ><button
-        class="nav-item"
-        aria-label="Toggle sidebar"
-        :aria-expanded="expanded"
-        @click="expanded = !expanded"
-      >
-        <PhSidebarSimple :size="20" /><span v-if="expanded"
-          >Collapse sidebar</span
-        ></button
-      ><button
-        class="nav-item sidebar-search"
-        aria-label="Search current view"
-        @click="search"
-      >
-        <PhMagnifyingGlass :size="20" /><span v-if="expanded">Search</span>
-      </button>
+    <button
+      v-if="expanded"
+      class="menu-scrim"
+      aria-label="Close menu"
+      @click="expanded = false"
+    ></button>
+    <aside v-if="expanded" class="sidebar" aria-label="Workspace menu">
+      <div class="section-heading">
+        <strong>Workspace</strong
+        ><button
+          class="icon-button"
+          aria-label="Close sidebar"
+          @click="expanded = false"
+        >
+          <PhX :size="20" />
+        </button>
+      </div>
       <nav aria-label="Main navigation">
         <RouterLink
           v-for="item in nav"
           :key="item.path"
           :to="item.path"
           class="nav-item"
-          :aria-label="item.label"
-          :title="item.label"
-          ><component :is="item.icon" :size="21" /><span v-if="expanded">{{
+          ><component :is="item.icon" :size="21" /><span>{{
             item.label
           }}</span></RouterLink
         >
       </nav>
-      <div class="sidebar-bottom">
-        <RouterLink
-          to="/settings"
-          class="nav-item"
-          aria-label="Workspace settings"
-          title="Workspace settings"
-          ><PhGearSix :size="21" /><span v-if="expanded"
-            >Workspace</span
-          ></RouterLink
-        ><button
-          class="nav-item"
-          aria-label="Sign out"
-          title="Sign out"
-          @click="signOut"
-        >
-          <PhSignOut :size="20" /><span v-if="expanded">Sign out</span></button
-        ><span class="avatar user-avatar" :title="store.user.name">{{
-          store.user.name
-            .split(" ")
-            .map((n) => n[0])
-            .slice(0, 2)
-            .join("")
-        }}</span>
-      </div>
+      <RouterLink
+        to="/settings"
+        class="nav-item"
+        aria-label="Workspace settings"
+        ><PhGearSix :size="21" />Workspace settings</RouterLink
+      >
+      <button class="nav-item" aria-label="Sign out" @click="signOut">
+        <PhSignOut :size="20" />Sign out
+      </button>
     </aside>
     <div class="app-body">
       <header class="topbar">
-        <div class="breadcrumbs">
-          <span>Workspace</span><span class="slash">/</span
-          ><span>{{ pageLabel }}</span>
+        <div class="topbar-brand">
+          <button
+            class="icon-button"
+            aria-label="Toggle sidebar"
+            :aria-expanded="expanded"
+            @click="expanded = !expanded"
+          >
+            <PhSidebarSimple :size="20" /></button
+          ><RouterLink
+            to="/projects"
+            class="brand"
+            aria-label="Project Manage home"
+            ><PhRocketLaunch :size="23" weight="duotone" /><span
+              >Project Manage</span
+            ></RouterLink
+          >
         </div>
+        <nav class="horizontal-nav" aria-label="Workspace navigation">
+          <RouterLink
+            v-for="item in nav.slice(0, 3)"
+            :key="item.path"
+            :to="item.path"
+            ><component :is="item.icon" :size="16" />{{
+              item.label
+            }}</RouterLink
+          >
+        </nav>
         <div class="topbar-right">
           <span class="sync-label">{{
             store.mode === "local"
@@ -195,13 +208,18 @@ function search() {
               :size="17"
               :class="{ spin: store.loading }"
             /></button
-          ><span class="avatar small">{{
-            store.user.name
-              .split(" ")
-              .map((n) => n[0])
-              .slice(0, 2)
-              .join("")
-          }}</span>
+          ><RouterLink
+            to="/settings"
+            class="avatar small"
+            aria-label="Workspace settings"
+            >{{
+              store.user.name
+                .split(" ")
+                .map((n) => n[0])
+                .slice(0, 2)
+                .join("")
+            }}</RouterLink
+          >
         </div>
       </header>
       <div v-if="store.error" role="alert" class="global-error">

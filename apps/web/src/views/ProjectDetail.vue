@@ -66,7 +66,12 @@ const activity = computed(() =>
             {{ project.latestUpdate || "No update reported yet." }}
           </p>
           <span class="muted"
-            >Updated {{ new Date(project.updatedAt).toLocaleString() }}</span
+            >{{
+              project.reportedAt
+                ? new Date(project.reportedAt).toLocaleString()
+                : "Report time unavailable"
+            }}
+            · {{ project.reportedBy ?? "Reporter unavailable" }}</span
           >
         </section>
         <section class="panel">

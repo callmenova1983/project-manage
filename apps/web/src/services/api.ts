@@ -1,4 +1,5 @@
 import type {
+  NoteDateInput,
   Actor,
   Project,
   ProjectInput,
@@ -91,6 +92,9 @@ class HttpApi implements WorkspaceApi {
       id ? "PUT" : "POST",
       id ? { ...data, version } : data,
     );
+  }
+  confirmNoteDate(projectId: string, data: NoteDateInput) {
+    return this.call<Task>(`/projects/${projectId}/note-dates`, "POST", data);
   }
   addTasks(tasks: TaskInput[]) {
     return this.call<Task[]>("/tasks/batch", "POST", { tasks });

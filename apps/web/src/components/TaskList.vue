@@ -155,6 +155,7 @@ function close() {
         </button></div></template
     ><TaskEditor
       v-if="adding && projectId"
+      :key="parentId ?? 'root'"
       :projectId="projectId"
       :parentId="parentId"
       @close="close"

@@ -8,9 +8,6 @@ import {
   PhArrowUpRight,
   PhFunnel,
   PhNotePencil,
-  PhCheckCircle,
-  PhListBullets,
-  PhCalendarBlank,
   PhSquaresFour,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
@@ -18,6 +15,9 @@ import {
   stages,
   disciplines,
   statistics,
+  leafTasks,
+  dayKey,
+  weekKey,
   type Project,
 } from "../../../../packages/domain/types";
 import { stageLabels } from "../locales/en";
@@ -25,6 +25,7 @@ import { confirmDiscard } from "../composables/unsaved";
 import StatusBadge from "../components/StatusBadge.vue";
 import ProjectEditor from "../components/ProjectEditor.vue";
 import TaskList from "../components/TaskList.vue";
+import InlineNotes from "../components/InlineNotes.vue";
 import PasteTasks from "../components/PasteTasks.vue";
 const store = useWorkspace();
 const query = ref(""),
@@ -36,6 +37,8 @@ const query = ref(""),
   editing = ref(""),
   creating = ref(false),
   pasting = ref("");
+const scope = ref<"week" | "today">("week");
+const scopeStats = computed(() => statistics(store.data.tasks, scope.value));
 const owners = computed(() =>
   [...new Set(store.data.projects.map((p) => p.owner))].sort(),
 );
@@ -54,7 +57,7 @@ const projects = computed(() =>
     .sort((a, b) =>
       sort.value === "name"
         ? a.name.localeCompare(b.name)
-        : b.updatedAt.localeCompare(a.updatedAt),
+        : (b.reportedAt ?? "").localeCompare(a.reportedAt ?? ""),
     ),
 );
 const filtered = computed(
@@ -69,8 +72,26 @@ function clear() {
 function tasks(id: string) {
   return store.data.tasks.filter((t) => t.projectId === id);
 }
-function stats(id: string) {
-  return statistics(tasks(id));
+function scopedTasks(id: string) {
+  return leafTasks(tasks(id)).filter((t) =>
+    scope.value === "week"
+      ? t.workWeek === weekKey()
+      : t.workDates.includes(dayKey()),
+  );
+}
+function summary(id: string) {
+  return statistics(tasks(id), scope.value);
+}
+function reportTime(p: Project) {
+  return p.reportedAt
+    ? new Date(p.reportedAt).toLocaleString("en", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "UTC",
+      }) + " UTC"
+    : "Report time unavailable";
 }
 function saved(p: Project) {
   creating.value = false;
@@ -92,15 +113,16 @@ function edit(id: string) {
 <template>
   <div class="page projects-page">
     <section class="page-heading">
-      <div>
-        <div class="eyebrow">YOUR TEAM, IN FOCUS</div>
+      <div class="compact-title">
         <h1>
           Projects
           <span class="title-count">{{ store.data.projects.length }}</span>
         </h1>
-        <p class="page-subtitle">
-          The latest updates. The work ahead. All in one place.
-        </p>
+        <span class="workspace-totals"
+          >{{ store.total.total }} tasks <span>·</span>
+          {{ store.total.done }} completed <span>·</span>
+          {{ store.total.unfinished }} open</span
+        >
       </div>
       <div class="heading-actions">
         <RouterLink to="/meetings" class="button secondary"
@@ -110,74 +132,37 @@ function edit(id: string) {
         </button>
       </div>
     </section>
-    <section class="overview-strip" aria-label="Workspace overview">
-      <div class="metric">
-        <span>Total projects</span
-        ><strong
-          >{{ store.data.projects.length
-          }}<small>across all stages</small></strong
+    <section class="work-scope-bar" aria-label="Workspace overview">
+      <div class="scope-switch" aria-label="Project work scope">
+        <button
+          :aria-pressed="scope === 'today'"
+          :class="{ active: scope === 'today' }"
+          @click="scope = 'today'"
         >
-      </div>
-      <div class="metric">
-        <span>Total tasks</span
-        ><strong>{{ store.total.total }}<small>leaf tasks</small></strong>
-      </div>
-      <div class="metric">
-        <span><PhCheckCircle :size="14" />Completed</span
-        ><strong class="green"
-          >{{ store.total.done }}<small>work delivered</small></strong
+          Today <span>{{ store.today.total }}</span></button
+        ><button
+          :aria-pressed="scope === 'week'"
+          :class="{ active: scope === 'week' }"
+          @click="scope = 'week'"
         >
-      </div>
-      <div class="metric">
-        <span>Open tasks</span
-        ><strong
-          >{{ store.total.unfinished
-          }}<small>across the workspace</small></strong
-        >
-      </div>
-      <RouterLink to="/tasks?scope=week" class="metric scope-metric"
-        ><span
-          ><PhCalendarBlank :size="14" />This week's work<PhArrowUpRight
-            :size="14" /></span
-        ><strong
-          >{{ store.week.total
-          }}<small>{{ store.today.total }} planned for today</small></strong
-        ></RouterLink
-      >
-    </section>
-    <section class="week-summary">
-      <div class="summary-title">
-        <PhListBullets :size="18" /><strong>This week summary</strong
-        ><span class="muted">A shared view of what is happening</span>
+          This week <span>{{ store.week.total }}</span>
+        </button>
       </div>
       <div class="summary-counts">
-        <RouterLink to="/tasks?scope=week&status=todo"
-          ><span class="status-dot todo"></span>{{ store.week.todo }} To
-          do</RouterLink
-        ><RouterLink to="/tasks?scope=week&status=in_progress"
-          ><span class="status-dot in_progress"></span
-          >{{ store.week.in_progress }} In progress</RouterLink
-        ><RouterLink to="/tasks?scope=week&status=done"
-          ><span class="status-dot done"></span
-          >{{ store.week.done }} Done</RouterLink
-        ><RouterLink to="/tasks?scope=week&status=blocked"
-          ><span class="status-dot blocked"></span
-          >{{ store.week.blocked }} Needs coordination</RouterLink
-        >
+        <span><StatusBadge status="todo" />{{ scopeStats.todo }}</span
+        ><span
+          ><StatusBadge status="in_progress" />{{
+            scopeStats.in_progress
+          }}</span
+        ><span><StatusBadge status="done" />{{ scopeStats.done }}</span
+        ><span><StatusBadge status="blocked" />{{ scopeStats.blocked }}</span>
       </div>
+      <span class="muted scope-caption"
+        >Work planned · independent of due dates</span
+      >
     </section>
     <ProjectEditor v-if="creating" @close="creating = false" @saved="saved" />
     <section class="project-section">
-      <div class="list-heading">
-        <div class="tabs">
-          <button class="active">
-            All projects <span>{{ store.data.projects.length }}</span></button
-          ><RouterLink to="/tasks?scope=today"
-            >Today's work <span>{{ store.today.total }}</span></RouterLink
-          ><RouterLink to="/activity">Activity</RouterLink>
-        </div>
-        <span class="muted results-label">{{ projects.length }} projects</span>
-      </div>
       <div class="filterbar">
         <label class="search-field"
           ><PhMagnifyingGlass :size="17" /><input
@@ -203,7 +188,7 @@ function edit(id: string) {
             <option value="">All responsibilities</option>
             <option v-for="d in disciplines" :key="d">{{ d }}</option></select
           ><select v-model="sort" aria-label="Sort projects">
-            <option value="updated">Latest update</option>
+            <option value="updated">Latest report</option>
             <option value="name">Name A–Z</option></select
           ><button v-if="filtered" class="text-button" @click="clear">
             Clear
@@ -229,11 +214,23 @@ function edit(id: string) {
           New project
         </button>
       </div>
-      <div v-else class="project-table">
+      <div
+        v-else
+        class="project-table"
+        role="region"
+        aria-label="Projects list"
+        tabindex="0"
+      >
         <div class="project-table-head">
           <span>Project</span><span>Stage</span
-          ><span>Latest reported update</span><span>This week's work</span
-          ><span>Owner</span><span></span>
+          ><span>Latest reported update</span
+          ><span>{{
+            scope === "week" ? "This week's work" : "Today's work"
+          }}</span
+          ><span>{{
+            scope === "week" ? "This week summary" : "Today summary"
+          }}</span
+          ><span></span>
         </div>
         <article
           v-for="project in projects"
@@ -266,37 +263,49 @@ function edit(id: string) {
             </div>
             <StatusBadge :stage="project.stage" />
             <div class="latest-update">
-              <p>{{ project.latestUpdate || "No update reported yet." }}</p>
+              <p :title="project.latestUpdate">
+                {{ project.latestUpdate || "No update reported yet." }}
+              </p>
               <span
-                >{{
-                  new Date(project.updatedAt).toLocaleDateString("en", {
-                    month: "short",
-                    day: "numeric",
-                  })
-                }}
-                <span class="dot-separator">·</span>
-                {{ stats(project.id).done }} completed</span
+                >{{ reportTime(project) }} ·
+                {{ project.reportedBy ?? "Reporter unavailable" }}</span
               >
             </div>
             <div class="project-week">
-              <strong
-                >{{ statistics(tasks(project.id), "week").total }} tasks</strong
-              ><span
-                >{{ statistics(tasks(project.id), "week").done }} done
-                <span class="dot-separator">·</span>
-                {{ statistics(tasks(project.id), "week").unfinished }}
-                open</span
+              <RouterLink
+                v-for="task in scopedTasks(project.id).slice(0, 2)"
+                :key="task.id"
+                :to="`/projects/${project.id}`"
+                class="week-task"
+                ><StatusBadge :status="task.status" /><span
+                  :title="task.title"
+                  >{{ task.title }}</span
+                ></RouterLink
+              >
+              <span v-if="!scopedTasks(project.id).length" class="muted"
+                >No work planned</span
               >
             </div>
-            <div class="owner-cell">
-              <span class="avatar">{{
-                project.owner
-                  .split(" ")
-                  .map((n) => n[0])
-                  .slice(0, 2)
-                  .join("")
-              }}</span
-              ><span>{{ project.owner.split(" ")[0] }}</span>
+            <div class="project-scope-summary">
+              <span v-if="summary(project.id).total" class="scope-counts"
+                ><span :title="`${summary(project.id).todo} To do`"
+                  >○ {{ summary(project.id).todo }}</span
+                ><span :title="`${summary(project.id).in_progress} In progress`"
+                  >◐ {{ summary(project.id).in_progress }}</span
+                ><span :title="`${summary(project.id).done} Done`"
+                  >✓ {{ summary(project.id).done }}</span
+                ><span
+                  :title="`${summary(project.id).blocked} Needs coordination`"
+                  >△ {{ summary(project.id).blocked }}</span
+                ></span
+              >
+              <span v-else class="muted">—</span>
+              <RouterLink
+                v-if="summary(project.id).total"
+                :to="`/tasks?scope=${scope}&project=${project.id}`"
+                >{{ summary(project.id).total }} planned ·
+                {{ summary(project.id).unfinished }} open</RouterLink
+              >
             </div>
             <RouterLink
               :to="`/projects/${project.id}`"
@@ -311,34 +320,37 @@ function edit(id: string) {
               :project="project"
               @close="editing = ''"
               @saved="saved"
-            /><template v-else
-              ><div class="section-heading">
-                <div>
-                  <h3>{{ project.name }}</h3>
-                  <p class="muted">{{ project.description }}</p>
+            />
+            <div v-else class="expanded-columns">
+              <InlineNotes :project="project" />
+              <section class="inline-subtasks">
+                <div class="section-heading">
+                  <h4>Tasks & subtasks</h4>
+                  <div>
+                    <button class="text-button" @click="edit(project.id)">
+                      Edit project</button
+                    ><button
+                      class="text-button"
+                      :disabled="pasting === project.id"
+                      @click="pasting = project.id"
+                    >
+                      Paste tasks
+                    </button>
+                  </div>
                 </div>
-                <button @click="edit(project.id)">Edit project & notes</button>
-              </div>
-              <pre v-if="project.notes" class="working-notes">{{
-                project.notes
-              }}</pre>
-              <div class="section-heading">
-                <h4>Tasks & subtasks</h4>
-                <button
-                  class="text-button"
-                  :disabled="pasting === project.id"
-                  @click="pasting = project.id"
-                >
-                  Paste tasks
-                </button>
-              </div>
-              <PasteTasks
-                v-if="pasting === project.id"
-                :projectId="project.id"
-                @close="pasting = ''" /><TaskList
-                :tasks="tasks(project.id)"
-                :projectId="project.id"
-            /></template>
+                <PasteTasks
+                  v-if="pasting === project.id"
+                  :projectId="project.id"
+                  @close="pasting = ''"
+                />
+                <div class="inline-task-scroll">
+                  <TaskList
+                    :tasks="tasks(project.id)"
+                    :projectId="project.id"
+                  />
+                </div>
+              </section>
+            </div>
           </div>
         </article>
       </div>

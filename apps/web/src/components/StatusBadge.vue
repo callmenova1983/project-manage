@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import {
   PhCircle,
+  PhLightbulb,
+  PhChatsCircle,
+  PhClipboardText,
+  PhWrench,
+  PhRocketLaunch,
   PhCheckCircle,
   PhCircleHalf,
   PhWarningCircle,
@@ -14,6 +19,13 @@ const icons = {
   done: PhCheckCircle,
   blocked: PhWarningCircle,
 };
+const stageIcons = {
+  potential: PhLightbulb,
+  proposal: PhChatsCircle,
+  approved: PhClipboardText,
+  implementation: PhWrench,
+  operations: PhRocketLaunch,
+};
 </script>
 <template>
   <span v-if="status" class="badge" :class="status"
@@ -21,6 +33,8 @@ const icons = {
       statusLabels[status]
     }}</span
   ><span v-else-if="stage" class="badge" :class="stage"
-    ><PhCircleHalf :size="13" />{{ stageLabels[stage] }}</span
+    ><component :is="stageIcons[stage]" :size="14" />{{
+      stageLabels[stage]
+    }}</span
   >
 </template>

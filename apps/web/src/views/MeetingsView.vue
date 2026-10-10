@@ -24,6 +24,22 @@ const discard = useUnsaved(dirty);
 const selected = computed(
   () => proposal.value?.suggestions.filter((s) => s.confirmed) ?? [],
 );
+const combinedUpdates = computed(() =>
+  store.data.projects.flatMap((p) => {
+    const updates = selected.value.filter(
+      (s) => s.action === "update" && s.selectedProjectId === p.id,
+    );
+    return updates.length > 1
+      ? [
+          {
+            id: p.id,
+            name: p.name,
+            text: updates.map((s) => s.title).join("\n"),
+          },
+        ]
+      : [];
+  }),
+);
 const valid = computed(
   () =>
     selected.value.length > 0 &&
@@ -151,6 +167,10 @@ function reset() {
           </h2>
           <button @click="reset">Cancel review</button>
         </div>
+        <details class="original-source">
+          <summary>Original source · version 1</summary>
+          <pre>{{ proposal.source }}</pre>
+        </details>
         <article
           v-for="(s, index) in proposal.suggestions"
           :key="s.id"
@@ -239,6 +259,18 @@ function reset() {
             />I confirm the project and this proposed change</label
           >
         </article>
+        <section
+          v-for="update in combinedUpdates"
+          :key="update.id"
+          class="panel"
+        >
+          <h3>Combined update · {{ update.name }}</h3>
+          <p class="muted">
+            The confirmed lines replace this project's latest update together,
+            in source order.
+          </p>
+          <pre class="working-notes">{{ update.text }}</pre>
+        </section>
         <div class="review-footer">
           <p class="muted">Unselected items will not change your workspace.</p>
           <button

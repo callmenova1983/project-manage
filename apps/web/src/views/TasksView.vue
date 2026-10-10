@@ -19,13 +19,14 @@ const store = useWorkspace(),
 const scope = ref(String(route.query.scope ?? "week")),
   status = ref(String(route.query.status ?? "")),
   query = ref(""),
-  project = ref(""),
+  project = ref(String(route.query.project ?? "")),
   creating = ref(false);
 watch(
   () => route.query,
   () => {
     scope.value = String(route.query.scope ?? "week");
     status.value = String(route.query.status ?? "");
+    project.value = String(route.query.project ?? "");
   },
 );
 const tasks = computed(() =>

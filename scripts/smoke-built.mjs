@@ -94,7 +94,23 @@ try {
     .getByRole("heading", { name: "Projects 20", exact: true })
     .waitFor();
   mkdirSync("artifacts", { recursive: true });
+  await page
+    .getByRole("button", { name: "Expand Atlas Customer Portal", exact: true })
+    .click();
   await page.screenshot({ path: "artifacts/desktop-projects.png" });
+  const firstRow = await page.locator(".project-row").first().boundingBox();
+  writeFileSync(
+    "artifacts/layout-metrics.json",
+    JSON.stringify(
+      {
+        firstRow,
+        referenceFirstRowY: 190,
+        viewport: { width: 1536, height: 1024 },
+      },
+      null,
+      2,
+    ),
+  );
   await page
     .getByRole("link", { name: "Atlas Customer Portal", exact: true })
     .click();
@@ -102,9 +118,10 @@ try {
     .getByRole("heading", { name: "Atlas Customer Portal", exact: true })
     .waitFor();
   await page.screenshot({ path: "artifacts/project-detail.png" });
-  await page.getByRole("link", { name: "Tasks", exact: true }).click();
+  await page.getByRole("link", { name: "All tasks", exact: true }).click();
   await page.getByRole("heading", { name: "Tasks", exact: true }).waitFor();
   await page.screenshot({ path: "artifacts/weekly-tasks.png" });
+  await page.getByRole("button", { name: "Toggle sidebar" }).click();
   await page.getByRole("link", { name: "Meeting notes", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Meeting notes", exact: true })

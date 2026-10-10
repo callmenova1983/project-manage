@@ -67,7 +67,12 @@ export function createSeed(now = new Date()): Snapshot {
     owner: owners[i % 5]!,
     discipline: disciplines[i % 4]!,
     latestUpdate: "",
-    notes: "",
+    reportedAt: new Date(now.getTime() - i * 3600000).toISOString(),
+    reportedBy: owners[i % 5]!,
+    notes:
+      i === 0
+        ? "Discovery review — synthetic example\nScope\tDecision\tOwner\nPortal access\tConfirmed\tAlex Morgan\nNext review: next Friday; confirm the date with delivery.\nAcceptance checklist follows the review."
+        : "",
     aliases: [name.split(" ")[0]!],
     version: 1,
     updatedAt: new Date(now.getTime() - i * 900000).toISOString(),
@@ -106,10 +111,12 @@ export function createSeed(now = new Date()): Snapshot {
               : n % 2 === 0
                 ? "todo"
                 : "in_progress";
+      if (n === 4 || n === 5) status = "done";
+      if (n === 12 || n === 13) status = "in_progress";
       tasks.push({
         id: `task-${n + 1}`,
         projectId: projects[i]!.id,
-        parentId: j < 3 ? parentId : null,
+        parentId: (i === 0 ? [2, 4, 5].includes(j) : j < 3) ? parentId : null,
         title: titles[j]!,
         description: "Synthetic task for the demonstration workspace.",
         status,
