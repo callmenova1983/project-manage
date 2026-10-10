@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import {
   PhNotePencil,
   PhArrowRight,
@@ -8,15 +8,39 @@ import {
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
 import { api, type ReviewedSuggestion } from "../services/api";
-import { type Proposal, statuses } from "../../../../packages/domain/types";
+import {
+  type Proposal,
+  type AiCapabilities,
+  statuses,
+} from "../../../../packages/domain/types";
 import { statusLabels } from "../locales/en";
 import { useUnsaved } from "../composables/unsaved";
 const store = useWorkspace();
+const engine = ref<"rules" | "qwen">("rules");
+const externalConsent = ref(false);
+const capabilities = ref<AiCapabilities | null>(null);
+const capabilityError = ref("");
+async function loadCapabilities() {
+  try {
+    capabilities.value = await api.aiCapabilities();
+    capabilityError.value = "";
+  } catch {
+    capabilityError.value =
+      "Could not check Qwen availability. Rule-assisted review is still available.";
+  }
+}
+onMounted(loadCapabilities);
 const source = ref(""),
   proposal = ref<Proposal | null>(null),
   error = ref(""),
   working = ref(false),
   versions = ref<Record<string, number>>({});
+watch([source, engine], () => {
+  externalConsent.value = false;
+});
+const qwenReview = computed(() =>
+  proposal.value ? !!proposal.value.generator : engine.value === "qwen",
+);
 const dirty = computed(
   () => !!source.value && proposal.value?.status !== "applied",
 );
@@ -54,7 +78,10 @@ async function review() {
   working.value = true;
   error.value = "";
   try {
-    proposal.value = await api.propose(source.value);
+    proposal.value =
+      engine.value === "qwen"
+        ? await api.proposeQwen(source.value, externalConsent.value)
+        : await api.propose(source.value);
     versions.value = Object.fromEntries(
       store.data.projects.map((p) => [p.id, p.version]),
     );
@@ -62,6 +89,7 @@ async function review() {
     error.value = (e as Error).message;
   } finally {
     working.value = false;
+    if (engine.value === "qwen") void loadCapabilities();
   }
 }
 async function apply() {
@@ -109,8 +137,20 @@ function reset() {
     <div class="notice">
       <PhWarningCircle :size="20" />
       <div>
-        <strong>Rule-assisted review · AI is not connected</strong>
-        <p>
+        <strong>{{
+          qwenReview
+            ? proposal?.generator
+              ? "Qwen-generated suggestions · human review required"
+              : "Qwen configured · connection not yet verified"
+            : "Rule-assisted review · AI is not connected"
+        }}</strong>
+        <p v-if="qwenReview">
+          {{ proposal?.generator?.model ?? capabilities?.model }} ·
+          {{ proposal?.generator?.region ?? capabilities?.region }}. Suggestions
+          may be wrong. Verify every source, project and change. Generating
+          suggestions does not update projects or tasks.
+        </p>
+        <p v-else>
           Project names and aliases are matched literally. These suggestions are
           not model-generated. No changes are saved to projects until you
           confirm them.
@@ -138,19 +178,56 @@ function reset() {
     </div>
     <template v-else
       ><section v-if="!proposal" class="panel">
+        <label v-if="capabilities?.provider === 'qwen'">
+          Review method
+          <select v-model="engine" :disabled="working">
+            <option value="rules">
+              Rule-assisted · no external processing
+            </option>
+            <option value="qwen" :disabled="!capabilities.enabled">
+              Qwen · {{ capabilities.remainingAttempts }} attempts remaining
+            </option>
+          </select>
+        </label>
+        <p v-if="capabilityError" role="status" class="muted">
+          {{ capabilityError }}
+        </p>
+        <p
+          v-if="capabilities?.provider === 'qwen' && !capabilities.enabled"
+          class="muted"
+        >
+          Qwen budget is exhausted or expired. Ask the server administrator to
+          review it.
+        </p>
         <label class="source-label"
           >Meeting notes<textarea
             v-model="source"
+            :disabled="working"
             rows="10"
             maxlength="20000"
             placeholder="Paste one action or update per line. Include a project name or alias.&#10;&#10;Atlas: confirm acceptance checklist&#10;Meridian: design review completed&#10;Schedule a follow-up with the delivery team"
           ></textarea>
         </label>
+        <label v-if="engine === 'qwen'" class="check-label">
+          <input
+            v-model="externalConsent"
+            type="checkbox"
+            :disabled="working"
+          />
+          I approve sending these notes and project names, IDs and aliases to
+          Alibaba Cloud using the {{ capabilities?.region }} API region for this
+          review. I have removed secrets and data that should not be sent.
+        </label>
         <div class="form-actions">
           <span class="muted"
             >Original wording is retained with line numbers.</span
           ><button
-            :disabled="!source.trim() || working"
+            :disabled="
+              !source.trim() ||
+              working ||
+              (engine === 'qwen' &&
+                (!externalConsent || !capabilities?.enabled))
+            "
             class="primary"
             @click="review"
           >
@@ -171,6 +248,10 @@ function reset() {
           <summary>Original source · version 1</summary>
           <pre>{{ proposal.source }}</pre>
         </details>
+        <p v-if="!proposal.suggestions.length" class="notice" role="status">
+          No supported actions or updates were found. Cancel review to edit the
+          notes or choose rule-assisted review.
+        </p>
         <article
           v-for="(s, index) in proposal.suggestions"
           :key="s.id"
@@ -199,7 +280,9 @@ function reset() {
                 </option></select
               ><small :class="s.candidates.length !== 1 ? 'amber' : 'muted'">{{
                 s.candidates.length === 1
-                  ? "Name / alias match — please verify"
+                  ? proposal.generator
+                    ? "Model candidate — please verify"
+                    : "Name / alias match — please verify"
                   : s.candidates.length > 1
                     ? "Ambiguous: " +
                       s.candidates
@@ -211,6 +294,9 @@ function reset() {
                         )
                         .join(", ")
                     : "No match found. Select the correct project."
+              }}</small
+              ><small v-if="proposal.generator" class="muted">{{
+                s.candidates.map((c) => c.reason).join(" · ")
               }}</small></label
             ><label
               >Proposed change<select

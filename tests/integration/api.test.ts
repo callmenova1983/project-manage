@@ -418,13 +418,13 @@ describe("additional boundary checks", () => {
   it("migrates only once and leaves data intact", async () => {
     expect(
       context.repo.db.prepare("SELECT count(*) AS n FROM migrations").get()!.n,
-    ).toBe(2);
+    ).toBe(3);
     const s = await snapshot();
     await context.app.close();
     context = await buildApp({ databasePath: db, origin });
     expect(
       context.repo.db.prepare("SELECT count(*) AS n FROM migrations").get()!.n,
-    ).toBe(2);
+    ).toBe(3);
     expect((await snapshot()).tasks).toHaveLength(s.tasks.length);
   });
 });

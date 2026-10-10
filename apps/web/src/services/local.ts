@@ -147,6 +147,22 @@ export function createLocalApi(): WorkspaceApi {
     return t;
   };
   return {
+    async aiCapabilities() {
+      return {
+        enabled: false,
+        provider: "rules",
+        model: null,
+        region: null,
+        connectionVerified: false,
+        remainingAttempts: 0,
+      };
+    },
+    async proposeQwen() {
+      throw new ApiError(
+        "Qwen is unavailable in the browser-only demo. No notes were sent.",
+        503,
+      );
+    },
     mode: "local",
     async session() {
       return { actor };

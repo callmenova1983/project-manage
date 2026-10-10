@@ -67,3 +67,15 @@ The 440px reduced-height check is a layout test, **not an actual iOS software-ke
 ## Reference review refinements
 
 Added a readable escaped TSV table alongside the editable exact source, visible task-status names and four-state summary labels, actual UTC date ranges, restored child-task indentation, and blue-purple selected/action colors. Adding the date range exposed tablet toolbar overflow; the toolbar now wraps between 761px and 1100px. The first row remains y=195.25 with 45px desktop rows. Final reference sign-off remains with the parent pixel review, not inferred from successful tests.
+
+## Qwen adapter extension (no live provider calls)
+
+The prior `455b5ef4fa48d537183281a69d4619b20e94652b` reference visual QA was confirmed by the parent reviewer, and its exact-head Verify run `38092554085` succeeded. The additional Qwen code is a separate increment; these earlier approvals do not imply live model acceptance.
+
+For this increment, lint, typecheck, production build, formatting and diff checks passed. All **72 unit/API tests** passed (44 additional assertions/cases over the 28-test baseline) and all **28 Chromium E2E cases** passed (26 baseline + 2 explicitly mocked Qwen workflows). The Qwen tests use synthetic notes, IDs and a nonfunctional synthetic token; injected/intercepted transports prevent any provider network request. Server restart retains AI attempt counts and cached outcomes. Duplicate or invalid model results cannot modify business data. Local-adapter tests confirm no external AI request.
+
+Built native Node runtime was checked with `AI_PROVIDER=rules AI_CALLS_ENABLED=false`: static routing, authenticated Chromium, business-data persistence after process restart and zero unexpected console errors passed (Chromium 154.0.8037.57). Frontend bundle inspection found no server key/endpoint/budget markers or synthetic secret marker. This is a static isolation check, not a general security certification.
+
+`artifacts/qwen-mock-review.png` and `artifacts/qwen-mock-mobile.png` are synthetic browser evidence only. Both desktop and mobile images were visually inspected. These screenshots demonstrate configured UI states using mocked responses; they do not prove real Qwen connectivity. The existing private Site remains a browser-local demo; this work performs no Site operation or deployment.
+
+Still required before a live test: console-confirmed provider, region/Base URL and model access; a rotated credential delivered through an approved backend secret channel; a finite approved request allowance/expiry and provider-side spending control. No conversation credential was retrieved, repeated, saved or used. Actual provider authentication, live response quality/latency, billing, model parameter compatibility and deployed regional processing are unverified. Configuration instructions and primary sources are in `docs/qwen-integration.md`.

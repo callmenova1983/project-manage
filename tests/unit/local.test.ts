@@ -96,3 +96,18 @@ it("rolls back a batch when a later reviewed project has a stale version", async
   ).rejects.toMatchObject({ status: 409 });
   expect((await api.snapshot()).projects).toEqual(s.projects);
 });
+
+it("never enables Qwen or sends notes from the browser-local adapter", async () => {
+  const api = createLocalApi();
+  const outbound = vi.fn();
+  vi.stubGlobal("fetch", outbound);
+  expect(await api.aiCapabilities()).toMatchObject({
+    enabled: false,
+    provider: "rules",
+    model: null,
+  });
+  await expect(api.proposeQwen("synthetic source", true)).rejects.toThrow(
+    "browser-only demo",
+  );
+  expect(outbound).not.toHaveBeenCalled();
+});

@@ -117,6 +117,20 @@ export interface Proposal {
   suggestions: Suggestion[];
   createdAt: string;
   appliedAt?: string;
+  generator?: {
+    provider: "qwen";
+    model: string;
+    region: string;
+    promptVersion: 1;
+  };
+}
+export interface AiCapabilities {
+  enabled: boolean;
+  provider: "rules" | "qwen";
+  model: string | null;
+  region: string | null;
+  connectionVerified: false;
+  remainingAttempts: number;
 }
 export function dayKey(date = new Date()): string {
   return date.toISOString().slice(0, 10);

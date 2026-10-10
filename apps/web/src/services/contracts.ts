@@ -8,6 +8,7 @@ import type {
   Snapshot,
   Proposal,
   Suggestion,
+  AiCapabilities,
 } from "../../../../packages/domain/types";
 export type ReviewedSuggestion = Pick<
   Suggestion,
@@ -46,6 +47,11 @@ export interface WorkspaceApi {
   exportData(): Promise<Snapshot>;
   importData(data: unknown, revision: number): Promise<Snapshot>;
   propose(source: string): Promise<Proposal>;
+  aiCapabilities(): Promise<AiCapabilities>;
+  proposeQwen(
+    source: string,
+    externalProcessingConfirmed: boolean,
+  ): Promise<Proposal>;
   applyProposal(
     proposal: Proposal,
     suggestions: ReviewedSuggestion[],

@@ -22,11 +22,15 @@ All routes use `/api`. JSON responses. `/health` and `/auth/login` are public; e
 | GET | `/export` | Snapshot JSON; recent activity only |
 | POST | `/import` | `{schemaVersion:1,projects,tasks,revision,confirmed:true}` |
 | POST | `/proposals` | `{source}` → immutable original source + rule suggestions |
+| GET | `/ai/capabilities` | Configured provider/model/region and remaining attempts; no key/endpoint, no connectivity claim |
+| POST | `/proposals/qwen` | `{source,externalProcessingConfirmed:true}` → source-backed model draft; disabled without approved server configuration |
 | POST | `/proposals/:id/apply` | Explicit reviewed suggestions, atomic, single application |
 
 Payload types and limits are authoritative in `packages/domain/types.ts`. Notes max 20,000 characters; imports/body max 2 MB; 1,000 projects and 10,000 task records; nesting max 20 levels. Import replaces project/task sets but keeps audit history and increases versions. Create/update timestamps and IDs are generated server-side. Text is rendered as text, never executed as HTML.
 
-Meeting apply sends `id`, `selectedProjectId`, `title`, `action` (`task`/`update`), `status`, `confirmed:true`, `overwriteConfirmed`; update requires `projectVersion`. Each selected item must match a line in the persisted source. Application does not delete or merge records. No model is called.
+Meeting apply sends `id`, `selectedProjectId`, `title`, `action` (`task`/`update`), `status`, `confirmed:true`, `overwriteConfirmed`; update requires `projectVersion`. Each selected item must match a line in the persisted source. Application does not delete or merge records and does not call a model. Only the separately configured `/proposals/qwen` generation route can contact Qwen.
+
+Qwen generation requires a UUID idempotency key, authentication, CSRF and explicit external-processing consent. Its separate persistent idempotency ledger also stores terminal failures; retries with the same key never incur another provider call. Pending/interrupted requests return 409. Budget/rate limits return 429; invalid provider output 502; disabled/configuration/provider errors 503; uncertain timeout/network failures 504. Sanitized `AI_*` codes never include vendor bodies or secrets. See [Qwen integration](qwen-integration.md) for limits and activation requirements.
 
 Errors: 400 invalid input; 401 unauthenticated; 403 origin/CSRF mismatch; 404 inaccessible or missing record; 409 stale version, idempotency mismatch or applied proposal; 429 rate limit; 500 generic internal error. Version conflicts return the latest same-workspace record in `current`. Zod errors provide `issues` with paths. SQL is parameterized; audit and mutation share one transaction.
 

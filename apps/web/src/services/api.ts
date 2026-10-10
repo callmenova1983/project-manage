@@ -7,6 +7,7 @@ import type {
   TaskInput,
   Snapshot,
   Proposal,
+  AiCapabilities,
 } from "../../../../packages/domain/types";
 import {
   ApiError,
@@ -38,7 +39,7 @@ class HttpApi implements WorkspaceApi {
           "idempotency-key": key,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(path === "/proposals/qwen" ? 70000 : 15000),
       });
     } catch {
       throw new ApiError(
@@ -46,7 +47,8 @@ class HttpApi implements WorkspaceApi {
       );
     }
     const json = await response.json();
-    if (response.ok || response.status < 500) this.pending.delete(fingerprint);
+    if (response.ok || response.status < 500 || json.code?.startsWith("AI_"))
+      this.pending.delete(fingerprint);
     if (!response.ok)
       throw new ApiError(
         json.message ?? "Request failed",
@@ -111,6 +113,15 @@ class HttpApi implements WorkspaceApi {
   }
   propose(source: string) {
     return this.call<Proposal>("/proposals", "POST", { source });
+  }
+  aiCapabilities() {
+    return this.call<AiCapabilities>("/ai/capabilities");
+  }
+  proposeQwen(source: string, externalProcessingConfirmed: boolean) {
+    return this.call<Proposal>("/proposals/qwen", "POST", {
+      source,
+      externalProcessingConfirmed,
+    });
   }
   applyProposal(proposal: Proposal, suggestions: ReviewedSuggestion[]) {
     return this.call<Proposal>(`/proposals/${proposal.id}/apply`, "POST", {

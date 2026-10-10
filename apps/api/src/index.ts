@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { buildApp } from "./app.js";
+import { readQwenConfig } from "./ai/config.js";
 const production = process.env.NODE_ENV === "production";
 const origin = process.env.APP_ORIGIN ?? "http://localhost:4173";
 if (production && !origin.startsWith("https://"))
@@ -8,6 +9,7 @@ const { app } = await buildApp({
   databasePath: process.env.DATABASE_PATH ?? "./data/project-manage.sqlite",
   origin,
   production,
+  qwen: readQwenConfig(process.env),
 });
 await app.listen({
   host: process.env.HOST ?? "127.0.0.1",

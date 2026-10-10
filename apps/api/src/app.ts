@@ -23,6 +23,9 @@ import {
   type Suggestion,
 } from "../../../packages/domain/types.js";
 import { Repository, HttpError } from "./database.js";
+import { registerAiRoutes } from "./ai/routes.js";
+import { AiError } from "./ai/provider.js";
+import type { QwenConfig } from "./ai/config.js";
 import {
   hashToken,
   sessionActor,
@@ -47,6 +50,8 @@ export async function buildApp(options: {
   origin: string;
   production?: boolean;
   staticPath?: string;
+  qwen?: QwenConfig;
+  aiFetch?: typeof fetch;
 }) {
   const repo = new Repository(options.databasePath);
   const app = Fastify({
@@ -89,6 +94,10 @@ export async function buildApp(options: {
       throw new HttpError(403, "Invalid request token");
   });
   app.setErrorHandler((err, req, reply) => {
+    if (err instanceof AiError)
+      return reply
+        .status(err.statusCode)
+        .send({ message: err.message, code: err.code });
     if (err instanceof DomainError)
       return reply.status(400).send({ message: err.message });
     if (err instanceof ZodError)
@@ -112,6 +121,7 @@ export async function buildApp(options: {
   });
   app.addHook("onClose", async () => repo.close());
   const actor = (r: FastifyRequest) => identity.get(r)!.actor;
+  registerAiRoutes(app, repo, actor, options.qwen, options.aiFetch);
   function mutate<T>(req: FastifyRequest, fn: (a: Actor) => T): T {
     const a = actor(req);
     const key = z.string().uuid().parse(req.headers["idempotency-key"]);
