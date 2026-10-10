@@ -1,54 +1,113 @@
 # Project Manage
 
-高自由度的 AI 项目管理软件。
+Vue 3 + TypeScript 项目协作应用，包含真实 Node/Fastify API、SQLite 数据库与迁移、认证、审计和冲突保护。默认连接后端；浏览器本地演示是可选模式。公开代码中的项目、人物和工作内容全部为合成数据。
 
-## 当前状态
+## 快速启动
 
-这是项目初始化与产品设计基础，尚不是可运行的完整应用，也尚未接入 AI 服务。下面的技术选型和范围是可调整的初始建议。
+需要 Node **24.x**（验证版本 24.19.0）和 npm。依赖版本及传递依赖由 `package-lock.json` 锁定。
 
-## 产品方向
+```bash
+npm ci
+npm run setup:local
+npm run dev:all
+```
 
-让团队按自己的方式组织项目，而不是被固定流程限制：
+打开 `http://localhost:4173`。登录账号与随机生成的密码保存在 **`data/local-login.txt`**（权限 0600，已被 Git 忽略）。不会创建默认弱密码。`setup:local` 只初始化空数据库，重复执行不会清空已保存的工作。
 
-- 自定义字段：文本、数字、日期、单选、多选和成员
-- 自定义流程：状态、状态顺序和允许的流转
-- 多视图：同一套任务数据支持列表、看板，后续扩展日历与时间线
-- AI 辅助：多项目材料拆分匹配、提取进展与待办、统计分析和风险发现
-- 低摩擦编辑：卡片双击原地编辑，粘贴文字/表格，周边项目保持可见
-- 人始终可控：AI 先给建议，用户确认后再改变任务
+- Web：4173；API：127.0.0.1:3001，仅绑定本机。
+- 数据文件：`data/project-manage.sqlite`，重启不会丢失。
+- `APP_ORIGIN` 必须与浏览器来源一致。使用 `terminal.local` 或其他主机名时修改 `.env` 并重启 API。
+- 配置见 `.env.example`。不要提交 `.env`、数据库、用户导出或真实业务纪要。
 
-## 第一阶段范围
+独立运行 Web/API：`npm run dev` / `npm run dev:api`。在无后端的临时展示中，可运行 `VITE_DEMO_MODE=1 npm run dev`；界面明确标记“Local demo · browser only”，使用独立的 localStorage，不会同步到服务器。
 
-1. 工作区、项目、任务的基本管理
-2. 项目级自定义字段和状态流程
-3. 任务列表与看板，支持筛选、排序和分组
-4. AI 建议预览、确认与变更记录
+## 当前功能
 
-同一公司成员均可查看和编辑全部项目，负责人表示推进责任。公司边界隔离、输入校验、编辑留痕与恢复属于基础要求。自动对外通知、自动修改截止日期、付费模型调用和第三方集成不默认启用。
+- 深色紧凑项目列表、默认收起侧栏、五生命周期阶段、独立责任维度、负责人。
+- 项目详情、最新报告、工作笔记、行内编辑；组合搜索/筛选与排序。
+- 今日/本周/全部任务、任务/子任务、状态修改、工作范围与截止日期独立。
+- 自由文本笔记、表格 TSV 粘贴任务、预览/校验/确认、取消和未保存离开提示。
+- 会话登录、同工作区全员共享编辑、工作区间隔离；管理员通过 CLI 建立账号。
+- 保存审计、来源片段、变更前后值与单条历史恢复；活动界面显示最近 500 条，完整记录保留在数据库。
+- 冲突返回最新版本，编辑器保留草稿供对比；20 秒轮询更新和手动刷新。
+- JSON 导入/导出，替换前预览与明确确认；导入事务、关系检查和工作区 revision 检查。
+- 会议纪要规则建议：原文/行号、名称及别名候选、未知/多候选人工选择、逐项确认、覆盖二次确认、应用审计和防重复。
+- 加载/空/失败状态、键盘可操作、响应式布局及英文集中标签（`locales/en.ts`），后续可扩展中文。
 
-## 建议技术方向
+**AI 没有连接任何模型。** 规则匹配不是语义理解；不会推测负责人或日期，不会自动改项目。源材料仅保存在自己的后端数据库/本地演示，不会发送到模型供应商。
 
-- Web：Vue 3 + TypeScript
-- API：Node.js + TypeScript
-- 数据：MongoDB
-- 共享领域模型：TypeScript
-- AI：服务端供应商适配层，密钥仅保存在服务端
+## 示例数据与统计口径
 
-版本与依赖尚未锁定；开始实现时再验证兼容性并生成锁文件。
+`packages/domain/seed.ts` 是唯一合成种子源，首次初始化按当前 UTC 日期安排工作范围。默认：20 项目、150 **叶子任务**（另有 10 个分组父任务）、90 完成、60 未完成。本周 24＝待做 4 / 进行中 8 / 完成 10 / 待协调 2，今天 8 是本周子集。
 
-## 目录
+统计通过共享纯函数实时计算。父任务不重复计数；父任务完成情况由后代叶子任务推导，不能直接修改父任务状态。工作周按 UTC 周一开始，工作日须属于该周。截止日期不会改变工作范围；示例初始化后不会每天自动重新排期。
 
-- `apps/web/`：前端应用预留目录
-- `apps/api/`：后端应用预留目录
-- `packages/domain/`：共享领域类型初稿
-- `docs/product.md`：产品边界与验收标准
-- `docs/architecture.md`：架构与安全设计
-- `docs/roadmap.md`：实施顺序
+## 数据库与账号
 
-## 开发状态
+迁移会在启动时按编号执行，也可显式运行 `npm run db:migrate`。迁移记录保存在 `migrations` 表。空工作区可运行 `PM_WORKSPACE_ID=demo npm run db:seed` 写入合成数据，已有项目时拒绝覆盖。
 
-目前没有安装依赖，没有启动命令，也没有已配置的 CI。领域类型只是设计初稿，尚未经过 TypeScript 编译验证。请勿将本文的规划列表理解为已实现功能。
+增加一个成员（同一个 `PM_WORKSPACE_ID` 的成员可查看、编辑全部项目）：
 
-## 许可
+```bash
+export PM_USER_EMAIL='member@example.test'
+export PM_USER_NAME='Team member'
+export PM_WORKSPACE_ID='demo'
+read -rs -p 'New password (at least 14 characters): ' PM_USER_PASSWORD
+export PM_USER_PASSWORD
+npm run user:create
+unset PM_USER_PASSWORD
+```
 
-仓库用于公开测试，暂未选择开源许可证。公开可见不等于授予开源授权，后续许可方式由项目所有者决定。禁止提交真实客户数据、会议原文、账号信息或密钥。
+密码使用随机盐和 scrypt。会话 token 仅保存哈希，HttpOnly / SameSite=Strict Cookie，12 小时到期；生产模式使用 Secure Cookie。写入要求 CSRF token、允许来源、版本号与幂等请求 ID。没有公共注册或匿名写入。SQLite 使用 WAL、外键、预编译语句和事务。幂等结果保留 7 天。
+
+备份请停止写入后复制数据库，或用 SQLite backup API/工具生成一致快照；不要只复制正在写入的主文件而遗漏 WAL。JSON 导出仅包含最近 500 条活动，不能替代完整数据库备份。
+
+## 构建与容器
+
+```bash
+npm run build
+npm start
+```
+
+构建输出 `dist/web` 和 `dist/server`。API 同源提供前端静态资源。若直接打开 `http://localhost:3001`，需先设置 `APP_ORIGIN=http://localhost:3001`。生产设置 `NODE_ENV=production`、明确的 HTTPS `APP_ORIGIN`，在受控反向代理后运行；缺少 HTTPS 配置会拒绝启动。
+
+本地容器（端口只映射到本机，数据用持久卷）：
+
+```bash
+docker compose build
+docker compose run --rm app node dist/server/apps/api/src/cli.js seed
+# 设置上面的 PM_USER_EMAIL / PM_USER_NAME / PM_USER_PASSWORD 后：
+docker compose run --rm -e PM_USER_EMAIL -e PM_USER_NAME -e PM_USER_PASSWORD app node dist/server/apps/api/src/cli.js user
+docker compose up -d
+```
+
+打开 `http://localhost:3001`。容器默认没有账号。`compose.yaml` 明确使用本机 HTTP 模式；不要把此本机演示配置直接暴露到公网。生产 HTTPS、证书、备份、监控、运维账号与容量验证由部署环境配置。
+
+## 检查
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npx playwright install chromium   # CI/Linux 可能需要 --with-deps
+npm run test:e2e
+npm run test:runtime  # 构建产物、真实浏览器与进程重启验证
+```
+
+E2E 使用独立的 `data/e2e.sqlite`、运行时随机测试凭证和真实 Web/API。每次执行只重建测试数据库，不改本地工作数据库。默认支持系统 `/usr/bin/chromium`，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定其他 Chromium。运行时需要空闲 3001、4173 端口。报告在 `playwright-report/`，截图在 `artifacts/`。具体实际执行结果及视觉阻碍见 `docs/verification.md` 和 `design-qa.md`。
+
+## 架构
+
+- `apps/web/src/views`：六个主要页面；`components`：行内表单、任务列表、粘贴及错误显示。
+- `stores/workspace.ts`：Pinia 单一快照与写入状态；20 秒后台刷新。
+- `services/contracts.ts`：明确的 `WorkspaceApi` 契约；`api.ts` HTTP 实现；`local.ts` 浏览器演示实现。
+- `packages/domain`：共享 Zod 运行时校验、类型、统计、合成数据及确定性规则解析。
+- `apps/api/src`：Fastify 路由、认证、数据库仓储；SQL 迁移见 `apps/api/migrations`。
+- `tests`：领域单元测试、API 集成测试、Chromium E2E；GitHub Actions 提供同样检查（尚未远程执行）。
+
+## 交付边界
+
+这是已实现并经过本地测试的完整前后端项目，**不等于已部署或已完成生产验收**。尚未实现 SSO/MFA、账号自助恢复/管理界面、WebSocket 实时推送、多副本分布式会话/限流、真实模型接入、自定义字段/流程配置、跨时区偏好和规模压测。认证账号可由 CLI 配置；多人共享和隔离通过集成测试覆盖，真实多人员/网络部署尚未验收。当前 SQLite 同步查询适合此规模的单实例部署，扩容应测量后替换仓储实现。
+
+没有自动部署、合并或上传真实业务数据。视觉参考文件交付状态与精度边界见 `design-qa.md`。仓库暂无开源许可证；公开可见不等于授予开源授权。

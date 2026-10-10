@@ -6,3 +6,8 @@ coverage/
 !.env.example
 *.log
 .DS_Store
+data/
+test-results/
+playwright-report/
+artifacts/
+*.sqlite*
