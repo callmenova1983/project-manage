@@ -8,7 +8,7 @@ Execution environment: Linux x64, Node 24.19.0, npm 11.9.0, system Chromium 154.
 | `npm run typecheck` | Passed for Vue and API |
 | `npm test` | **28 passed**, 3 files (6 domain + 5 local adapter + 17 API integration) (domain, local adapter, real SQLite/API integration) |
 | `npm run build` | Passed; Vite client and compiled Node API |
-| `npm run test:e2e` | **17 passed**, 1 worker, 1.1 minutes; followed by **3 targeted responsive/accessibility tests passed** after tablet refinements (18 distinct E2E cases total); real Chromium + Vite + Fastify + SQLite |
+| `npm run test:e2e` | **26 passed** after the mobile extension (18 workspace + 8 mobile cases), 1 worker, approximately 1.5 minutes. Subsequent P2 display refinements are checked by targeted layout regression and the latest PR CI; real Chromium + Vite + Fastify + SQLite |
 | `node scripts/smoke-built.mjs` | Passed; compiled API/static routing, real browser login, screenshots, actual process restart persistence; **0 unexpected console/page errors** |
 | Desktop axe scan | No WCAG 2 A/AA or 2.1 AA violations reported for the tested initial projects view |
 | 390px collapsed/expanded and 768/1024px tablet views | Keyboard controls worked; no document horizontal overflow; tablet table can be scrolled by keyboard |
@@ -54,6 +54,16 @@ The current unmodified prepared-upload helper failed at `hosted apps tools/list 
 
 ## Explicitly unverified
 
-Final reference fidelity re-review, cloud browser preview (control tool unavailable), remote GitHub Actions run, production HTTPS/cookie behavior in a live reverse proxy, true external multi-person deployment, load/soak tests, multi-instance behavior, Firefox/Safari, assistive-technology manual testing, real mobile devices, SSO/MFA/password recovery, live AI integration, database backup restoration and container image execution.
+Final reference fidelity re-review, cloud browser preview (control tool unavailable), production HTTPS/cookie behavior in a live reverse proxy, true external multi-person deployment, load/soak tests, multi-instance behavior, Firefox/Safari, assistive-technology manual testing, real mobile devices, SSO/MFA/password recovery, live AI integration, database backup restoration and container image execution.
 
-No production deployment, merge or public branch push was performed. These local checks demonstrate functional implementation; they are not a production launch approval.
+The working branch was pushed with explicit user authorization and draft PR #1 was created; no merge or deployment was performed. The baseline remote Verify workflow succeeded at commit 3471080ad26ba9e09262e466a028c8eec55f389b; the latest commit status is linked from the PR. These local checks demonstrate functional implementation; they are not a production launch approval.
+
+## Mobile acceptance extension
+
+375px and 390px touch-enabled Chromium scenarios passed (8 cases): factual reports and named tasks; daily/weekly scopes; combined filters; detail/return and activity; long inline notes save/cancel/reload; reduced-height save-button scrolling; menu overlay; task/subtask creation, completion and cancellation; meeting ambiguity/source/overwrite review and cancellation. Primary controls were corrected to at least 44×44 CSS px, the menu gained dialog semantics, inert background and focus management, and notices no longer intercept touches. A duplicate audit-source selector revealed by retaining activity across tests was scoped to the newly opened source event.
+
+The 440px reduced-height check is a layout test, **not an actual iOS software-keyboard test**. iOS Safari, native mobile pickers and physical devices remain unverified. Runtime availability and supported private development options are in `docs/mobile-testing.md`. No phone-accessible preview URL has been created.
+
+## Reference review refinements
+
+Added a readable escaped TSV table alongside the editable exact source, visible task-status names and four-state summary labels, actual UTC date ranges, restored child-task indentation, and blue-purple selected/action colors. Adding the date range exposed tablet toolbar overflow; the toolbar now wraps between 761px and 1100px. The first row remains y=195.25 with 45px desktop rows. Final reference sign-off remains with the parent pixel review, not inferred from successful tests.

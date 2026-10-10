@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch } from "vue";
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import {
   PhRocketLaunch,
@@ -18,6 +18,8 @@ import {
 import { useWorkspace } from "./stores/workspace";
 const store = useWorkspace(),
   router = useRouter();
+const sidebarPanel = ref<HTMLElement | null>(null);
+let previousOverflow = "";
 const expanded = ref(false),
   email = ref(""),
   password = ref(""),
@@ -35,6 +37,20 @@ watch(
     expanded.value = false;
   },
 );
+watch(expanded, async (open) => {
+  if (open) {
+    previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    await nextTick();
+    sidebarPanel.value?.querySelector<HTMLButtonElement>("button")?.focus();
+  } else {
+    document.body.style.overflow = previousOverflow;
+    await nextTick();
+    document
+      .querySelector<HTMLButtonElement>('[aria-label="Toggle sidebar"]')
+      ?.focus();
+  }
+});
 let interval: ReturnType<typeof setInterval>;
 function shortcut(event: KeyboardEvent) {
   if (event.key === "Escape" && expanded.value) {
@@ -43,6 +59,23 @@ function shortcut(event: KeyboardEvent) {
       .querySelector<HTMLButtonElement>('[aria-label="Toggle sidebar"]')
       ?.focus();
   }
+  if (expanded.value && event.key === "Tab") {
+    const controls = sidebarPanel.value?.querySelectorAll<HTMLElement>(
+      "a[href], button:not([disabled])",
+    );
+    if (controls?.length) {
+      const first = controls[0]!,
+        last = controls[controls.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  }
+  if (expanded.value) return;
   if (
     event.key === "/" &&
     !(event.target instanceof HTMLInputElement) &&
@@ -62,6 +95,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   clearInterval(interval);
+  document.body.style.overflow = previousOverflow;
   window.removeEventListener("keydown", shortcut);
 });
 async function signIn() {
@@ -77,8 +111,10 @@ async function signIn() {
   }
 }
 async function signOut() {
-  if (window.confirm("Sign out? Save any open changes first."))
+  if (window.confirm("Sign out? Save any open changes first.")) {
+    expanded.value = false;
     await store.logout();
+  }
 }
 function search() {
   document.querySelector<HTMLInputElement>("[data-global-search]")?.focus();
@@ -131,7 +167,14 @@ function search() {
       aria-label="Close menu"
       @click="expanded = false"
     ></button>
-    <aside v-if="expanded" class="sidebar" aria-label="Workspace menu">
+    <aside
+      v-if="expanded"
+      ref="sidebarPanel"
+      class="sidebar"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Workspace menu"
+    >
       <div class="section-heading">
         <strong>Workspace</strong
         ><button
@@ -163,7 +206,7 @@ function search() {
         <PhSignOut :size="20" />Sign out
       </button>
     </aside>
-    <div class="app-body">
+    <div class="app-body" :inert="expanded">
       <header class="topbar">
         <div class="topbar-brand">
           <button
@@ -222,6 +265,10 @@ function search() {
           >
         </div>
       </header>
+      <div v-if="store.mode === 'local'" class="demo-notice" role="note">
+        Browser demo · changes stay on this device. No shared backend or AI
+        connection.
+      </div>
       <div v-if="store.error" role="alert" class="global-error">
         <span>{{ store.error }}</span
         ><button @click="store.refresh()">Retry</button>

@@ -25,6 +25,19 @@ watch(
     }
   },
 );
+const noteTables = computed(() => {
+  const groups: string[][][] = [];
+  let rows: string[][] = [];
+  for (const line of draft.value.split(/\r?\n/)) {
+    if (line.includes("\t")) rows.push(line.split("\t"));
+    else if (rows.length) {
+      groups.push(rows);
+      rows = [];
+    }
+  }
+  if (rows.length) groups.push(rows);
+  return groups;
+});
 const candidates = computed(() => noteDateCandidates(draft.value));
 const review = ref<number | null>(null),
   taskId = ref(""),
@@ -94,7 +107,10 @@ async function applyDate(line: number) {
 }
 </script>
 <template>
-  <section class="inline-notes">
+  <section
+    class="inline-notes"
+    :class="{ 'has-note-table': noteTables.length }"
+  >
     <div class="section-heading">
       <h4>Original notes</h4>
       <span class="muted"
@@ -104,6 +120,32 @@ async function applyDate(line: number) {
       >
     </div>
     <SaveError :error="error" @reload="reload" />
+    <div
+      v-for="(rows, index) in noteTables"
+      :key="index"
+      class="note-table-scroll"
+      role="region"
+      :aria-label="`Readable original table ${index + 1}`"
+      tabindex="0"
+    >
+      <table>
+        <caption>
+          Readable table · original text retained below
+        </caption>
+        <thead>
+          <tr>
+            <th v-for="(cell, column) in rows[0]" :key="column" scope="col">
+              {{ cell || `Column ${column + 1}` }}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(row, rowIndex) in rows.slice(1)" :key="rowIndex">
+            <td v-for="(cell, column) in row" :key="column">{{ cell }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
     <form @submit.prevent="save">
       <textarea
         v-model="draft"

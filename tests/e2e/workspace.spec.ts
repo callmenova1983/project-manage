@@ -235,7 +235,12 @@ test("meeting source, ambiguous match, overwrite confirmation and single apply",
   ).toBeVisible();
   await page.getByRole("link", { name: "View activity", exact: true }).click();
   await page.locator("details").first().locator("summary").click();
-  await expect(page.getByText(/line 1: Atlas and Meridian/)).toBeVisible();
+  await expect(
+    page
+      .locator("details")
+      .first()
+      .getByText(/line 1: Atlas and Meridian: review joint handoff/),
+  ).toBeVisible();
 });
 test("stale editor exposes current version without overwriting it", async ({
   page,
@@ -475,6 +480,9 @@ test("inline notes preserve text, cancellation and reviewed dates", async ({
   page,
 }) => {
   await openFirst(page);
+  await expect(
+    page.getByRole("region", { name: "Readable original table 1" }),
+  ).toContainText("Portal access");
   const notes = page.getByRole("textbox", {
     name: "Original notes for Atlas Customer Portal",
   });
@@ -521,7 +529,7 @@ test("project work scope switches named work and all four counts", async ({
     "Confirm project scope",
   );
   await expect(meridian.locator(".scope-counts")).toHaveText(
-    /○ 0.*◐ 6.*✓ 2.*△ 0/,
+    /To do 0.*In progress 6.*Done 2.*Needs coord. 0/,
   );
   await page.getByRole("button", { name: "Today 8", exact: true }).click();
   await expect(meridian.locator(".project-week")).toContainText(

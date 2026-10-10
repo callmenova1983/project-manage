@@ -66,13 +66,13 @@ button:disabled {
 }
 button.primary,
 .button.primary {
-  background: #aaa5ff;
-  border-color: #aaa5ff;
-  color: #19172b;
+  background: #6853dd;
+  border-color: #7965ef;
+  color: #fff;
   font-weight: 600;
 }
 button.primary:hover {
-  background: #bdb9ff;
+  background: #5c49ca;
 }
 .danger {
   background: #9b3f4a;
@@ -2631,5 +2631,300 @@ body {
     background: transparent;
     border: none;
     padding: 0;
+  }
+}
+
+/* Touch and reduced-viewport support without changing desktop list density. */
+.demo-notice {
+  padding: 8px 16px;
+  background: #272238;
+  color: #d9d2ef;
+  font-size: 13px;
+}
+.toast {
+  pointer-events: none;
+}
+.sidebar {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+@media (max-width: 760px) {
+  html {
+    scroll-padding-bottom: 24px;
+  }
+  button,
+  .button,
+  .icon-button,
+  .text-button,
+  .scope-tabs button,
+  .projects-page .heading-actions button,
+  .projects-page .heading-actions .button,
+  .scope-switch button,
+  .task-row > .icon-button,
+  .inline-notes .form-actions button,
+  .inline-subtasks .text-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  input:not([type="checkbox"]),
+  textarea,
+  select,
+  .projects-page .search-field input,
+  .projects-page .filterbar select,
+  .task-status select,
+  .inline-notes textarea {
+    font-size: 16px;
+    min-height: 44px;
+  }
+  input,
+  textarea,
+  select {
+    scroll-margin: 16px 0 32px;
+  }
+  input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+  }
+  .check-label {
+    min-height: 44px;
+    align-items: center;
+  }
+  .projects-page .filterbar select {
+    height: 44px;
+    font-size: 14px;
+  }
+  .projects-page .heading-actions .button {
+    padding: 5px 8px;
+  }
+  .scope-switch button {
+    padding: 5px 11px;
+  }
+  .topbar {
+    min-height: 56px;
+    height: 56px;
+  }
+  .topbar-right .avatar {
+    width: 44px;
+    height: 44px;
+  }
+  .topbar-brand {
+    gap: 0;
+  }
+  .topbar .brand {
+    gap: 6px;
+    font-size: 14px;
+  }
+  .topbar-right {
+    gap: 0;
+  }
+  .project-row > .project-cell {
+    align-items: flex-start;
+  }
+  .project-name a {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    overflow-wrap: anywhere;
+  }
+  .project-name > span {
+    line-height: 16px;
+  }
+  .project-row > .badge {
+    max-width: 110px;
+    white-space: normal;
+  }
+  .latest-update p,
+  .report-text,
+  .task-name,
+  .task-name .text-button,
+  .suggestion-source blockquote,
+  .working-notes,
+  .date-review pre {
+    overflow-wrap: anywhere;
+  }
+  .inline-task-scroll {
+    max-height: none;
+    overflow: visible;
+  }
+  .inline-subtasks .task-row {
+    flex-wrap: wrap;
+  }
+  .inline-subtasks .task-status select {
+    width: 44px;
+    padding-left: 4px;
+  }
+  .inline-subtasks .task-name {
+    flex-basis: calc(100% - 60px);
+  }
+  .inline-subtasks .task-row > .icon-button {
+    margin-left: auto;
+  }
+  .inline-subtasks .task-row > .icon-button + .icon-button {
+    margin-left: 0;
+  }
+  .task-row .task-name .text-button {
+    font-size: 14px;
+    text-align: left;
+  }
+  .inline-subtasks .section-heading > div {
+    gap: 6px;
+  }
+  .inline-notes textarea {
+    white-space: pre-wrap;
+    height: 150px;
+  }
+  .form-actions {
+    position: static;
+    gap: 8px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .review-footer button {
+    width: 100%;
+  }
+  .sidebar-expanded .sidebar {
+    width: min(300px, calc(100vw - 48px));
+  }
+  .sidebar .nav-item,
+  .back-link,
+  .suggestion-card summary {
+    min-height: 44px;
+  }
+  .sidebar .section-heading {
+    gap: 8px;
+  }
+  .toast {
+    bottom: max(12px, env(safe-area-inset-bottom, 0px));
+    right: 12px;
+    max-width: calc(100vw - 24px);
+  }
+}
+.scope-date {
+  color: #b7c4d8;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.week-task .badge {
+  font-size: 11px;
+  gap: 4px;
+}
+.project-scope-summary .scope-counts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px 6px;
+  font-size: 10px;
+  line-height: 18px;
+}
+.scope-summary-link {
+  display: block;
+}
+.note-table-scroll {
+  overflow: auto;
+  max-height: 100px;
+  margin-bottom: 6px;
+  border: 1px solid #35415a;
+  border-radius: 4px;
+}
+.note-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+.note-table-scroll caption {
+  font-size: 10px;
+  text-align: left;
+  color: #aab7cd;
+  padding: 3px 7px;
+}
+.note-table-scroll th,
+.note-table-scroll td {
+  border: 1px solid #35415a;
+  padding: 3px 7px;
+  white-space: pre-wrap;
+}
+.note-table-scroll th {
+  background: #202d43;
+  font-weight: 500;
+}
+.inline-notes.has-note-table textarea {
+  height: 68px;
+  min-height: 68px;
+}
+@media (min-width: 1251px) {
+  .project-table-head,
+  .project-row {
+    grid-template-columns:
+      minmax(230px, 1.2fr) 148px minmax(265px, 1.65fr)
+      minmax(235px, 1.3fr) 176px 24px;
+  }
+  .scope-caption {
+    font-size: 11px;
+  }
+}
+@media (max-width: 760px) {
+  .scope-date {
+    font-size: 11px;
+  }
+  .project-scope-summary .scope-counts {
+    gap: 2px 12px;
+    font-size: 12px;
+  }
+  .scope-summary-link {
+    min-height: 44px;
+  }
+  .week-task .badge {
+    font-size: 11px;
+  }
+  .task-row .task-name .text-button {
+    min-height: 44px;
+  }
+  .inline-subtasks .task-row .badge {
+    font-size: 11px;
+  }
+  .inline-notes.has-note-table textarea {
+    height: 120px;
+    min-height: 120px;
+  }
+  .note-table-scroll {
+    max-height: none;
+  }
+  .note-table-scroll table {
+    font-size: 13px;
+  }
+}
+.primary {
+  background: #6853dd;
+  color: #fff;
+  border-color: #7965ef;
+}
+.primary:hover:not(:disabled) {
+  background: #5c49ca;
+}
+.scope-switch button.active {
+  background: #42377d;
+  color: #f0edff;
+}
+.project-record.expanded > .project-row {
+  background: #202743;
+}
+.inline-subtasks .task-row.subtask {
+  padding-left: 24px;
+  margin-left: 8px;
+  border-left: 2px solid #465672;
+}
+@media (max-width: 760px) {
+  .task-row.subtask {
+    padding-left: 24px;
+    border-left: 2px solid #465672;
+  }
+  .inline-subtasks .task-row.subtask {
+    padding-left: 20px;
+  }
+}
+@media (min-width: 761px) and (max-width: 1100px) {
+  .work-scope-bar {
+    flex-wrap: wrap;
+    gap: 8px 16px;
   }
 }

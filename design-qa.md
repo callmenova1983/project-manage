@@ -58,3 +58,7 @@ The parent independently opened the actual version-2 reference and supplied conc
 - 390px first screen now contains the first project's factual report, report time/person and complete named tasks. 768/1024px table is contained in a keyboard-scrollable region.
 
 Final implementation screenshots have been opened and visually inspected. The remaining gate is the parent's same-state source/implementation comparison; no visual pass is claimed without it. All routine verification and the limitations are separately recorded in `docs/verification.md`.
+
+## Final P2 adjustments for parent re-review
+
+Readable TSV tables now render alongside the original editable text; task states and per-project state summaries have visible words; the active scope shows its actual UTC dates; child task indentation is restored with a visual guide; primary buttons and selected scope use blue-purple colors. Mobile primary actions are at least 44px, with touch flows tested at 375px and 390px. The final images are versioned under `docs/screenshots/` for direct GitHub access. These fixes address the five identified P2 findings; the report remains blocked pending the parent's final source-pixel comparison.

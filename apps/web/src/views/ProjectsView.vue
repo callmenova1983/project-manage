@@ -38,6 +38,19 @@ const query = ref(""),
   creating = ref(false),
   pasting = ref("");
 const scope = ref<"week" | "today">("week");
+const scopeDate = computed(() => {
+  const format = (date: Date) =>
+    date.toLocaleDateString("en", {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+  if (scope.value === "today")
+    return `${format(new Date())}, ${new Date().getUTCFullYear()} · UTC`;
+  const start = new Date(weekKey() + "T00:00:00Z");
+  const end = new Date(start.getTime() + 6 * 86400000);
+  return `${format(start)}–${format(end)}, ${end.getUTCFullYear()} · UTC`;
+});
 const scopeStats = computed(() => statistics(store.data.tasks, scope.value));
 const owners = computed(() =>
   [...new Set(store.data.projects.map((p) => p.owner))].sort(),
@@ -148,6 +161,7 @@ function edit(id: string) {
           This week <span>{{ store.week.total }}</span>
         </button>
       </div>
+      <span class="scope-date" aria-live="polite">{{ scopeDate }}</span>
       <div class="summary-counts">
         <span><StatusBadge status="todo" />{{ scopeStats.todo }}</span
         ><span
@@ -287,25 +301,21 @@ function edit(id: string) {
               >
             </div>
             <div class="project-scope-summary">
-              <span v-if="summary(project.id).total" class="scope-counts"
-                ><span :title="`${summary(project.id).todo} To do`"
-                  >○ {{ summary(project.id).todo }}</span
-                ><span :title="`${summary(project.id).in_progress} In progress`"
-                  >◐ {{ summary(project.id).in_progress }}</span
-                ><span :title="`${summary(project.id).done} Done`"
-                  >✓ {{ summary(project.id).done }}</span
-                ><span
-                  :title="`${summary(project.id).blocked} Needs coordination`"
-                  >△ {{ summary(project.id).blocked }}</span
-                ></span
-              >
-              <span v-else class="muted">—</span>
               <RouterLink
                 v-if="summary(project.id).total"
+                class="scope-summary-link"
                 :to="`/tasks?scope=${scope}&project=${project.id}`"
-                >{{ summary(project.id).total }} planned ·
-                {{ summary(project.id).unfinished }} open</RouterLink
+                :aria-label="`View ${summary(project.id).total} planned tasks for ${project.name}`"
               >
+                <span class="scope-counts"
+                  ><span>To do {{ summary(project.id).todo }}</span
+                  ><span>In progress {{ summary(project.id).in_progress }}</span
+                  ><span>Done {{ summary(project.id).done }}</span
+                  ><span
+                    >Needs coord. {{ summary(project.id).blocked }}</span
+                  ></span
+                > </RouterLink
+              ><span v-else class="muted">No work planned</span>
             </div>
             <RouterLink
               :to="`/projects/${project.id}`"
