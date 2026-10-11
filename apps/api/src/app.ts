@@ -23,7 +23,12 @@ import {
   type Suggestion,
 } from "../../../packages/domain/types.js";
 import { Repository, HttpError } from "./database.js";
-import { validateAppOrigin } from "./origin.js";
+import {
+  validateAppOrigin,
+  allowedMutationOrigin,
+  isLoopback,
+  type CodespacesOriginRewrite,
+} from "./origin.js";
 import { safeOriginDiagnostic } from "./origin-diagnostics.js";
 import { registerAiRoutes } from "./ai/routes.js";
 import { AiError } from "./ai/provider.js";
@@ -55,6 +60,7 @@ export async function buildApp(options: {
   qwen?: QwenConfig;
   aiFetch?: typeof fetch;
   originDiagnostics?: boolean;
+  codespacesOriginRewrite?: CodespacesOriginRewrite;
 }) {
   const allowedOrigin = validateAppOrigin(options.origin, !!options.production);
   const repo = new Repository(options.databasePath);
@@ -66,6 +72,12 @@ export async function buildApp(options: {
   const dummyHash = await passwordHash(randomBytes(32).toString("hex"));
   await app.register(cookie);
   await app.register(helmet, {
+    // The opt-in proxy check needs a browser-protected same-origin Referer.
+    // Never send a Referer to other sites; retain Helmet's stricter default
+    // for deployments that do not need the Codespaces compatibility branch.
+    referrerPolicy: {
+      policy: options.codespacesOriginRewrite ? "same-origin" : "no-referrer",
+    },
     contentSecurityPolicy: options.production
       ? {
           directives: {
@@ -98,17 +110,19 @@ export async function buildApp(options: {
       const peer = req.raw.socket.remoteAddress;
       console.info(
         JSON.stringify(
-          safeOriginDiagnostic(
-            req.headers,
-            allowedOrigin,
-            peer === "127.0.0.1" ||
-              peer === "::1" ||
-              peer === "::ffff:127.0.0.1",
-          ),
+          safeOriginDiagnostic(req.headers, allowedOrigin, isLoopback(peer)),
         ),
       );
     }
-    if (mutation && req.headers.origin && req.headers.origin !== allowedOrigin)
+    if (
+      mutation &&
+      !allowedMutationOrigin(
+        req.headers,
+        req.raw.socket.remoteAddress,
+        allowedOrigin,
+        options.codespacesOriginRewrite,
+      )
+    )
       throw new HttpError(403, "Origin not allowed");
     if (req.url === "/api/health" || req.url === "/api/auth/login") return;
     const session = sessionActor(repo, req.cookies.pm_session);

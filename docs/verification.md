@@ -1,5 +1,20 @@
 # Executed verification
 
+## Latest increment: browser demo and measured proxy compatibility (2026-10-11)
+
+The isolated `/demo/` entry is independently deployable at commit `1e05f36b4fe23fd35c1f8863e497ac366123ec32`. The subsequent proxy change is separate, so demo delivery does not depend on formal login recovery.
+
+- **32 Chromium E2E passed**: existing 28 plus 4 demo cases. Fresh anonymous contexts at 1536/390/375px verified project editing, cancellation, repeat save, task creation/status, reload persistence, route return, local rule suggestions, zero `/api/` requests and no issued session. Returning to the formal workspace still requires login; anonymous workspace API access remains 401.
+- **105 unit/API tests passed**, 7 files. Proxy coverage includes explicit deployment opt-in, exact Codespace/port and loopback binding, matching browser Referer, forged/missing/foreign/multiple forwarding values, remote peers, Secure session and CSRF protection. Compatibility responses provide same-origin-only Referer policy; default deployments retain no-referrer.
+- Lint, Vue/API typecheck, normal build, format and diff checks passed. No VITE demo flag is needed for `/demo/`; formal routes keep the HTTP adapter.
+- Built-runtime browser smoke passed: deep demo routes and save/reload work in the normal build; a browser that already has a formal session neither changes nor clears that session, demo activity leaves the server snapshot identical, and server process restart retains formal data. Zero unexpected console/page errors.
+- Actual Chromium replay of the observed Codespaces proxy rewrite passed: production headers, browser-generated Origin/Referer, Secure session, authenticated CSRF save and reload. It uses an in-memory API and synthetic credentials; every browser request is intercepted locally. **This is not a live deployment test.**
+- Desktop, 390px and 375px demo screenshots were opened and inspected. No horizontal page overflow; initial-view axe scans report no WCAG 2/2.1 A/AA violations. A fast local-save double-click exposed an implicit row double-click editor; removing that shortcut avoids opening an unrelated project after layout movement. Explicit Edit controls remain.
+
+Evidence: [desktop demo](screenshots/demo-desktop.png), [390px](screenshots/demo-390.png), [375px](screenshots/demo-375.png); `artifacts/built-runtime.json` and `artifacts/codespaces-browser.json`. The selected dark list composition is retained; the demo adds an honest local/synthetic-data notice. Actual public Codespaces verification is delegated to the deployment worker. No user browser/password, real Qwen call, deployment or merge was performed by this implementation worker.
+
+The sections below preserve earlier verification history and limitations; older counts/statuses are superseded by this increment and the exact-head PR CI.
+
 Execution environment: Linux x64, Node 24.19.0, npm 11.9.0, system Chromium 154.0.8037.57. Local run date: 2026-10-10. Synthetic workspace only.
 
 | Command/check | Actual result |

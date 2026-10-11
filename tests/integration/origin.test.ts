@@ -91,6 +91,7 @@ describe("Codespaces origin regression with synthetic local injection only", () 
         payload: {},
       });
       expect(preflight.statusCode).toBe(400); // Origin accepted; no credential was submitted.
+      expect(preflight.headers["referrer-policy"]).toBe("no-referrer");
       const login = await app.inject({
         method: "POST",
         url: "/api/auth/login",
@@ -266,5 +267,178 @@ describe("temporary origin diagnostics redact everything outside the explicit al
       host: "invalid",
       refererOrigin: "invalid",
     });
+  });
+});
+
+describe("opt-in Codespaces proxy rewrite", () => {
+  const codespaceName = "stunning-chainsaw-7qqqqjq6px4crw4p";
+  const environment = {
+    CODESPACES_ORIGIN_REWRITE: "1",
+    CODESPACES: "true",
+    CODESPACE_NAME: codespaceName,
+    HOST: "127.0.0.1",
+    PORT: "3001",
+  };
+  const proxyHeaders = {
+    origin: "http://localhost:3001",
+    host: "localhost:3001",
+    "x-forwarded-host": new URL(publicOrigin).host,
+    "x-forwarded-proto": "https",
+    referer: publicOrigin + "/projects",
+    "sec-fetch-site": "same-origin",
+  };
+  it("is disabled by default and refuses broad or mismatched deployment configuration", async () => {
+    const { configuredCodespacesRewrite } =
+      await import("../../apps/api/src/origin.js");
+    expect(configuredCodespacesRewrite({}, publicOrigin)).toBeUndefined();
+    for (const changes of [
+      { CODESPACES: undefined },
+      { CODESPACE_NAME: "another-space" },
+      { CODESPACE_NAME: "" },
+      { HOST: "0.0.0.0" },
+      { PORT: "3002" },
+      { PORT: "-1" },
+      { CODESPACES_ORIGIN_REWRITE: "true" },
+    ])
+      expect(() =>
+        configuredCodespacesRewrite(
+          { ...environment, ...changes },
+          publicOrigin,
+        ),
+      ).toThrow();
+    expect(() =>
+      configuredCodespacesRewrite(environment, "https://other.example.test"),
+    ).toThrow();
+  });
+  it("accepts only the measured proxy shape with a trusted browser Referer and local peer", async () => {
+    const { configuredCodespacesRewrite, allowedMutationOrigin } =
+      await import("../../apps/api/src/origin.js");
+    const rewrite = configuredCodespacesRewrite(environment, publicOrigin);
+    expect(allowedMutationOrigin(proxyHeaders, "127.0.0.1", publicOrigin)).toBe(
+      false,
+    );
+    for (const peer of ["127.0.0.1", "::1", "::ffff:127.0.0.1"])
+      expect(
+        allowedMutationOrigin(proxyHeaders, peer, publicOrigin, rewrite),
+      ).toBe(true);
+    for (const peer of [undefined, "192.0.2.7"])
+      expect(
+        allowedMutationOrigin(proxyHeaders, peer, publicOrigin, rewrite),
+      ).toBe(false);
+    for (const override of [
+      { origin: "https://evil.example" },
+      { origin: "null" },
+      { origin: "http://localhost:3002" },
+      { origin: "http://127.0.0.1:3001" },
+      { host: new URL(publicOrigin).host },
+      { host: "localhost:3002" },
+      { referer: undefined },
+      { referer: "null" },
+      { referer: "https://evil.example/path" },
+      { referer: publicOrigin + ".evil.example/path" },
+      { referer: "https://user:secret@" + new URL(publicOrigin).host + "/" },
+      { "x-forwarded-host": undefined },
+      { "x-forwarded-host": "evil.example" },
+      { "x-forwarded-host": new URL(publicOrigin).host + ", evil.example" },
+      { "x-forwarded-proto": undefined },
+      { "x-forwarded-proto": "http" },
+      { "x-forwarded-proto": "https,http" },
+      { "sec-fetch-site": "cross-site" },
+      { "sec-fetch-site": "same-site" },
+      { forwarded: "host=evil.example;proto=https" },
+    ])
+      expect(
+        allowedMutationOrigin(
+          { ...proxyHeaders, ...override },
+          "127.0.0.1",
+          publicOrigin,
+          rewrite,
+        ),
+      ).toBe(false);
+    expect(
+      allowedMutationOrigin(
+        { origin: publicOrigin, referer: "https://evil.example/" },
+        "127.0.0.1",
+        publicOrigin,
+        rewrite,
+      ),
+    ).toBe(false);
+  });
+  it("preserves login, Secure sessions, authentication, and CSRF behind the exact proxy rewrite", async () => {
+    const { configuredCodespacesRewrite } =
+      await import("../../apps/api/src/origin.js");
+    const { app, repo } = await buildApp({
+      databasePath: ":memory:",
+      origin: publicOrigin,
+      production: true,
+      codespacesOriginRewrite: configuredCodespacesRewrite(
+        environment,
+        publicOrigin,
+      ),
+    });
+    try {
+      const credential = {
+        email: "proxy@example.test",
+        password: "synthetic-proxy-regression-only",
+      };
+      await createUser(repo, {
+        ...credential,
+        name: "Synthetic Proxy",
+        workspaceId: "synthetic",
+      });
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        headers: proxyHeaders,
+        payload: credential,
+        remoteAddress: "127.0.0.1",
+      });
+      expect(login.statusCode).toBe(200);
+      expect(login.headers["referrer-policy"]).toBe("same-origin");
+      expect(login.cookies[0]).toMatchObject({
+        secure: true,
+        httpOnly: true,
+        sameSite: "Strict",
+      });
+      const cookie = login.cookies[0]!.name + "=" + login.cookies[0]!.value;
+      const post = (headers: Record<string, string | undefined>) =>
+        app.inject({
+          method: "POST",
+          url: "/api/proposals",
+          headers: { ...proxyHeaders, ...headers },
+          payload: { source: "Synthetic rewrite check" },
+          remoteAddress: "127.0.0.1",
+        });
+      expect((await post({})).statusCode).toBe(401);
+      const noToken = await post({ cookie });
+      expect(noToken.statusCode).toBe(403);
+      expect(noToken.json().message).toBe("Invalid request token");
+      const auth = {
+        cookie,
+        "x-csrf-token": login.json().csrf,
+        "idempotency-key": randomUUID(),
+      };
+      expect((await post(auth)).statusCode).toBe(200);
+      for (const override of [
+        { referer: "https://evil.example/path" },
+        { origin: "https://evil.example" },
+        { "sec-fetch-site": "cross-site" },
+      ]) {
+        const denied = await post({ ...auth, ...override });
+        expect(denied.statusCode).toBe(403);
+        expect(denied.json().message).toBe("Origin not allowed");
+      }
+      // Forwarding headers and a forged Referer from a remote peer do not opt in.
+      const remote = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        headers: proxyHeaders,
+        payload: {},
+        remoteAddress: "192.0.2.10",
+      });
+      expect(remote.statusCode).toBe(403);
+    } finally {
+      await app.close();
+    }
   });
 });

@@ -27,6 +27,7 @@ The deployment/browser worker can send an empty JSON login request with the actu
 curl -i -X POST \
   'https://stunning-chainsaw-7qqqqjq6px4crw4p-3001.app.github.dev/api/auth/login' \
   -H 'Origin: https://stunning-chainsaw-7qqqqjq6px4crw4p-3001.app.github.dev' \
+  -H 'Referer: https://stunning-chainsaw-7qqqqjq6px4crw4p-3001.app.github.dev/projects' \
   -H 'Content-Type: application/json' \
   --data '{}'
 ```
@@ -55,3 +56,30 @@ X-PM-Origin-Probe: 1
 Record only the JSON `origin-probe` log line from each request. The diagnostic is off by default and runs only for marked `POST /api/auth/login` requests. Its fixed allowlist includes normalized Origin, Host, Forwarded host/proto, X-Forwarded-Host/proto, Referer **origin only**, configured origin and a boolean for loopback peer. It excludes cookies, Authorization, all request bodies/passwords, full Referer paths/queries and forwarding IP addresses. Restore `ORIGIN_DIAGNOSTICS` to unset/0 and restart after capture. It does not change request acceptance or trust forwarded headers.
 
 The diagnostic/configuration patch alone does not fix a proxy rewrite. Do not add localhost to a broad origin allowlist or enable general proxy trust. A compatibility change needs the observed local/forwarded metadata and a narrowly scoped browser-origin/CSRF policy review first.
+
+## 已确认的 Codespaces Origin 重写与窄兼容
+
+现场同一空请求的服务端诊断证据：直接请求回环地址时，Origin 保持公网 HTTPS 来源；经 Codespaces 公网端口转发时，Origin 被重写成 `http://localhost:3001`、Host 为 `localhost:3001`，X-Forwarded-Host 保留公网主机、X-Forwarded-Proto 为 `https`，Referer 保留公网来源，连接对端为回环地址。该故障发生在密码校验前，不能通过改密码解决。
+
+只有确认实例属于上述模式时，才在 API 的实际启动环境设置：
+
+```dotenv
+CODESPACES_ORIGIN_REWRITE=1
+ORIGIN_DIAGNOSTICS=0
+```
+
+其余配置保持：`NODE_ENV=production`、精确的 HTTPS `APP_ORIGIN`、`HOST=127.0.0.1` 和实际 `PORT=3001`。平台提供的 `CODESPACES=true`、`CODESPACE_NAME` 必须存在且与 `https://<CODESPACE_NAME>-<PORT>.app.github.dev` 完全匹配；错误配置会拒绝启动。不要打印完整环境或任何密码、Cookie、Token。变更环境后重启 API。
+
+此开关默认关闭。兼容分支同时要求：
+
+- 回环 TCP 对端；Origin 和 Host 分别精确匹配 `http://localhost:<PORT>` 与 `localhost:<PORT>`。
+- X-Forwarded-Host 精确匹配配置的公网主机，X-Forwarded-Proto 仅为 `https`，不接受逗号拼接和另一个 Forwarded 头。
+- 浏览器 Referer 必须存在且来源精确等于 `APP_ORIGIN`，不能包含 URL 用户信息；存在的 Sec-Fetch-Site 必须为 `same-origin`。
+
+开启兼容时响应头设为 `Referrer-Policy: same-origin`，让真实浏览器向本站 API 保留必要的 Referer，而不向其他站点发送；不开启时仍是 `no-referrer`。部署后必须刷新正式登录页，旧页面可能仍保留之前的响应策略。
+
+不会单独信任可伪造的转发头，不开启全局 `trustProxy`，不允许其他 localhost 来源或通配域名。恶意或缺失 Referer、跨站请求和远程直连不进入兼容分支。原本精确匹配的 Origin 继续有效；提供的恶意 Referer 也会被拒绝。认证后的写入仍要求会话、CSRF、版本与幂等键。此配置面向受控 Codespace 的回环代理，不为同机不可信进程提供身份隔离；不要搬到任意反向代理或开放监听环境。
+
+部署后可用原文档中的**无凭证空请求**再次比较本机与公网返回，预期不再得到 `Origin not allowed`，而进入相同的请求格式/账号校验结果。不要让诊断日志长期打开，不要把真实密码发给协作者或诊断工具。真实账号登录由用户自行在正式入口完成。
+
+`node scripts/smoke-codespaces.mjs` 用实际 Chromium、编译产物及内存 API 重放已观察到的代理改写，并验证浏览器真实发送的 Origin/Referer、Secure 会话、CSRF 保存和刷新。所有请求都由隔离拦截器转交本地 API，虚构域名不访问网络，随机测试密码仅存在于内存；该结果不是实际公网部署验收。
