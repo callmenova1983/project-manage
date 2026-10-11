@@ -23,6 +23,8 @@ import {
   type Suggestion,
 } from "../../../packages/domain/types.js";
 import { Repository, HttpError } from "./database.js";
+import { validateAppOrigin } from "./origin.js";
+import { safeOriginDiagnostic } from "./origin-diagnostics.js";
 import { registerAiRoutes } from "./ai/routes.js";
 import { AiError } from "./ai/provider.js";
 import type { QwenConfig } from "./ai/config.js";
@@ -52,7 +54,9 @@ export async function buildApp(options: {
   staticPath?: string;
   qwen?: QwenConfig;
   aiFetch?: typeof fetch;
+  originDiagnostics?: boolean;
 }) {
+  const allowedOrigin = validateAppOrigin(options.origin, !!options.production);
   const repo = new Repository(options.databasePath);
   const app = Fastify({
     logger: false,
@@ -85,7 +89,26 @@ export async function buildApp(options: {
   app.addHook("onRequest", async (req) => {
     if (!req.url.startsWith("/api/")) return;
     const mutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
-    if (mutation && req.headers.origin && req.headers.origin !== options.origin)
+    if (
+      options.originDiagnostics &&
+      req.method === "POST" &&
+      req.url === "/api/auth/login" &&
+      req.headers["x-pm-origin-probe"] === "1"
+    ) {
+      const peer = req.raw.socket.remoteAddress;
+      console.info(
+        JSON.stringify(
+          safeOriginDiagnostic(
+            req.headers,
+            allowedOrigin,
+            peer === "127.0.0.1" ||
+              peer === "::1" ||
+              peer === "::ffff:127.0.0.1",
+          ),
+        ),
+      );
+    }
+    if (mutation && req.headers.origin && req.headers.origin !== allowedOrigin)
       throw new HttpError(403, "Origin not allowed");
     if (req.url === "/api/health" || req.url === "/api/auth/login") return;
     const session = sessionActor(repo, req.cookies.pm_session);

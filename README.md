@@ -16,7 +16,7 @@ npm run dev:all
 
 - Web：4173；API：127.0.0.1:3001，仅绑定本机。
 - 数据文件：`data/project-manage.sqlite`，重启不会丢失。
-- `APP_ORIGIN` 必须与浏览器来源一致。使用 `terminal.local` 或其他主机名时修改 `.env` 并重启 API。
+- `APP_ORIGIN` 必须与浏览器来源一致。使用 `terminal.local` 或其他主机名时修改实际启动环境并重启 API（已导出的变量优先于 `.env`）。登录报 `Origin not allowed` 是来源配置问题，发生在密码校验前；[排查与无凭证验证步骤](docs/origin-troubleshooting.md)。
 - 配置见 `.env.example`。不要提交 `.env`、数据库、用户导出或真实业务纪要。
 
 独立运行 Web/API：`npm run dev` / `npm run dev:api`。在无后端的临时展示中，可运行 `VITE_DEMO_MODE=1 npm run dev`；界面明确标记“Local demo · browser only”，使用独立的 localStorage，不会同步到服务器。
