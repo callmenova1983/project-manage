@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { activeStages, catalogs } from "../composables/catalogs";
-import { computed, ref, onMounted, onBeforeUnmount } from "vue";
+import { computed, ref, onMounted, onBeforeUnmount, nextTick } from "vue";
 import {
   PhUploadSimple,
   PhSparkle,
@@ -27,6 +27,8 @@ import { useWorkspace } from "../stores/workspace";
 import { api } from "../services/api";
 import { readIntakeFile } from "../services/intake-files";
 import { useUnsaved } from "../composables/unsaved";
+import { useIntakeDraft } from "../composables/intake-draft";
+import { intakeDraftKey } from "../services/intake-drafts";
 const store = useWorkspace();
 const step = ref<"source" | "review" | "done">("source"),
   text = ref(""),
@@ -45,7 +47,14 @@ let controller: AbortController | undefined;
 const dirty = computed(
   () => step.value !== "done" && !!(text.value || sources.value.length),
 );
-const askDiscard = useUnsaved(dirty);
+const askDiscard = useUnsaved(dirty, () => {
+  draft.flush();
+  return t(
+    draft.status.value === "saved"
+      ? "Leave intake? Your unsubmitted draft will stay in this tab."
+      : "Discard unsaved changes?",
+  );
+});
 const source = computed<IntakeSource>(
   () =>
     sources.value[sheetIndex.value] ?? {
@@ -55,7 +64,28 @@ const source = computed<IntakeSource>(
       text: text.value,
     },
 );
+const draft = useIntakeDraft(intakeDraftKey(store.mode, store.user!), {
+  step,
+  text,
+  sources,
+  sheetIndex,
+  source,
+  mapping,
+  hasHeader,
+  candidates,
+  confirmed,
+  dirty,
+});
 const selected = computed(() => candidates.value.filter((c) => c.selected));
+async function restoreDraft() {
+  draft.restore();
+  await nextTick();
+  document
+    .querySelector<HTMLElement>(
+      ".intake-candidate input, .intake-source textarea, .intake-source select",
+    )
+    ?.focus();
+}
 const newProjectCount = computed(
   () =>
     new Set(
@@ -206,6 +236,7 @@ async function apply() {
     step.value = "done";
     text.value = "";
     sources.value = [];
+    draft.flush();
     await loadHistory();
   } catch (e) {
     error.value = (e as Error).message.startsWith("[")
@@ -240,6 +271,7 @@ function startAgain() {
   candidates.value = [];
   result.value = null;
   error.value = "";
+  draft.flush();
 }
 onMounted(loadHistory);
 onBeforeUnmount(() => controller?.abort());
@@ -278,8 +310,74 @@ onBeforeUnmount(() => controller?.abort());
       </div>
     </div>
     <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
+    <section
+      v-if="draft.pending.value"
+      class="panel intake-source"
+      aria-labelledby="draft-recovery-title"
+    >
+      <h2 id="draft-recovery-title">{{ t("Unsubmitted intake draft") }}</h2>
+      <p>
+        {{
+          t(
+            "This draft is kept in this browser tab for up to 24 hours. It has not been submitted to the workspace.",
+          )
+        }}
+      </p>
+      <template v-if="draft.recovery.value.kind === 'ready'">
+        <p>
+          {{ t("Draft saved") }} ·
+          {{
+            formatDate(new Date(draft.recovery.value.draft.savedAt), {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })
+          }}
+        </p>
+        <p class="muted">
+          {{
+            t(
+              "Restore your source and edits, then review and confirm again. Only the selected worksheet is kept; reopen the file for other sheets.",
+            )
+          }}
+        </p>
+      </template>
+      <p v-else class="error-box" role="alert">
+        {{ t("This draft could not be read. Discard it to start again.") }}
+      </p>
+      <div class="form-actions">
+        <button @click="draft.discard()">{{ t("Discard draft") }}</button>
+        <button
+          v-if="draft.recovery.value.kind === 'ready'"
+          class="primary"
+          @click="restoreDraft"
+        >
+          {{ t("Restore draft") }}
+        </button>
+      </div>
+    </section>
+    <p
+      v-if="draft.status.value === 'unavailable'"
+      class="error-box"
+      role="alert"
+    >
+      {{
+        t(
+          "Temporary draft storage is unavailable or full. Keep this page open and copy your source before leaving; newer edits may not be recoverable.",
+        )
+      }}
+    </p>
+    <p v-else-if="draft.status.value === 'saved'" class="muted" role="status">
+      {{
+        t(
+          "Unsubmitted draft kept in this tab · up to 24 hours · review before saving to the workspace.",
+        )
+      }}
+    </p>
+    <p v-else-if="draft.status.value === 'expired'" class="muted" role="status">
+      {{ t("The previous temporary draft expired after 24 hours.") }}
+    </p>
     <div
-      v-if="step === 'source'"
+      v-if="!draft.pending.value && step === 'source'"
       class="panel intake-source"
       @dragover.prevent
       @drop.prevent="drop"
@@ -397,7 +495,10 @@ onBeforeUnmount(() => controller?.abort());
         </button>
       </div>
     </div>
-    <form v-else-if="step === 'review'" @submit.prevent="apply">
+    <form
+      v-else-if="!draft.pending.value && step === 'review'"
+      @submit.prevent="apply"
+    >
       <div class="intake-review-header">
         <div>
           <h2>{{ t("{count} candidates", { count: candidates.length }) }}</h2>

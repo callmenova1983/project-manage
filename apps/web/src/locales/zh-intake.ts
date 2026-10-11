@@ -1,4 +1,30 @@
 export const intakeZh: Record<string, string> = {
+  "Leave intake? Your unsubmitted draft will stay in this tab.":
+    "离开录入页面？尚未提交的草稿会留在当前标签页中。",
+  "Workspace connection interrupted": "工作区连接中断",
+  "We could not check your session. Retry when the service is available.":
+    "暂时无法确认登录状态。服务可用后，请重试连接。",
+  "Retry connection": "重试连接",
+  "If your workspace is hosted in Codespaces, its owner may need to wake it first.":
+    "如果工作区托管在 Codespaces，可能需要所有者先唤醒服务。",
+  "The service returned an unreadable response. Try again when the connection is available.":
+    "服务返回了无法读取的响应。连接恢复后请重试。",
+  "Unsubmitted intake draft": "尚未提交的录入草稿",
+  "This draft is kept in this browser tab for up to 24 hours. It has not been submitted to the workspace.":
+    "草稿暂存在当前浏览器标签页中，最多保留 24 小时，尚未提交到工作区。",
+  "Restore your source and edits, then review and confirm again. Only the selected worksheet is kept; reopen the file for other sheets.":
+    "可恢复原文和编辑内容，请重新审阅并确认。仅保留已选工作表，其他工作表需重新打开文件。",
+  "Draft saved": "草稿暂存于",
+  "This draft could not be read. Discard it to start again.":
+    "无法读取这份草稿，可丢弃后重新录入。",
+  "Discard draft": "丢弃草稿",
+  "Restore draft": "恢复草稿",
+  "Temporary draft storage is unavailable or full. Keep this page open and copy your source before leaving; newer edits may not be recoverable.":
+    "草稿暂存不可用或空间已满。请保持页面打开，离开前复制原文；最新编辑可能无法恢复。",
+  "Unsubmitted draft kept in this tab · up to 24 hours · review before saving to the workspace.":
+    "尚未提交的草稿已暂存在本标签页 · 最多保留 24 小时 · 审阅确认后才保存到工作区。",
+  "The previous temporary draft expired after 24 hours.":
+    "上次暂存的草稿已超过 24 小时并过期。",
   "Intake inbox": "待归属收件箱",
   "Save in Intake inbox": "先存入待归属收件箱",
   Unassigned: "未分配",

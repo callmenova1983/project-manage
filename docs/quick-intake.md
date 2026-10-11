@@ -22,6 +22,10 @@ Explicit repeated task labels and project labels on one line are split into sepa
 
 The synthetic regression set includes missing fields, task-only tables, exact/partial/conflicting aliases, one-line multiple tasks across projects, relative/invalid/contradictory dates, original provenance, repeated save, later assignment/completion, stale edits and protected undo. `tomorrow`, `下周五` and timezone phrases are deliberately left unresolved. This deterministic parser does **not** establish general natural-language understanding, implicit pronoun resolution or reliable extraction from arbitrary vague prose. The Qwen integration tests intercept transport; **no live model quality, latency, region, billing or fuzzy-language acceptance test has been performed**. A real test remains pending explicit region/budget and a provisioned backend secret. No old conversation key was used.
 
+## Unsubmitted draft recovery
+
+Quick intake now keeps a temporary, unsubmitted draft in this tab using sessionStorage, separated by adapter mode, workspace and account. After a reload or route return, choose Restore draft or Discard draft. Only the selected worksheet is retained. Source, mapping and reviewed edits are preserved; confirmations reset and target project versions are rechecked on submission. Successful saves, Cancel and explicit sign-out clear the current draft. Automatic session expiry keeps it for the same account to recover after signing in. Drafts expire for recovery after 24 hours; storage errors show an explicit warning. Closing the tab or browser recovery policies may remove them earlier. This is not shared persistence or an offline queue. See [recovery evidence and limits](m1-recovery.md).
+
 ## Storage and rollback
 
 `WorkspaceApi.applyIntake` applies a single reviewed batch. The server validates the entire batch and persists project/task changes, original row evidence, audit history and a batch receipt in one SQLite transaction. Existing project versions are checked against the version captured during review. HTTP retries use the existing idempotency mechanism. Invalid later rows leave no partial creations.

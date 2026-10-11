@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:net";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -73,7 +79,8 @@ try {
   assert.ok(html.includes("Project Manage") && html.includes("/assets/"));
   browser = await chromium.launch({
     executablePath:
-      process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ?? "/usr/bin/chromium",
+      process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ??
+      (existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : undefined),
     headless: true,
     args: ["--no-sandbox"],
   });

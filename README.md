@@ -108,7 +108,7 @@ npm run test:e2e
 npm run test:runtime  # 构建产物、真实浏览器与进程重启验证
 ```
 
-E2E 使用独立的 `data/e2e.sqlite`、运行时随机测试凭证和真实 Web/API。每次执行只重建测试数据库，不改本地工作数据库。默认支持系统 `/usr/bin/chromium`，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定其他 Chromium。运行时需要空闲 3001、4173 端口。报告在 `playwright-report/`，截图在 `artifacts/`。八周后续完善与验收计划见 `docs/improvement-plan.md`。具体实际执行结果及视觉阻碍见 `docs/verification.md` 和 `design-qa.md`。
+E2E 使用独立的 `data/e2e.sqlite`、运行时随机测试凭证和真实 Web/API。每次执行只重建测试数据库，不改本地工作数据库。默认支持系统 `/usr/bin/chromium`，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定其他 Chromium。运行时需要空闲 3001、4173 端口。报告在 `playwright-report/`，截图在 `artifacts/`。2026-10-12—2027-01-11 三个月体验改进计划见 [improvement-plan.md](docs/improvement-plan.md)，首批恢复改进见 [m1-recovery.md](docs/m1-recovery.md)。具体实际执行结果及视觉阻碍见 `docs/verification.md` 和 `design-qa.md`。
 
 ## 架构
 

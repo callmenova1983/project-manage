@@ -8,11 +8,15 @@ export function hasUnsavedChanges() {
 export function confirmDiscard() {
   return !hasUnsavedChanges() || window.confirm(t("Discard unsaved changes?"));
 }
-export function useUnsaved(dirty: Ref<boolean>) {
+export function useUnsaved(dirty: Ref<boolean>, leaveMessage?: () => string) {
   editors.add(dirty);
   const ask = () =>
     !dirty.value || window.confirm(t("Discard unsaved changes?"));
-  onBeforeRouteLeave(() => ask());
+  onBeforeRouteLeave(
+    () =>
+      !dirty.value ||
+      window.confirm(leaveMessage?.() ?? t("Discard unsaved changes?")),
+  );
   const before = (e: BeforeUnloadEvent) => {
     if (dirty.value) {
       e.preventDefault();

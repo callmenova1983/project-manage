@@ -141,7 +141,44 @@ function search() {
     <PhSpinnerGap :size="28" class="spin" />
     <p>{{ t("Opening your workspace…") }}</p>
   </div>
-  <main v-else-if="!store.user" class="login-shell">
+  <main
+    v-else-if="store.sessionState === 'unavailable'"
+    id="main-content"
+    class="login-shell"
+  >
+    <section class="login-card" aria-labelledby="connection-title">
+      <div class="login-preferences"><PreferencesControls /></div>
+      <div class="brand-mark"><PhArrowClockwise :size="30" /></div>
+      <h1 id="connection-title">{{ t("Workspace connection interrupted") }}</h1>
+      <p>
+        {{
+          t(
+            "We could not check your session. Retry when the service is available.",
+          )
+        }}
+      </p>
+      <p class="error-box" role="alert">{{ t(store.error) }}</p>
+      <button class="primary" @click="store.initialize()">
+        {{ t("Retry connection") }}<PhArrowClockwise :size="18" />
+      </button>
+      <p class="fine-print">
+        {{
+          t(
+            "If your workspace is hosted in Codespaces, its owner may need to wake it first.",
+          )
+        }}
+      </p>
+      <a class="demo-entry" href="/demo/"
+        >{{ t("Try demo · no sign-in required") }}<PhArrowRight :size="16"
+      /></a>
+      <p class="fine-print">
+        {{
+          t("Explore synthetic projects. Demo changes stay in this browser.")
+        }}
+      </p>
+    </section>
+  </main>
+  <main v-else-if="!store.user" id="main-content" class="login-shell">
     <form class="login-card" @submit.prevent="signIn">
       <div class="login-preferences"><PreferencesControls /></div>
       <div class="brand-mark">
@@ -318,7 +355,12 @@ function search() {
           >
         </div>
       </header>
-      <div v-if="store.mode === 'local'" class="demo-notice" role="note">
+      <div
+        v-if="store.mode === 'local'"
+        class="demo-notice"
+        role="region"
+        :aria-label="t('Local demo · browser only')"
+      >
         {{
           t(
             "Browser demo · synthetic projects. Changes stay in this browser. No shared backend or AI connection.",

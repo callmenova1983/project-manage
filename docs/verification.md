@@ -1,5 +1,11 @@
 # Executed verification
 
+## M1 connection and intake recovery (2026-10-11)
+
+Current increment: [M1 implementation, before/after screenshots and limits](m1-recovery.md). Lint, typecheck, format, build and compiled runtime smoke passed; 191 unit/API tests passed. The full local 60-case E2E run passed, then the final 8-case recovery suite passed after adding account-switch recovery and narrowing expected HTTP-error filtering. The final suite has 61 cases; exact-commit CI evidence is linked in the draft PR. The three-month plan is [2026-10-12 through 2027-01-11](improvement-plan.md). Codespaces sleep, real iOS 0 KB and real model evaluation remain unverified/unresolved; this increment was not deployed.
+
+The following sections are historical checkpoints.
+
 ## Progressive capture and final administration delivery (2026-10-11)
 
 Minimal project/task drafts can be saved before client, owner, date or stage is known. Unresolved tasks use a flagged inbox excluded from business-project counts; missing dates are null and stages stay unclassified. Same-name new-project rows fill only missing facts in any row order; conflicting known facts stop the entire batch and identify the field. Standalone tasks can later change project assignment with version and workspace checks. No real provider request was made.

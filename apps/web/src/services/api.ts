@@ -29,7 +29,7 @@ import type {
 } from "../../../../packages/domain/intake";
 export { ApiError } from "./contracts";
 export type { WorkspaceApi, ReviewedSuggestion } from "./contracts";
-class HttpApi implements WorkspaceApi {
+export class HttpApi implements WorkspaceApi {
   readonly mode = "server" as const;
   private csrf = "";
   private pending = new Map<string, string>();
@@ -59,7 +59,18 @@ class HttpApi implements WorkspaceApi {
         "Unable to reach the server. Your changes are still here; check the connection and try again.",
       );
     }
-    const json = await response.json();
+    let json;
+    try {
+      json = await response.json();
+      if (json === null || typeof json !== "object") throw new Error();
+    } catch {
+      // A proxy may return HTML (or an empty body). Never surface that body,
+      // and keep the mutation key: the server may already have committed it.
+      throw new ApiError(
+        "The service returned an unreadable response. Try again when the connection is available.",
+        response.status,
+      );
+    }
     if (response.ok || response.status < 500 || json.code?.startsWith("AI_"))
       this.pending.delete(fingerprint);
     if (!response.ok)
