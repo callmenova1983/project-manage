@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import {
+  stageIds as stages,
+  catalogs,
+  catalogLabel,
+} from "../composables/catalogs";
 import { computed, ref } from "vue";
 import {
   PhMagnifyingGlass,
@@ -12,7 +17,6 @@ import {
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
 import {
-  stages,
   statuses,
   disciplines,
   statistics,
@@ -39,6 +43,7 @@ const query = ref(""),
   stage = ref(""),
   owner = ref(""),
   discipline = ref(""),
+  category = ref(""),
   sort = ref("updated"),
   expanded = ref(""),
   editing = ref(""),
@@ -72,7 +77,8 @@ const projects = computed(() =>
             .includes(query.value.toLowerCase())) &&
         (!stage.value || p.stage === stage.value) &&
         (!owner.value || p.owner === owner.value) &&
-        (!discipline.value || p.discipline === discipline.value),
+        (!discipline.value || p.discipline === discipline.value) &&
+        (!category.value || p.categoryIds?.includes(category.value)),
     )
     .sort((a, b) =>
       sort.value === "name"
@@ -81,13 +87,21 @@ const projects = computed(() =>
     ),
 );
 const filtered = computed(
-  () => !!(query.value || stage.value || owner.value || discipline.value),
+  () =>
+    !!(
+      query.value ||
+      stage.value ||
+      owner.value ||
+      discipline.value ||
+      category.value
+    ),
 );
 function clear() {
   query.value = "";
   stage.value = "";
   owner.value = "";
   discipline.value = "";
+  category.value = "";
 }
 function tasks(id: string) {
   return store.data.tasks.filter((t) => t.projectId === id);
@@ -261,6 +275,19 @@ function edit(id: string) {
             <option value="">{{ t("All responsibilities") }}</option>
             <option v-for="d in disciplines" :key="d" :value="d">
               {{ t(d) }}
+            </option></select
+          ><select
+            v-if="catalogs.categories.length"
+            v-model="category"
+            :aria-label="t('Filter by category')"
+          >
+            <option value="">{{ t("All categories") }}</option>
+            <option
+              v-for="item in catalogs.categories"
+              :key="item.id"
+              :value="item.id"
+            >
+              {{ catalogLabel("categories", item.id) }}
             </option></select
           ><select v-model="sort" :aria-label="t('Sort projects')">
             <option value="updated">{{ t("Latest report") }}</option>

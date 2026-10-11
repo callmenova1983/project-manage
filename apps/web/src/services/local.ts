@@ -1,3 +1,19 @@
+import {
+  defaultCatalogs,
+  defaultModelSettings,
+  catalogsInput,
+  adminUserInput,
+  adminUserUpdate,
+  modelSettingsInput,
+  checkCatalogs,
+  checkProjectCatalog,
+  importCatalogs,
+  validateCatalogReferences,
+  type ManagedUser,
+  type ModelSettings,
+  type ModelLog,
+  type AdminAudit,
+} from "../../../../packages/domain/admin";
 import { createSeed } from "../../../../packages/domain/seed";
 import {
   intakeInput,
@@ -34,21 +50,45 @@ const actor: Actor = {
   workspaceId: "local-demo",
   email: "demo@example.test",
   name: "Local demo",
+  role: "admin",
 };
 export function createLocalApi(): WorkspaceApi {
-  let state: Snapshot & { intakes?: IntakeBatch[] };
+  let state: Snapshot & {
+    intakes?: IntakeBatch[];
+    administration?: {
+      users: ManagedUser[];
+      model: ModelSettings;
+      logs: ModelLog[];
+      audit: AdminAudit[];
+    };
+  };
   const proposals = new Map<string, Proposal>();
   const read = () => {
     const raw = localStorage.getItem(KEY);
     if (!raw) {
-      state = createSeed();
+      state = {
+        ...createSeed(),
+        schemaVersion: 2,
+        catalogs: structuredClone(defaultCatalogs),
+      };
       localStorage.setItem(KEY, JSON.stringify(state));
     } else {
       try {
         const data = JSON.parse(raw);
         const parsed = snapshotImport.parse(data);
         validateGraph(parsed.projects, parsed.tasks);
-        state = { ...data, ...parsed };
+        if (parsed.schemaVersion === 2 && !parsed.catalogs)
+          throw new Error("Missing catalog");
+        validateCatalogReferences(
+          parsed.projects,
+          parsed.catalogs ?? defaultCatalogs,
+        );
+        state = {
+          ...data,
+          ...parsed,
+          schemaVersion: 2,
+          catalogs: parsed.catalogs ?? structuredClone(defaultCatalogs),
+        };
       } catch {
         throw new ApiError(
           "Local demo data is invalid. Export your browser storage before resetting this demo.",
@@ -77,8 +117,10 @@ export function createLocalApi(): WorkspaceApi {
     state.activities.unshift({
       id: crypto.randomUUID(),
       projectId:
-        kind === "task" ? (after as Task)?.projectId : (after?.id ?? null),
-      entityId: after?.id ?? "",
+        kind === "task"
+          ? ((after as Task)?.projectId ?? (before as Task)?.projectId ?? null)
+          : (after?.id ?? before?.id ?? null),
+      entityId: after?.id ?? before?.id ?? "",
       kind,
       action: action ?? (before ? "Updated " + kind : "Created " + kind),
       actor: actor.name,
@@ -95,6 +137,11 @@ export function createLocalApi(): WorkspaceApi {
   ) => {
     read();
     projectInput.parse(data);
+    checkProjectCatalog(
+      data,
+      state.catalogs ?? defaultCatalogs,
+      id ? state.projects.find((p) => p.id === id) : undefined,
+    );
     const old = state.projects.find((p) => p.id === id);
     if (id && !old) throw new ApiError("Project not found", 404);
     if (old && old.version !== version)
@@ -172,6 +219,71 @@ export function createLocalApi(): WorkspaceApi {
     persist();
     return t;
   };
+  function administration() {
+    if (!state.administration)
+      state.administration = {
+        users: [
+          {
+            id: actor.id,
+            name: actor.name,
+            email: actor.email,
+            role: "admin",
+            status: "active",
+            version: 1,
+            activationRequired: false,
+          },
+          {
+            id: "demo-member",
+            name: "Jamie Chen",
+            email: "jamie@example.test",
+            role: "member",
+            status: "active",
+            version: 1,
+            activationRequired: false,
+          },
+        ],
+        model: { ...defaultModelSettings },
+        logs: [
+          {
+            id: "simulation-example",
+            createdAt: new Date().toISOString(),
+            actor: "Local demo",
+            provider: "qwen",
+            model: "qwen3.6-35b-a3b",
+            mode: "simulated",
+            status: "succeeded",
+            durationMs: 420,
+            inputTokens: 180,
+            outputTokens: 64,
+            cost: null,
+            errorCode: null,
+            attempts: 1,
+          },
+        ],
+        audit: [],
+      };
+    return state.administration;
+  }
+  function auditAdmin(action: string, target: string) {
+    administration().audit.unshift({
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      actor: actor.name,
+      action,
+      target,
+    });
+  }
+  function modelState() {
+    return {
+      settings: structuredClone(administration().model),
+      credentialAvailable: false,
+      runtimeEnabled: false,
+      approvedRegion: null,
+      approvedModel: null,
+      remainingAttempts: 0,
+      expiresAt: null,
+    };
+  }
   return {
     async aiCapabilities() {
       return {
@@ -264,10 +376,19 @@ export function createLocalApi(): WorkspaceApi {
         throw new ApiError("Workspace changed. Review again.", 409);
       const parsed = snapshotImport.parse(data);
       validateGraph(parsed.projects, parsed.tasks);
+      const catalogs = importCatalogs(
+        parsed,
+        state.catalogs ?? defaultCatalogs,
+        true,
+      );
       state = {
         ...parsed,
+        schemaVersion: 2,
+        catalogs,
         revision: state.revision,
         activities: state.activities,
+        administration: state.administration,
+        intakes: state.intakes,
       };
       persist();
       return read();
@@ -363,6 +484,123 @@ export function createLocalApi(): WorkspaceApi {
         throw e;
       }
     },
+    async adminUsers() {
+      read();
+      return structuredClone(administration().users);
+    },
+    async saveUser(input, id) {
+      read();
+      const admin = administration();
+      if (id) {
+        const parsed = adminUserUpdate.parse(input),
+          old = admin.users.find((u) => u.id === id);
+        if (!old) throw new ApiError("User not found", 404);
+        if (old.version !== parsed.version)
+          throw new ApiError("This user changed. Reload before saving.", 409);
+        if (admin.users.some((u) => u.id !== id && u.email === parsed.email))
+          throw new ApiError("This email is already in use");
+        if (old.activationRequired && parsed.status === "active")
+          throw new ApiError(
+            "A pending user must activate their account first",
+          );
+        if (!old.activationRequired && parsed.status === "pending")
+          throw new ApiError("Active accounts cannot be returned to pending");
+        if (
+          old.role === "admin" &&
+          old.status === "active" &&
+          (parsed.role !== "admin" || parsed.status !== "active") &&
+          admin.users.filter((u) => u.role === "admin" && u.status === "active")
+            .length === 1
+        )
+          throw new ApiError("Keep at least one active administrator");
+        const updated = { ...old, ...parsed, version: old.version + 1 };
+        admin.users = admin.users.map((u) => (u.id === id ? updated : u));
+        auditAdmin("Updated user access", id);
+        persist();
+        return structuredClone(updated);
+      }
+      const parsed = adminUserInput.parse(input);
+      if (admin.users.some((u) => u.email === parsed.email))
+        throw new ApiError("This email cannot be used for a new account");
+      const created: ManagedUser = {
+        ...parsed,
+        id: crypto.randomUUID(),
+        status: "pending",
+        version: 1,
+        activationRequired: true,
+      };
+      admin.users.push(created);
+      auditAdmin("Created pending user", created.id);
+      persist();
+      return structuredClone(created);
+    },
+    async userActivation(id) {
+      read();
+      const user = administration().users.find((u) => u.id === id);
+      if (!user || user.status !== "pending")
+        throw new ApiError("Activation links are only for pending accounts");
+      user.status = "active";
+      user.activationRequired = false;
+      user.version++;
+      auditAdmin("Simulated account activation", id);
+      persist();
+      return {
+        token: null,
+        expiresAt: new Date().toISOString(),
+        simulated: true,
+      };
+    },
+    async activateAccount() {
+      throw new ApiError("Demo accounts do not authenticate to the server");
+    },
+    async catalogs() {
+      read();
+      return structuredClone(state.catalogs ?? defaultCatalogs);
+    },
+    async saveCatalogs(input) {
+      read();
+      const old = state.catalogs ?? defaultCatalogs,
+        next = catalogsInput.parse(input);
+      if (next.version !== old.version)
+        throw new ApiError("Catalog changed. Reload before saving.", 409);
+      checkCatalogs(next, old, state.projects);
+      next.version++;
+      state.catalogs = next;
+      auditAdmin("Updated stage and category catalog", actor.workspaceId);
+      persist();
+      return structuredClone(next);
+    },
+    async modelAdmin() {
+      read();
+      return modelState();
+    },
+    async saveModel(input) {
+      read();
+      const next = modelSettingsInput.parse(input),
+        admin = administration();
+      if (next.version !== admin.model.version)
+        throw new ApiError(
+          "Model settings changed. Reload before saving.",
+          409,
+        );
+      if (next.enabled)
+        throw new ApiError(
+          "Provision matching server credentials before enabling calls",
+        );
+      next.version++;
+      admin.model = next;
+      auditAdmin("Updated model settings", actor.workspaceId);
+      persist();
+      return modelState();
+    },
+    async modelLogs() {
+      read();
+      return structuredClone(administration().logs);
+    },
+    async adminAudit() {
+      read();
+      return structuredClone(administration().audit);
+    },
     async intakeHistory() {
       read();
       return structuredClone(state.intakes ?? []);
@@ -375,6 +613,8 @@ export function createLocalApi(): WorkspaceApi {
         actor.name,
         () => crypto.randomUUID(),
       );
+      for (const project of batch.projects)
+        checkProjectCatalog(project, state.catalogs ?? defaultCatalogs);
       state.projects.push(...batch.projects);
       state.tasks.push(...batch.tasks);
       validateGraph(state.projects, state.tasks);

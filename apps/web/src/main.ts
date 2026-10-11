@@ -11,6 +11,7 @@ import ActivityView from "./views/ActivityView.vue";
 import MeetingsView from "./views/MeetingsView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import IntakeView from "./views/IntakeView.vue";
+import AdminView from "./views/AdminView.vue";
 import "@fontsource/inter/latin-400.css";
 import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
@@ -27,6 +28,7 @@ const router = createRouter({
     { path: "/meetings", component: MeetingsView },
     { path: "/settings", component: SettingsView },
     { path: "/intake", component: IntakeView },
+    { path: "/admin", component: AdminView },
     {
       path: "/:pathMatch(.*)*",
       component: {

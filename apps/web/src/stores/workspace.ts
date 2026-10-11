@@ -1,3 +1,4 @@
+import { setCatalogs } from "../composables/catalogs";
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { api, ApiError } from "../services/api";
@@ -38,6 +39,7 @@ export const useWorkspace = defineStore("workspace", () => {
     try {
       const snapshot = await api.snapshot();
       data.value = snapshot;
+      setCatalogs(snapshot.catalogs);
       lastSynced.value = new Date();
       error.value = "";
     } catch (e) {

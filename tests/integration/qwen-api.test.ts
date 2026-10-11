@@ -272,3 +272,70 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
     ).toBe(200);
   });
 });
+
+it("records safe actual usage metadata and workspace settings can disable future calls", async () => {
+  ctx.repo.db
+    .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
+    .run();
+  mock.mockImplementation(async () => {
+    const body = await reply(ctx.repo.snapshot("test").projects[0]!.id).json();
+    return Response.json({
+      ...body,
+      usage: { prompt_tokens: 120, completion_tokens: 45 },
+    });
+  });
+  const key = randomUUID();
+  expect((await propose(key)).statusCode).toBe(200);
+  await propose(key);
+  const result = await request("GET", "/api/admin/model/logs");
+  expect(result.statusCode).toBe(200);
+  expect(result.json()).toHaveLength(1);
+  expect(result.json()[0]).toMatchObject({
+    status: "succeeded",
+    provider: "qwen",
+    model: QWEN_MODEL,
+    mode: "real",
+    inputTokens: 120,
+    outputTokens: 45,
+    cost: null,
+    attempts: 1,
+  });
+  expect(result.json()[0].durationMs).toBeGreaterThanOrEqual(0);
+  expect(result.body).not.toContain(source);
+  expect(result.body).not.toContain(config.apiKey);
+  expect(result.body).not.toContain("suggestions");
+  const state = (await request("GET", "/api/admin/model")).json();
+  const saved = await ctx.app.inject({
+    method: "PUT",
+    url: "/api/admin/model",
+    headers: {
+      cookie,
+      origin,
+      "x-csrf-token": csrf,
+      "idempotency-key": randomUUID(),
+    },
+    payload: { ...state.settings, enabled: false },
+  });
+  expect(saved.statusCode).toBe(200);
+  expect((await propose()).statusCode).toBe(503);
+  expect(mock).toHaveBeenCalledTimes(1);
+});
+it("records failed provider status without source data, generated text or fabricated usage", async () => {
+  ctx.repo.db
+    .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
+    .run();
+  mock.mockResolvedValue(
+    Response.json({ secret: "should never be logged" }, { status: 503 }),
+  );
+  expect((await propose()).statusCode).toBe(503);
+  const result = await request("GET", "/api/admin/model/logs");
+  expect(result.json()[0]).toMatchObject({
+    status: "failed",
+    inputTokens: null,
+    outputTokens: null,
+    cost: null,
+    errorCode: "AI_PROVIDER",
+    attempts: 1,
+  });
+  expect(result.body).not.toContain("should never be logged");
+});

@@ -19,6 +19,9 @@ import { useWorkspace } from "./stores/workspace";
 import { embeddedDemo } from "./services/mode";
 import { t, formatDate } from "./locales";
 import PreferencesControls from "./components/PreferencesControls.vue";
+import ActivateAccount from "./components/ActivateAccount.vue";
+import { initialActivationToken } from "./services/activation";
+const activationToken = ref(initialActivationToken);
 const store = useWorkspace(),
   router = useRouter();
 const sidebarPanel = ref<HTMLElement | null>(null);
@@ -87,7 +90,7 @@ function shortcut(event: KeyboardEvent) {
   }
 }
 onMounted(() => {
-  void store.initialize();
+  if (!activationToken.value) void store.initialize();
   window.addEventListener("keydown", shortcut);
   interval = setInterval(() => {
     if (store.user && !store.busy && !document.hidden) void store.refresh(true);
@@ -122,7 +125,19 @@ function search() {
 </script>
 <template>
   <a class="skip-link" href="#main-content">{{ t("Skip to content") }}</a>
-  <div v-if="store.loading && !store.user" class="loading-screen" role="status">
+  <ActivateAccount
+    v-if="activationToken"
+    :token="activationToken"
+    @done="
+      activationToken = '';
+      store.initialize();
+    "
+  />
+  <div
+    v-else-if="store.loading && !store.user"
+    class="loading-screen"
+    role="status"
+  >
     <PhSpinnerGap :size="28" class="spin" />
     <p>{{ t("Opening your workspace…") }}</p>
   </div>
@@ -209,6 +224,12 @@ function search() {
           }}</span></RouterLink
         >
       </nav>
+      <RouterLink
+        v-if="store.mode === 'local' || store.user?.role === 'admin'"
+        to="/admin"
+        class="nav-item"
+        ><PhGearSix :size="21" />{{ t("Administration") }}</RouterLink
+      >
       <RouterLink
         to="/settings"
         class="nav-item"

@@ -8,15 +8,19 @@ import {
 import { HttpError, type Repository } from "../database.js";
 import { AiError, generateQwen, makeRequest, sourceInput } from "./provider.js";
 import type { QwenConfig } from "./config.js";
+import { writeModelLog } from "../admin.js";
+import type { ModelLog } from "../../../../packages/domain/admin.js";
 export function registerAiRoutes(
   app: FastifyInstance,
   repo: Repository,
   actor: (r: FastifyRequest) => Actor,
   config?: QwenConfig,
   fetchImpl?: typeof fetch,
+  resolveConfig?: (actor: Actor) => QwenConfig | undefined,
 ) {
+  const configFallback = config;
   const active = new Set<string>();
-  const attempts = () =>
+  const attempts = (config?: QwenConfig) =>
     config
       ? Number(
           repo.db
@@ -26,24 +30,27 @@ export function registerAiRoutes(
             .get(config.budgetId)!.total,
         )
       : 0;
-  app.get("/api/ai/capabilities", () => ({
-    enabled:
-      !!config &&
-      config.expiresAt > Date.now() &&
-      attempts() < config.maxRequests,
-    provider: config ? "qwen" : "rules",
-    model: config?.model ?? null,
-    region: config?.region ?? null,
-    // Configuration is not evidence that a real provider call has succeeded.
-    connectionVerified: false,
-    remainingAttempts: config
-      ? Math.max(0, config.maxRequests - attempts())
-      : 0,
-  }));
+  app.get("/api/ai/capabilities", (req) => {
+    const current = resolveConfig ? resolveConfig(actor(req)) : config;
+    return {
+      enabled:
+        !!current &&
+        current.expiresAt > Date.now() &&
+        attempts(current) < current.maxRequests,
+      provider: current ? "qwen" : "rules",
+      model: current?.model ?? null,
+      region: current?.region ?? null,
+      connectionVerified: false,
+      remainingAttempts: current
+        ? Math.max(0, current.maxRequests - attempts(current))
+        : 0,
+    };
+  });
   app.post(
     "/api/proposals/qwen",
     { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } },
     async (req) => {
+      const config = resolveConfig ? resolveConfig(actor(req)) : configFallback;
       if (!config)
         throw new AiError(
           503,
@@ -95,7 +102,10 @@ export function registerAiRoutes(
           "AI_BUSY",
           "Another AI review is running in this workspace. Wait for it to finish.",
         );
-      if (Date.now() >= config.expiresAt || attempts() >= config.maxRequests)
+      if (
+        Date.now() >= config.expiresAt ||
+        attempts(config) >= config.maxRequests
+      )
         throw new AiError(
           429,
           "AI_BUDGET",
@@ -107,7 +117,24 @@ export function registerAiRoutes(
         )
         .run(a.id, key, hash, Date.now());
       active.add(a.workspaceId);
+      const started = performance.now();
+      const log: ModelLog = {
+        id: randomUUID(),
+        createdAt: new Date().toISOString(),
+        actor: a.name,
+        provider: "qwen",
+        model: config.model,
+        mode: "real",
+        status: "started",
+        durationMs: null,
+        inputTokens: null,
+        outputTokens: null,
+        cost: null,
+        errorCode: null,
+        attempts: 0,
+      };
       try {
+        writeModelLog(repo, a.workspaceId, log);
         const suggestions = await generateQwen(
           source,
           projects,
@@ -116,13 +143,15 @@ export function registerAiRoutes(
             repo.transaction(() => {
               if (
                 Date.now() >= config.expiresAt ||
-                attempts() >= config.maxRequests
+                attempts(config) >= config.maxRequests
               )
                 throw new AiError(
                   429,
                   "AI_BUDGET",
                   "The approved AI attempt budget is exhausted or expired.",
                 );
+              log.attempts++;
+              writeModelLog(repo, a.workspaceId, log);
               repo.db
                 .prepare(
                   "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
@@ -130,6 +159,10 @@ export function registerAiRoutes(
                 .run(randomUUID(), config.budgetId, a.id, Date.now());
             }),
           fetchImpl,
+          (usage) => {
+            log.inputTokens = usage.inputTokens;
+            log.outputTokens = usage.outputTokens;
+          },
         );
         const proposal: Proposal = {
           id: randomUUID(),
@@ -157,6 +190,7 @@ export function registerAiRoutes(
             )
             .run(JSON.stringify(proposal), a.id, key);
         });
+        log.status = "succeeded";
         return proposal;
       } catch (error) {
         const e =
@@ -180,9 +214,13 @@ export function registerAiRoutes(
             a.id,
             key,
           );
+        log.status = "failed";
+        log.errorCode = e.code;
         throw e;
       } finally {
         active.delete(a.workspaceId);
+        log.durationMs = Math.round(performance.now() - started);
+        writeModelLog(repo, a.workspaceId, log);
       }
     },
   );

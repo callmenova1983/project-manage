@@ -22,7 +22,8 @@
     "user:reset-password": "tsx apps/api/src/reset-password.ts",
     "setup:local": "tsx scripts/setup-local.ts",
     "test:runtime": "npm run build && node scripts/smoke-built.mjs",
-    "format:check": "prettier --check apps packages tests scripts *.ts *.js *.json"
+    "format:check": "prettier --check apps packages tests scripts *.ts *.js *.json",
+    "admin:grant": "tsx apps/api/src/grant-admin.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",

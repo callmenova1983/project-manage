@@ -1,10 +1,7 @@
 <script setup lang="ts">
+import { stageIds as stages, stageColors } from "../composables/catalogs";
 import { computed } from "vue";
-import {
-  stages,
-  type Project,
-  type Stage,
-} from "../../../../packages/domain/types";
+import { type Project, type Stage } from "../../../../packages/domain/types";
 import { stageLabels } from "../locales/en";
 import { t, formatNumber } from "../locales";
 import StatusBadge from "./StatusBadge.vue";
@@ -13,7 +10,7 @@ const emit = defineEmits<{ select: [stage: Stage | ""] }>();
 const counts = computed(
   () =>
     Object.fromEntries(
-      stages.map((stage) => [
+      stages.value.map((stage) => [
         stage,
         props.projects.filter((project) => project.stage === stage).length,
       ]),
@@ -27,6 +24,7 @@ const maximum = computed(() => Math.max(1, ...Object.values(counts.value)));
       v-for="stage in stages"
       :key="stage"
       :class="['stage-tile', stage, { selected: selected === stage }]"
+      :style="{ '--stage-color': stageColors(stage).color }"
       :aria-pressed="selected === stage"
       :aria-label="
         t('{count} projects in {stage}', {

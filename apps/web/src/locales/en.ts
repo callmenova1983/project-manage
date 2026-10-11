@@ -1,21 +1,9 @@
 import { t } from "./index";
-export const stageLabels = {
-  get potential() {
-    return t("Potential");
-  },
-  get proposal() {
-    return t("Proposal & quote");
-  },
-  get approved() {
-    return t("Ready to start");
-  },
-  get implementation() {
-    return t("In progress");
-  },
-  get operations() {
-    return t("Operations");
-  },
-};
+import { catalogLabel } from "../composables/catalogs";
+export const stageLabels: Record<string, string> = new Proxy(
+  {},
+  { get: (_, key) => catalogLabel("stages", String(key)) },
+);
 export const statusLabels = {
   get todo() {
     return t("To do");

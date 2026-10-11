@@ -22,6 +22,21 @@ writeFileSync(
   JSON.stringify({ email: "e2e@example.test", password }),
   { mode: 0o600 },
 );
+const adminPassword = randomBytes(24).toString("hex");
+await createUser(repo, {
+  email: "e2e-admin@example.test",
+  name: "Test Administrator",
+  password: adminPassword,
+  workspaceId: "e2e",
+});
+repo.db
+  .prepare("UPDATE users SET role='admin' WHERE email='e2e-admin@example.test'")
+  .run();
+writeFileSync(
+  "data/e2e-admin-login.json",
+  JSON.stringify({ email: "e2e-admin@example.test", password: adminPassword }),
+  { mode: 0o600 },
+);
 await app.listen({ host: "127.0.0.1", port: 3001 });
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, () => {

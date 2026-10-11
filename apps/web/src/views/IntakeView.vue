@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { stageIds as stages, catalogs } from "../composables/catalogs";
 import { computed, ref, onMounted, onBeforeUnmount } from "vue";
 import {
   PhUploadSimple,
@@ -19,11 +20,7 @@ import {
   type IntakeField,
   type IntakeBatch,
 } from "../../../../packages/domain/intake";
-import {
-  stages,
-  statuses,
-  projectInput,
-} from "../../../../packages/domain/types";
+import { statuses, projectInput } from "../../../../packages/domain/types";
 import { stageLabels, statusLabels } from "../locales/en";
 import { t, formatDate, formatNumber } from "../locales";
 import { useWorkspace } from "../stores/workspace";
@@ -147,6 +144,7 @@ function preview() {
       store.data.projects,
       source.value.rows ? mapping.value : undefined,
       hasHeader.value,
+      catalogs.value,
     ).map((c) => ({ ...c, reviewed: false }));
     if (!candidates.value.length)
       throw new Error("No candidates found. Add text or choose another sheet.");

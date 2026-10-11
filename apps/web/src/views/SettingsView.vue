@@ -14,6 +14,10 @@ import {
   leafTasks,
 } from "../../../../packages/domain/types";
 import { useUnsaved } from "../composables/unsaved";
+import {
+  defaultCatalogs,
+  importCatalogs,
+} from "../../../../packages/domain/admin";
 const store = useWorkspace();
 const pending = ref<ReturnType<typeof snapshotImport.parse> | null>(null),
   confirmed = ref(false),
@@ -50,6 +54,11 @@ async function choose(e: Event) {
       throw new Error(t("Import files must be under 2 MB."));
     const parsed = snapshotImport.parse(JSON.parse(await file.text()));
     validateGraph(parsed.projects, parsed.tasks);
+    importCatalogs(
+      parsed,
+      store.data.catalogs ?? defaultCatalogs,
+      store.mode === "local" || store.user?.role === "admin",
+    );
     pending.value = parsed;
     revision.value = store.data.revision;
   } catch (e) {
@@ -185,6 +194,13 @@ async function importData() {
                 projects: formatNumber(store.data.projects.length),
                 tasks: formatNumber(store.total.total),
               },
+            )
+          }}
+        </p>
+        <p v-if="pending.catalogs" class="muted">
+          {{
+            t(
+              "This file includes stage and category definitions. Importing changes to these definitions requires administrator access.",
             )
           }}
         </p>

@@ -119,7 +119,7 @@ export function describeActivity(activity: Activity): ActivityDescription {
     if (before.stage !== after.stage)
       return {
         key: "Stage changed: {stage}",
-        params: { stage: stageLabels[after.stage] },
+        params: { stage: stageLabels[after.stage] ?? after.stage },
         tone: "stage",
         subject,
       };

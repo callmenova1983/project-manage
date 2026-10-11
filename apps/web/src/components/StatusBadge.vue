@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { stageColors } from "../composables/catalogs";
+import type { Component } from "vue";
 import {
   PhCircle,
   PhLightbulb,
@@ -19,7 +21,7 @@ const icons = {
   done: PhCheckCircle,
   blocked: PhWarningCircle,
 };
-const stageIcons = {
+const stageIcons: Record<string, Component> = {
   potential: PhLightbulb,
   proposal: PhChatsCircle,
   approved: PhClipboardText,
@@ -37,8 +39,12 @@ const stageIcons = {
       :class="{ 'status-label-hidden': iconOnly }"
       >{{ statusLabels[status] }}</span
     ></span
-  ><span v-else-if="stage" class="badge" :class="stage"
-    ><component :is="stageIcons[stage]" :size="14" />{{
+  ><span
+    v-else-if="stage"
+    class="badge"
+    :class="stage"
+    :style="stageColors(stage)"
+    ><component :is="stageIcons[stage] ?? PhCircle" :size="14" />{{
       stageLabels[stage]
     }}</span
   >

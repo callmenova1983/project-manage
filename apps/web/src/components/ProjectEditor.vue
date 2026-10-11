@@ -1,9 +1,9 @@
 <script setup lang="ts">
+import { catalogs, activeStages, catalogLabel } from "../composables/catalogs";
 import { t } from "../locales";
 import { ref, computed } from "vue";
 import {
   projectInput,
-  stages,
   disciplines,
   type Project,
   type ProjectInput,
@@ -21,7 +21,8 @@ const empty: ProjectInput = {
   name: "",
   client: "",
   description: "",
-  stage: "potential",
+  stage: activeStages.value[0]?.id ?? "potential",
+  categoryIds: [],
   owner: store.user?.name ?? "Unassigned",
   discipline: "Delivery",
   latestUpdate: "",
@@ -30,6 +31,18 @@ const empty: ProjectInput = {
 };
 const draft = ref<ProjectInput>(
   props.project ? projectInput.strip().parse(props.project) : empty,
+);
+draft.value.categoryIds ??= [];
+const stages = computed(() =>
+  catalogs.value.stages
+    .filter((s) => !s.archived || s.id === original.value?.stage)
+    .sort((a, b) => a.order - b.order)
+    .map((s) => s.id),
+);
+const categories = computed(() =>
+  catalogs.value.categories
+    .filter((c) => !c.archived || original.value?.categoryIds?.includes(c.id))
+    .sort((a, b) => a.order - b.order),
 );
 const aliases = ref(draft.value.aliases.join(", "));
 let baseline = JSON.stringify(draft.value);
@@ -111,8 +124,20 @@ function reload() {
         >{{ t("Aliases, comma separated")
         }}<input
           v-model="aliases"
-          :placeholder="t('Alternative names for matching')" /></label
-      ><label class="full"
+          :placeholder="t('Alternative names for matching')"
+      /></label>
+      <fieldset v-if="categories.length" class="full category-options">
+        <legend>{{ t("Business categories") }}</legend>
+        <label v-for="category in categories" :key="category.id"
+          ><input
+            v-model="draft.categoryIds"
+            type="checkbox"
+            :value="category.id"
+          />{{ catalogLabel("categories", category.id)
+          }}<small v-if="category.archived">{{ t("Archived") }}</small></label
+        >
+      </fieldset>
+      <label class="full"
         >{{ t("Description")
         }}<textarea
           v-model="draft.description"
@@ -150,3 +175,26 @@ function reload() {
     </div>
   </form>
 </template>
+
+<style scoped>
+.category-options {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.category-options label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.category-options input {
+  width: auto;
+}
+.category-options small {
+  color: var(--muted);
+}
+</style>

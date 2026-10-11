@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { catalogsInput, type Catalogs } from "./admin.js";
 export const stages = [
   "potential",
   "proposal",
@@ -28,7 +29,11 @@ export const projectInput = z
     name: text(120),
     client: text(120),
     description: z.string().max(4000),
-    stage: z.enum(stages),
+    stage: z.string().regex(/^[a-z][a-z0-9_-]{0,49}$/),
+    categoryIds: z
+      .array(z.string().regex(/^[a-z][a-z0-9_-]{0,49}$/))
+      .max(20)
+      .optional(),
     owner: text(80),
     discipline: z.enum(disciplines),
     latestUpdate: z.string().max(4000),
@@ -66,12 +71,13 @@ export type TaskInput = z.infer<typeof taskInput>;
 export type Project = z.infer<typeof projectSchema>;
 export type Task = z.infer<typeof taskSchema>;
 export type Status = (typeof statuses)[number];
-export type Stage = (typeof stages)[number];
+export type Stage = string;
 export interface Actor {
   id: string;
   name: string;
   email: string;
   workspaceId: string;
+  role?: "member" | "admin";
 }
 export interface Activity {
   id: string;
@@ -86,14 +92,16 @@ export interface Activity {
   after: Project | Task | null;
 }
 export interface Snapshot {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
+  catalogs?: Catalogs;
   revision: number;
   projects: Project[];
   tasks: Task[];
   activities: Activity[];
 }
 export const snapshotImport = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.union([z.literal(1), z.literal(2)]),
+  catalogs: catalogsInput.optional(),
   projects: z.array(projectSchema).max(1000),
   tasks: z.array(taskSchema).max(10000),
 });

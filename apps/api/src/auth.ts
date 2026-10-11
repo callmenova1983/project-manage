@@ -52,7 +52,7 @@ export function sessionActor(
   if (!token) throw new HttpError(401, "Sign in to continue");
   const row = repo.db
     .prepare(
-      "SELECT users.id,users.workspace_id,users.email,users.name,sessions.csrf FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires_at>?",
+      "SELECT users.id,users.workspace_id,users.email,users.name,users.role,sessions.csrf FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires_at>? AND users.status='active' AND users.requires_activation=0",
     )
     .get(hashToken(token), Date.now());
   if (!row) throw new HttpError(401, "Your session expired. Sign in again.");
@@ -62,6 +62,7 @@ export function sessionActor(
       workspaceId: String(row.workspace_id),
       name: String(row.name),
       email: String(row.email),
+      role: row.role as "member" | "admin",
     },
     csrf: String(row.csrf),
   };

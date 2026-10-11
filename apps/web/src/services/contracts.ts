@@ -1,4 +1,12 @@
 import type {
+  ManagedUser,
+  Catalogs,
+  ModelAdminState,
+  ModelSettings,
+  ModelLog,
+  AdminAudit,
+} from "../../../../packages/domain/admin";
+import type {
   NoteDateInput,
   Actor,
   Project,
@@ -64,4 +72,20 @@ export interface WorkspaceApi {
   intakeHistory(): Promise<IntakeBatch[]>;
   applyIntake(input: IntakeInput): Promise<IntakeBatch>;
   undoIntake(id: string): Promise<IntakeBatch>;
+  adminUsers(): Promise<ManagedUser[]>;
+  saveUser(
+    input: Pick<ManagedUser, "name" | "email" | "role"> &
+      Partial<Pick<ManagedUser, "status" | "version">>,
+    id?: string,
+  ): Promise<ManagedUser>;
+  userActivation(
+    id: string,
+  ): Promise<{ token: string | null; expiresAt: string; simulated: boolean }>;
+  activateAccount(token: string, password: string): Promise<void>;
+  catalogs(): Promise<Catalogs>;
+  saveCatalogs(input: Catalogs): Promise<Catalogs>;
+  modelAdmin(): Promise<ModelAdminState>;
+  saveModel(input: ModelSettings): Promise<ModelAdminState>;
+  modelLogs(): Promise<ModelLog[]>;
+  adminAudit(): Promise<AdminAudit[]>;
 }

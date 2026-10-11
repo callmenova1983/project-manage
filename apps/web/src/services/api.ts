@@ -1,4 +1,12 @@
 import type {
+  ManagedUser,
+  Catalogs,
+  ModelAdminState,
+  ModelSettings,
+  ModelLog,
+  AdminAudit,
+} from "../../../../packages/domain/admin";
+import type {
   NoteDateInput,
   Actor,
   Project,
@@ -148,6 +156,48 @@ class HttpApi implements WorkspaceApi {
     return this.call<IntakeBatch>(`/intakes/${id}/undo`, "POST", {
       confirmed: true,
     });
+  }
+  adminUsers() {
+    return this.call<ManagedUser[]>("/admin/users");
+  }
+  saveUser(
+    input: Pick<ManagedUser, "name" | "email" | "role"> &
+      Partial<Pick<ManagedUser, "status" | "version">>,
+    id?: string,
+  ) {
+    return this.call<ManagedUser>(
+      id ? `/admin/users/${id}` : "/admin/users",
+      id ? "PUT" : "POST",
+      input,
+    );
+  }
+  userActivation(id: string) {
+    return this.call<{
+      token: string | null;
+      expiresAt: string;
+      simulated: boolean;
+    }>(`/admin/users/${id}/activation`, "POST", { confirmed: true });
+  }
+  async activateAccount(token: string, password: string) {
+    await this.call("/auth/activate", "POST", { token, password });
+  }
+  catalogs() {
+    return this.call<Catalogs>("/catalogs");
+  }
+  saveCatalogs(input: Catalogs) {
+    return this.call<Catalogs>("/admin/catalogs", "PUT", input);
+  }
+  modelAdmin() {
+    return this.call<ModelAdminState>("/admin/model");
+  }
+  saveModel(input: ModelSettings) {
+    return this.call<ModelAdminState>("/admin/model", "PUT", input);
+  }
+  modelLogs() {
+    return this.call<ModelLog[]>("/admin/model/logs");
+  }
+  adminAudit() {
+    return this.call<AdminAudit[]>("/admin/audit");
   }
 }
 export const api: WorkspaceApi = browserDemo

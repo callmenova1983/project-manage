@@ -1,3 +1,5 @@
+> Follow-up: Quick intake and administration are now implemented. See [quick-intake.md](quick-intake.md) and [administration.md](administration.md). The roadmap below describes the earlier delivery checkpoint.
+
 # 第一批：双语、双主题与项目跟踪
 
 本批围绕三个问题：所有项目现在怎样、本周实际变了什么、接下来做什么。保留紧凑列表和默认收起的侧栏，不加入甘特、日历、延期驾驶舱或角色权限孤岛。

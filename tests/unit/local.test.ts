@@ -170,3 +170,41 @@ it("persists reviewed intake and undoes it after schema-normalized reload", asyn
   expect((await reopened.snapshot()).projects).toEqual(before.projects);
   expect((await reopened.intakeHistory())[0]?.state).toBe("undone");
 });
+
+it("keeps demo administration local, persists user/catalog/model changes and never creates a real credential", async () => {
+  const { defaultCatalogs } = await import("../../packages/domain/admin");
+  const api = createLocalApi();
+  const user = await api.saveUser({
+    name: "Synthetic member",
+    email: "member@example.test",
+    role: "member",
+  });
+  expect(user.status).toBe("pending");
+  expect(await api.userActivation(user.id)).toMatchObject({
+    token: null,
+    simulated: true,
+  });
+  const c = structuredClone(defaultCatalogs);
+  c.categories.push({
+    id: "design",
+    en: "Design",
+    zh: "设计",
+    order: 0,
+    color: "blue",
+    archived: false,
+  });
+  await api.saveCatalogs(c);
+  const model = await api.modelAdmin();
+  await api.saveModel({ ...model.settings, timeoutMs: 10000 });
+  const reopened = createLocalApi();
+  expect(
+    (await reopened.adminUsers()).find((u) => u.id === user.id)?.status,
+  ).toBe("active");
+  expect((await reopened.catalogs()).categories[0]?.id).toBe("design");
+  expect((await reopened.modelAdmin()).settings.timeoutMs).toBe(10000);
+  expect((await reopened.modelAdmin()).credentialAvailable).toBe(false);
+  expect(
+    (await reopened.modelLogs()).every((l) => l.mode === "simulated"),
+  ).toBe(true);
+  expect((await reopened.adminAudit()).length).toBeGreaterThanOrEqual(4);
+});

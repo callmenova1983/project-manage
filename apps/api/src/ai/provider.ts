@@ -150,6 +150,10 @@ export async function generateQwen(
   config: QwenConfig,
   reserveAttempt: () => void,
   fetchImpl: typeof fetch = fetch,
+  reportUsage?: (usage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+  }) => void,
 ): Promise<Suggestion[]> {
   const body = JSON.stringify(makeRequest(source, projects, config));
   for (let attempt = 0; attempt <= config.retries; attempt++) {
@@ -204,6 +208,7 @@ export async function generateQwen(
       const result = z
         .object({
           model: z.string().optional(),
+          usage: z.unknown().optional(),
           choices: z
             .array(
               z.object({
@@ -217,6 +222,17 @@ export async function generateQwen(
             .length(1),
         })
         .parse(await boundedJson(response));
+      const usage = z
+        .object({
+          prompt_tokens: z.number().int().nonnegative(),
+          completion_tokens: z.number().int().nonnegative(),
+        })
+        .safeParse(result.usage);
+      if (usage.success)
+        reportUsage?.({
+          inputTokens: usage.data.prompt_tokens,
+          outputTokens: usage.data.completion_tokens,
+        });
       if (result.model && result.model !== config.model)
         throw new Error("Unexpected model");
       return validateSuggestions(

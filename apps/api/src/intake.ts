@@ -9,6 +9,7 @@ import {
   type IntakeBatch,
 } from "../../../packages/domain/intake.js";
 import type { Actor } from "../../../packages/domain/types.js";
+import { checkProjectCatalog } from "../../../packages/domain/admin.js";
 import { Repository, HttpError } from "./database.js";
 export type Mutate = <T>(request: FastifyRequest, fn: (actor: Actor) => T) => T;
 export function registerIntakeRoutes(
@@ -33,6 +34,13 @@ export function registerIntakeRoutes(
         a.name,
         randomUUID,
       );
+      for (const project of batch.projects) {
+        try {
+          checkProjectCatalog(project, repo.catalogs(a.workspaceId));
+        } catch (e) {
+          throw new HttpError(400, (e as Error).message);
+        }
+      }
       for (const p of batch.projects) {
         repo.putProject(a.workspaceId, p);
         repo.record(

@@ -4,6 +4,11 @@ import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createSeed } from "../../../packages/domain/seed.js";
 import {
+  catalogsInput,
+  defaultCatalogs,
+  type Catalogs,
+} from "../../../packages/domain/admin.js";
+import {
   validateGraph,
   type Actor,
   type Project,
@@ -93,12 +98,21 @@ export class Repository {
       .get(workspaceId);
     if (!row) throw new HttpError(404, "Workspace not found");
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
+      catalogs: this.catalogs(workspaceId),
       revision: Number(row.revision),
       projects: this.read<Project>("projects", workspaceId),
       tasks: this.read<Task>("tasks", workspaceId),
       activities: this.read<Activity>("activities", workspaceId),
     };
+  }
+  catalogs(workspaceId: string): Catalogs {
+    const row = this.db
+      .prepare("SELECT data FROM workspace_catalogs WHERE workspace_id=?")
+      .get(workspaceId);
+    return row
+      ? catalogsInput.parse(JSON.parse(String(row.data)))
+      : structuredClone(defaultCatalogs);
   }
   read<T>(table: "projects" | "tasks" | "activities", ws: string): T[] {
     return this.db

@@ -1,3 +1,4 @@
+import { defaultCatalogs, type Catalogs } from "./admin.js";
 import { z } from "zod";
 import {
   dateSchema,
@@ -204,6 +205,7 @@ export function intakeCandidates(
   projects: Project[],
   mapping?: IntakeField[],
   header = true,
+  catalog: Catalogs = defaultCatalogs,
 ): IntakeCandidate[] {
   intakeSourceSchema.parse(source);
   const rows = sourceRows(source);
@@ -257,7 +259,13 @@ export function intakeCandidates(
         ) &&
         (!client || normalizeName(p.client) === normalizeName(client)),
     );
-    const stage = stageMap[normalizeName(fields.stage ?? "")],
+    const stage =
+        stageMap[normalizeName(fields.stage ?? "")] ??
+        catalog.stages.find((s) =>
+          [s.id, s.en, s.zh].some(
+            (n) => normalizeName(n) === normalizeName(fields.stage ?? ""),
+          ),
+        )?.id,
       status = statusMap[normalizeName(fields.status ?? "")];
     const date = fields.dueDate?.trim() ?? "";
     const warnings: string[] = [];
@@ -280,7 +288,11 @@ export function intakeCandidates(
         name,
         client: client || matches[0]?.client || "",
         owner: fields.owner || matches[0]?.owner || "Unassigned",
-        stage: stage ?? matches[0]?.stage ?? "potential",
+        stage:
+          stage ??
+          matches[0]?.stage ??
+          catalog.stages.find((s) => !s.archived)?.id ??
+          "potential",
         discipline: "Delivery",
         description: fields.description ?? "",
         latestUpdate: "",

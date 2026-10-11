@@ -33,6 +33,11 @@ import { safeOriginDiagnostic } from "./origin-diagnostics.js";
 import { registerAiRoutes } from "./ai/routes.js";
 import { AiError } from "./ai/provider.js";
 import { registerIntakeRoutes } from "./intake.js";
+import { registerAdminRoutes, workspaceQwen } from "./admin.js";
+import {
+  checkProjectCatalog,
+  importCatalogs,
+} from "../../../packages/domain/admin.js";
 import type { QwenConfig } from "./ai/config.js";
 import {
   hashToken,
@@ -125,7 +130,12 @@ export async function buildApp(options: {
       )
     )
       throw new HttpError(403, "Origin not allowed");
-    if (req.url === "/api/health" || req.url === "/api/auth/login") return;
+    if (
+      req.url === "/api/health" ||
+      req.url === "/api/auth/login" ||
+      req.url === "/api/auth/activate"
+    )
+      return;
     const session = sessionActor(repo, req.cookies.pm_session);
     identity.set(req, session);
     if (mutation && req.headers["x-csrf-token"] !== session.csrf)
@@ -159,7 +169,9 @@ export async function buildApp(options: {
   });
   app.addHook("onClose", async () => repo.close());
   const actor = (r: FastifyRequest) => identity.get(r)!.actor;
-  registerAiRoutes(app, repo, actor, options.qwen, options.aiFetch);
+  registerAiRoutes(app, repo, actor, options.qwen, options.aiFetch, (a) =>
+    workspaceQwen(repo, a.workspaceId, options.qwen),
+  );
   function mutate<T>(req: FastifyRequest, fn: (a: Actor) => T): T {
     const a = actor(req);
     const key = z.string().uuid().parse(req.headers["idempotency-key"]);
@@ -193,6 +205,7 @@ export async function buildApp(options: {
     });
   }
   registerIntakeRoutes(app, repo, actor, mutate);
+  registerAdminRoutes(app, repo, actor, mutate, options.qwen);
   app.get("/api/health", () => ({ status: "ok" }));
   app.post(
     "/api/auth/login",
@@ -211,7 +224,12 @@ export async function buildApp(options: {
         input.password,
         String(user?.password_hash ?? dummyHash),
       );
-      if (!user || !valid)
+      if (
+        !user ||
+        !valid ||
+        user.status !== "active" ||
+        user.requires_activation
+      )
         throw new HttpError(401, "Email or password is incorrect");
       const token = randomBytes(32).toString("hex"),
         csrf = randomBytes(24).toString("hex");
@@ -219,9 +237,16 @@ export async function buildApp(options: {
         // A local reset may have completed while scrypt was verifying the old
         // password. Do not issue a new session for an obsolete credential.
         const current = repo.db
-          .prepare("SELECT password_hash FROM users WHERE id=?")
+          .prepare(
+            "SELECT password_hash,status,requires_activation FROM users WHERE id=?",
+          )
           .get(String(user.id));
-        if (!current || current.password_hash !== user.password_hash)
+        if (
+          !current ||
+          current.password_hash !== user.password_hash ||
+          current.status !== "active" ||
+          current.requires_activation
+        )
           throw new HttpError(401, "Email or password is incorrect");
         repo.db
           .prepare("DELETE FROM sessions WHERE expires_at<?")
@@ -244,15 +269,7 @@ export async function buildApp(options: {
         path: "/",
         maxAge: 12 * 3600,
       });
-      return {
-        actor: {
-          id: user.id,
-          workspaceId: user.workspace_id,
-          name: user.name,
-          email: user.email,
-        },
-        csrf,
-      };
+      return { actor: sessionActor(repo, token).actor, csrf };
     },
   );
   app.get("/api/auth/session", (req) => identity.get(req));
@@ -321,6 +338,11 @@ export async function buildApp(options: {
   app.post("/api/projects", (req) =>
     mutate(req, (a) => {
       const data = projectInput.parse(req.body);
+      try {
+        checkProjectCatalog(data, repo.catalogs(a.workspaceId));
+      } catch (e) {
+        throw new HttpError(400, (e as Error).message);
+      }
       const p: Project = {
         ...data,
         reportedAt: data.latestUpdate.trim() ? new Date().toISOString() : null,
@@ -345,6 +367,11 @@ export async function buildApp(options: {
         (req.params as { id: string }).id,
       );
       repo.checkVersion(old, input.version);
+      try {
+        checkProjectCatalog(input, repo.catalogs(a.workspaceId), old);
+      } catch (e) {
+        throw new HttpError(400, (e as Error).message);
+      }
       const p = {
         ...input,
         reportedAt:
@@ -521,6 +548,21 @@ export async function buildApp(options: {
           "Workspace changed. Export and review the current workspace before replacing it.",
         );
       validateGraph(input.projects, input.tasks);
+      let importedCatalog;
+      try {
+        importedCatalog = importCatalogs(
+          input,
+          repo.catalogs(a.workspaceId),
+          a.role === "admin",
+        );
+      } catch (e) {
+        throw new HttpError(400, (e as Error).message);
+      }
+      repo.db
+        .prepare(
+          "INSERT INTO workspace_catalogs(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
+        )
+        .run(a.workspaceId, JSON.stringify(importedCatalog));
       repo.db
         .prepare("DELETE FROM tasks WHERE workspace_id=?")
         .run(a.workspaceId);

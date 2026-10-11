@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { catalogLabel } from "../composables/catalogs";
 import { t, formatDate, formatNumber } from "../locales";
 import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
@@ -46,6 +47,13 @@ function activityLabel(action: string) {
     <RouterLink to="/projects" class="back-link"
       ><PhArrowLeft :size="16" />{{ t("All projects") }}</RouterLink
     >
+    <p v-if="project.categoryIds?.length" class="muted">
+      {{
+        project.categoryIds
+          .map((id) => catalogLabel("categories", id))
+          .join(" · ")
+      }}
+    </p>
     <div class="page-heading">
       <div>
         <h1>{{ project.name }}</h1>
