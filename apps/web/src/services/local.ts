@@ -1,5 +1,12 @@
 import { createSeed } from "../../../../packages/domain/seed";
 import {
+  intakeInput,
+  planIntake,
+  verifyIntakeUndo,
+  intakeProvenance,
+  type IntakeBatch,
+} from "../../../../packages/domain/intake";
+import {
   noteDateInput,
   noteDateCandidates,
   projectInput,
@@ -29,7 +36,7 @@ const actor: Actor = {
   name: "Local demo",
 };
 export function createLocalApi(): WorkspaceApi {
-  let state: Snapshot;
+  let state: Snapshot & { intakes?: IntakeBatch[] };
   const proposals = new Map<string, Proposal>();
   const read = () => {
     const raw = localStorage.getItem(KEY);
@@ -355,6 +362,61 @@ export function createLocalApi(): WorkspaceApi {
         state = copy;
         throw e;
       }
+    },
+    async intakeHistory() {
+      read();
+      return structuredClone(state.intakes ?? []);
+    },
+    async applyIntake(input) {
+      read();
+      const batch = planIntake(
+        intakeInput.parse(input),
+        state,
+        actor.name,
+        () => crypto.randomUUID(),
+      );
+      state.projects.push(...batch.projects);
+      state.tasks.push(...batch.tasks);
+      validateGraph(state.projects, state.tasks);
+      for (const p of batch.projects)
+        record(
+          "project",
+          null,
+          p,
+          intakeProvenance(batch, p.id),
+          "Created project from intake",
+        );
+      for (const task of batch.tasks)
+        record(
+          "task",
+          null,
+          task,
+          intakeProvenance(batch, task.id),
+          "Created task from intake",
+        );
+      state.intakes = [batch, ...(state.intakes ?? [])].slice(0, 30);
+      persist();
+      return structuredClone(batch);
+    },
+    async undoIntake(id) {
+      read();
+      const batch = state.intakes?.find((b) => b.id === id);
+      if (!batch) throw new ApiError("Intake not found");
+      verifyIntakeUndo(batch, state);
+      state.projects = state.projects.filter(
+        (p) => !batch.projects.some((x) => x.id === p.id),
+      );
+      state.tasks = state.tasks.filter(
+        (t) => !batch.tasks.some((x) => x.id === t.id),
+      );
+      for (const p of batch.projects)
+        record("project", p, null, `Intake undo · ${batch.id}`, "Undid intake");
+      for (const task of batch.tasks)
+        record("task", task, null, `Intake undo · ${batch.id}`, "Undid intake");
+      batch.state = "undone";
+      batch.undoneAt = new Date().toISOString();
+      persist();
+      return structuredClone(batch);
     },
     async restore(id, version) {
       read();

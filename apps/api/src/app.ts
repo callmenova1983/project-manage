@@ -32,6 +32,7 @@ import {
 import { safeOriginDiagnostic } from "./origin-diagnostics.js";
 import { registerAiRoutes } from "./ai/routes.js";
 import { AiError } from "./ai/provider.js";
+import { registerIntakeRoutes } from "./intake.js";
 import type { QwenConfig } from "./ai/config.js";
 import {
   hashToken,
@@ -191,6 +192,7 @@ export async function buildApp(options: {
       return result;
     });
   }
+  registerIntakeRoutes(app, repo, actor, mutate);
   app.get("/api/health", () => ({ status: "ok" }));
   app.post(
     "/api/auth/login",

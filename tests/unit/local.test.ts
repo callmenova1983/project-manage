@@ -141,3 +141,32 @@ it("records history restoration distinctly from newly completed work", async () 
   });
   expect(isCompletionAction(restored.activities[0]!)).toBe(false);
 });
+
+it("persists reviewed intake and undoes it after schema-normalized reload", async () => {
+  const { intakeCandidates } = await import("../../packages/domain/intake");
+  const api = createLocalApi(),
+    before = await api.snapshot();
+  const source = {
+    kind: "text" as const,
+    name: "notes",
+    sheet: "",
+    text: "Project: New intake; Client: Synthetic; Task: Review",
+  };
+  const batch = await api.applyIntake({
+    source,
+    confirmed: true,
+    rows: intakeCandidates(source, []).map((c) => ({
+      sourceRow: c.sourceRow,
+      targetProjectId: "",
+      targetProjectVersion: null,
+      project: c.project,
+      task: c.task,
+      duplicateConfirmed: false,
+    })),
+  });
+  const reopened = createLocalApi();
+  expect((await reopened.intakeHistory())[0]?.id).toBe(batch.id);
+  await reopened.undoIntake(batch.id);
+  expect((await reopened.snapshot()).projects).toEqual(before.projects);
+  expect((await reopened.intakeHistory())[0]?.state).toBe("undone");
+});

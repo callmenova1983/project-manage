@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildApp } from "../../apps/api/src/app.js";
@@ -418,13 +418,21 @@ describe("additional boundary checks", () => {
   it("migrates only once and leaves data intact", async () => {
     expect(
       context.repo.db.prepare("SELECT count(*) AS n FROM migrations").get()!.n,
-    ).toBe(3);
+    ).toBe(
+      readdirSync("apps/api/migrations").filter((name) =>
+        /^\d+_.+\.sql$/.test(name),
+      ).length,
+    );
     const s = await snapshot();
     await context.app.close();
     context = await buildApp({ databasePath: db, origin });
     expect(
       context.repo.db.prepare("SELECT count(*) AS n FROM migrations").get()!.n,
-    ).toBe(3);
+    ).toBe(
+      readdirSync("apps/api/migrations").filter((name) =>
+        /^\d+_.+\.sql$/.test(name),
+      ).length,
+    );
     expect((await snapshot()).tasks).toHaveLength(s.tasks.length);
   });
 });

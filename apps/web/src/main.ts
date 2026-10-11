@@ -10,6 +10,7 @@ import TasksView from "./views/TasksView.vue";
 import ActivityView from "./views/ActivityView.vue";
 import MeetingsView from "./views/MeetingsView.vue";
 import SettingsView from "./views/SettingsView.vue";
+import IntakeView from "./views/IntakeView.vue";
 import "@fontsource/inter/latin-400.css";
 import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
@@ -25,6 +26,7 @@ const router = createRouter({
     { path: "/activity", component: ActivityView },
     { path: "/meetings", component: MeetingsView },
     { path: "/settings", component: SettingsView },
+    { path: "/intake", component: IntakeView },
     {
       path: "/:pathMatch(.*)*",
       component: {

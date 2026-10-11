@@ -148,6 +148,9 @@ function edit(id: string) {
         >
       </div>
       <div class="heading-actions">
+        <RouterLink to="/intake" class="button secondary">{{
+          t("Quick intake")
+        }}</RouterLink>
         <RouterLink to="/meetings" class="button secondary"
           ><PhNotePencil :size="17" />{{
             t("Review meeting notes")

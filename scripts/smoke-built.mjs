@@ -217,6 +217,30 @@ try {
   await demoPage
     .getByRole("heading", { name: "Atlas Customer Portal", exact: true })
     .waitFor();
+  await demoPage.goto(origin + "/demo/intake");
+  await demoPage
+    .locator('input[type="file"]')
+    .setInputFiles("tests/fixtures/intake.xlsx");
+  await demoPage.getByText("intake.xlsx", { exact: true }).waitFor();
+  await demoPage
+    .getByRole("button", { name: "Review candidates", exact: true })
+    .click();
+  await demoPage
+    .getByText("1 new projects · 2 new tasks", { exact: true })
+    .waitFor();
+  await demoPage.screenshot({
+    path: "artifacts/intake-built-mobile.png",
+    fullPage: true,
+  });
+  await demoPage
+    .getByLabel("I reviewed the selected rows and their target projects")
+    .check();
+  await demoPage
+    .getByRole("button", { name: "Create confirmed items", exact: true })
+    .click();
+  await demoPage
+    .getByRole("heading", { name: "Created and recorded", exact: true })
+    .waitFor();
   assert.deepEqual(demoApiRequests, []);
   assert.equal(
     (await demoContext.cookies()).find((cookie) => cookie.name === "pm_session")

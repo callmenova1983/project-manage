@@ -10,6 +10,10 @@ import type {
   Suggestion,
   AiCapabilities,
 } from "../../../../packages/domain/types";
+import type {
+  IntakeInput,
+  IntakeBatch,
+} from "../../../../packages/domain/intake";
 export type ReviewedSuggestion = Pick<
   Suggestion,
   | "id"
@@ -57,4 +61,7 @@ export interface WorkspaceApi {
     suggestions: ReviewedSuggestion[],
   ): Promise<Proposal>;
   restore(id: string, version: number): Promise<Project | Task>;
+  intakeHistory(): Promise<IntakeBatch[]>;
+  applyIntake(input: IntakeInput): Promise<IntakeBatch>;
+  undoIntake(id: string): Promise<IntakeBatch>;
 }

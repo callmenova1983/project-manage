@@ -1,5 +1,13 @@
 # Executed verification
 
+## Quick intake increment (2026-10-11)
+
+Text, CSV/TSV and XLSX intake now supports editable candidates, header/sheet mapping, explicit ambiguity/duplicate review, atomic creation, per-row provenance and conflict-protected undo. New unit/API coverage includes parser boundaries, alias ambiguity, impossible dates, duplicate and stale checks, transaction rollback, idempotency, workspace isolation, changed-entity/dependency protection, and undo after local schema-normalized reload. **146 unit/API tests passed**. The four new Chromium cases passed at desktop/375px and include a real synthetic XLSX workbook, Chinese review, axe scan, original cells, cancellation, unsaved navigation, reload, undo and zero demo API calls.
+
+The full 46-case local suite passed 45; the remaining desktop accessibility scan exceeded its 30-second test budget inside axe. That case passed on its separate rerun (11.4 seconds), and exact-head CI runs the complete suite again. Lint, typecheck, normal build and formatting checks passed. Production smoke passed, including the compiled XLSX worker and confirmed creation under the production CSP, alongside existing demo isolation/auth/restart checks; zero unexpected browser errors. Final execution results are linked from the draft PR; the history below is retained for traceability.
+
+See [Quick intake](quick-intake.md). Migration `004_intake.sql` only adds the receipt table/index. No existing accounts, credentials, provider configuration or production deployment changed. User administration, configurable catalogs and model management are still the next sub-batch, not part of this intake increment.
+
 ## Latest increment: bilingual themes and factual project tracking (2026-10-11)
 
 - **135 unit/API tests passed**, 11 files. New coverage exercises locale fallback/interpolation, independent theme preferences and contrast, leaf-task focus, and factual weekly activity (seed exclusion, deduplication, completion transitions, UTC week boundaries, restore/import exclusions).

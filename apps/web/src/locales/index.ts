@@ -3,6 +3,7 @@ import { tasksZh } from "./zh-tasks";
 import { commonZh } from "./zh-common";
 import { editorsZh } from "./zh-editors";
 import { activityZh } from "./zh-activity";
+import { intakeZh } from "./zh-intake";
 export type Locale = "en" | "zh-CN";
 export const LOCALE_STORAGE_KEY = "project-manage-locale";
 export function initialLocale(): Locale {
@@ -39,6 +40,7 @@ const chinese: Record<string, string> = {
   ...editorsZh,
   ...activityZh,
   ...tasksZh,
+  ...intakeZh,
 };
 /** UI strings only: project names, task text and source material stay untouched. */
 export function t(

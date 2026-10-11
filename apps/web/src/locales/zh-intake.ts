@@ -1,0 +1,121 @@
+export const intakeZh: Record<string, string> = {
+  Client: "客户",
+  "Original source": "原始内容",
+  "Quick intake": "快速录入",
+  "Turn notes and spreadsheets into projects and tasks.":
+    "把文字和表格整理成项目与任务。",
+  "Intake steps": "录入步骤",
+  "Add source": "添加内容",
+  "Review candidates": "审阅候选",
+  Created: "已创建",
+  "Rule-assisted · no AI connection": "规则辅助 · 未连接 AI",
+  "Files are read in your browser. Nothing is created until you confirm.":
+    "文件在浏览器内读取，确认后才会创建项目与任务。",
+  "Paste anything to get started": "粘贴内容，开始整理",
+  "Try a sample": "试用示例",
+  "Notes or pasted table": "文字或粘贴的表格",
+  "Project: Customer portal; Client: Acme; Owner: Alex; Task: Review the brief; Due: 2026-10-20":
+    "项目：客户门户；客户：星河科技；负责人：林晓；任务：确认需求；截止日期：2026-10-20",
+  "Use project/client/owner/task labels for best results. Unclear details stay open for review. You can use your keyboard’s dictation.":
+    "使用项目、客户、负责人、任务等标签更易识别。不确定的信息会留待审阅；也可以使用输入法的语音听写。",
+  "Drop a file here or choose a file": "拖入文件，或选择文件",
+  "TXT, CSV, TSV, XLSX · 2 MB · 200 rows per sheet":
+    "TXT、CSV、TSV、XLSX · 2 MB · 每张表最多 200 行数据",
+  "Reading file…": "正在读取文件…",
+  "Remove file": "移除文件",
+  Worksheet: "工作表",
+  "First row contains column names": "第一行是列名",
+  "Column {number}": "第 {number} 列",
+  "Ignore column": "忽略此列",
+  "Project owner": "项目负责人",
+  "Task status": "任务状态",
+  "Only mapped columns become fields. All source cells remain visible in review. XLSX formulas are not executed; stored values are used.":
+    "仅映射的列会转成字段，审阅时仍可查看全部原始单元格。不会执行 Excel 公式，只读取已存储的值。",
+  "{count} candidates": "{count} 条候选",
+  "Keep the rows you want. Existing project details will not be overwritten.":
+    "保留需要的条目；不会覆盖已有项目资料。",
+  "Back to source": "返回原文",
+  "Row {number}": "第 {number} 行",
+  "Unnamed project": "未命名项目",
+  "Project + task": "项目与任务",
+  "Project only": "仅项目",
+  "Review details": "审阅详情",
+  "Target project": "目标项目",
+  "Create a new project": "创建新项目",
+  "New tasks start without a work-week assignment. A due date does not assign weekly work.":
+    "新任务尚未安排工作周；截止日期不会自动变成本周工作。",
+  "I reviewed the flagged details": "我已检查提示的不确定信息",
+  "Allow a new project or task with a matching name":
+    "允许创建名称相同的新项目或任务",
+  "Ready to create": "准备创建",
+  "{projects} new projects · {tasks} new tasks":
+    "新建 {projects} 个项目 · {tasks} 个任务",
+  "I reviewed the selected rows and their target projects":
+    "我已审阅所选条目及其目标项目",
+  "Create confirmed items": "创建已确认事项",
+  "Created and recorded": "已创建并留存记录",
+  "View projects": "查看项目",
+  "Add more work": "继续录入",
+  "Recent intakes": "最近录入",
+  "Undo intake": "撤销录入",
+  Undone: "已撤销",
+  "Remove only items created by this intake? Undo is blocked if they have changed or gained dependent tasks.":
+    "仅移除这次录入创建的内容？如果内容已经修改或新增了关联任务，撤销将被阻止。",
+  "Confirm undo": "确认撤销",
+  "Intake created": "录入已创建",
+  "Intake undone": "录入已撤销",
+  "Check required project and task fields": "请检查项目和任务的必填字段",
+  "Review the flagged rows or exclude them before creating":
+    "创建前请检查标记的条目，或取消勾选这些条目",
+  "Map a project name column before continuing": "请先映射项目名称列",
+  "No candidates found. Add text or choose another sheet.":
+    "未找到候选内容，请添加文字或选择其他工作表。",
+  "Rule-assisted draft. Review the project details.":
+    "这是规则辅助草稿，请检查项目资料。",
+  "Several projects match. Choose the target.": "匹配到多个项目，请选择目标。",
+  "Date needs review. Use YYYY-MM-DD.":
+    "日期需要确认，请使用 YYYY-MM-DD 格式。",
+  "Unrecognized stage. Choose a stage.": "未识别到阶段，请选择。",
+  "Unrecognized task status. Choose a status.": "未识别到任务状态，请选择。",
+  "Use a file smaller than 2 MB": "请选择小于 2 MB 的文件",
+  "Choose a TXT, CSV, TSV or XLSX file": "请选择 TXT、CSV、TSV 或 XLSX 文件",
+  "Source is too large. Use at most 200 rows.":
+    "内容过大，请使用最多 200 行数据。",
+  "Workbook is too large. Export the needed rows as CSV.":
+    "工作簿过大，请将需要的行导出为 CSV。",
+  "Could not read the workbook": "无法读取工作簿",
+  "Reading timed out. Export the needed rows as CSV.":
+    "读取超时，请将需要的行导出为 CSV。",
+  "Use at most 200 data rows and 30 columns per sheet":
+    "每张表最多使用 200 行数据、30 列",
+  "Password-protected workbooks are not supported":
+    "暂不支持有密码保护的工作簿",
+  "This is not a supported XLSX workbook": "这不是受支持的 XLSX 工作簿",
+  "Invalid workbook archive": "工作簿文件无效",
+  "Use a workbook with at most 20 sheets": "请选择最多 20 张工作表的工作簿",
+  "Invalid quoted table value": "表格引号内的内容无效",
+  "Unclosed quote in table": "表格中有未闭合的引号",
+  "Confirm creating a project with an existing name or alias":
+    "项目名称或别名已存在，请确认要创建同名项目",
+  "Duplicate task title. Confirm or exclude this row.":
+    "任务标题重复，请确认重复创建或取消该条目。",
+  "Target project changed. Review the intake again.":
+    "目标项目已变化，请重新审阅录入内容。",
+  "Target project no longer exists": "目标项目已不存在",
+  "An existing project needs a new task. No project fields will be overwritten.":
+    "请为已有项目填写新任务，不会覆盖项目资料。",
+  "Rows for the same new project have different details":
+    "同一新项目的多条记录资料不一致，请统一后再提交",
+  "This intake was already undone": "这次录入已经撤销",
+  "An imported project changed. Undo would overwrite newer work.":
+    "录入的项目已经修改，撤销会影响后续工作。",
+  "An imported task changed. Undo would overwrite newer work.":
+    "录入的任务已经修改，撤销会影响后续工作。",
+  "New tasks depend on this intake. Undo is blocked.":
+    "已有新任务关联本次录入，无法撤销。",
+  "Intake not found": "未找到录入记录",
+  "Add a task": "添加任务",
+  "Remove task": "移除任务",
+  "Pasted text": "粘贴文字",
+  "Pasted table": "粘贴表格",
+};

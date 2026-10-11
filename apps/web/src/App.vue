@@ -33,6 +33,7 @@ const nav = [
   { path: "/tasks", label: "All tasks", icon: PhCheckSquare },
   { path: "/activity", label: "Activity", icon: PhClockCounterClockwise },
   { path: "/meetings", label: "Meeting notes", icon: PhNotePencil },
+  { path: "/intake", label: "Quick intake", icon: PhNotePencil },
 ];
 watch(
   () => router.currentRoute.value.path,

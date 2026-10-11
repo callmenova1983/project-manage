@@ -15,6 +15,10 @@ import {
   type ReviewedSuggestion,
 } from "./contracts";
 import { browserDemo } from "./mode";
+import type {
+  IntakeInput,
+  IntakeBatch,
+} from "../../../../packages/domain/intake";
 export { ApiError } from "./contracts";
 export type { WorkspaceApi, ReviewedSuggestion } from "./contracts";
 class HttpApi implements WorkspaceApi {
@@ -132,6 +136,17 @@ class HttpApi implements WorkspaceApi {
   restore(id: string, version: number) {
     return this.call<Project | Task>(`/activities/${id}/restore`, "POST", {
       version,
+    });
+  }
+  intakeHistory() {
+    return this.call<IntakeBatch[]>("/intakes");
+  }
+  applyIntake(input: IntakeInput) {
+    return this.call<IntakeBatch>("/intakes", "POST", input);
+  }
+  undoIntake(id: string) {
+    return this.call<IntakeBatch>(`/intakes/${id}/undo`, "POST", {
+      confirmed: true,
     });
   }
 }
