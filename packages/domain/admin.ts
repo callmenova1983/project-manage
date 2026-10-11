@@ -154,6 +154,8 @@ export function checkCatalogs(
   projects: Project[],
 ) {
   catalogsInput.parse(next);
+  if (next.stages.some((s) => s.id === "unclassified"))
+    throw new Error("Unclassified is a reserved pending stage");
   for (const key of ["stages", "categories"] as const) {
     if (new Set(next[key].map((x) => x.id)).size !== next[key].length)
       throw new Error("Catalog identifiers must be unique");
@@ -164,7 +166,8 @@ export function checkCatalogs(
     throw new Error("Keep at least one active stage");
   for (const p of projects) {
     if (
-      !next.stages.some((s) => s.id === p.stage) ||
+      (p.stage !== "unclassified" &&
+        !next.stages.some((s) => s.id === p.stage)) ||
       (p.categoryIds ?? []).some(
         (id) => !next.categories.some((c) => c.id === id),
       )
@@ -182,6 +185,7 @@ export function checkProjectCatalog(
   )
     throw new Error("Project categories must be unique");
   if (
+    input.stage !== "unclassified" &&
     !catalogs.stages.some(
       (s) => s.id === input.stage && (!s.archived || old?.stage === s.id),
     )
@@ -203,7 +207,10 @@ export function validateCatalogReferences(
   catalogs: Catalogs,
 ) {
   for (const project of projects) {
-    if (!catalogs.stages.some((s) => s.id === project.stage))
+    if (
+      project.stage !== "unclassified" &&
+      !catalogs.stages.some((s) => s.id === project.stage)
+    )
       throw new Error("A project references an unknown stage");
     if (
       (project.categoryIds ?? []).some(

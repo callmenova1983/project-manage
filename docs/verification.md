@@ -1,5 +1,18 @@
 # Executed verification
 
+## Progressive capture and final administration delivery (2026-10-11)
+
+Minimal project/task drafts can be saved before client, owner, date or stage is known. Unresolved tasks use a flagged inbox excluded from business-project counts; missing dates are null and stages stay unclassified. Same-name new-project rows fill only missing facts in any row order; conflicting known facts stop the entire batch and identify the field. Standalone tasks can later change project assignment with version and workspace checks. No real provider request was made.
+
+- Lint, Vue/API typecheck, build, formatting and diff checks passed. **179 unit/API tests across 16 files passed**, including synthetic v3→v5 migration, unchanged accounts/projects, consistent SQLite backup and restoration.
+- **53 Chromium E2E cases passed in the full local run.** Final screenshot inspection exposed a desktop sticky confirmation panel covering review details; it was moved to normal document flow. All **6 intake cases passed again** with a non-overlap assertion, including minimal-save/later-completion and conflicting-owner correction. Exact-head CI reruns the complete suite.
+- The latest compiled runtime smoke passed authentication, routing, the actual XLSX worker under CSP, isolated demo persistence, and process-restart persistence with **0 unexpected console errors**. The local browser proxy replay passed the actual intercepted Origin/Referer rewrite, Secure session and CSRF-protected save/reload with **0 unexpected errors**; it is not a live deployment test.
+- Final desktop and 375px review screenshots were captured and visually inspected. Missing fields, pending dates/stage, source access and the final confirmation remain readable without overlap. Earlier first-batch dark-list/theme evidence remains in this directory.
+
+Evidence: [desktop draft review](screenshots/progressive-intake-review-desktop.png), [375px draft review](screenshots/progressive-intake-review-mobile.png), [later task completion](screenshots/progressive-intake-completed.png), [upgrade/rollback runbook](upgrade-intake-admin.md). The draft PR links the exact commit and CI. No production deployment, real account modification, administrator initialization or real LLM test occurred. Speech support is keyboard/system dictation into text only; no in-app recording/transcription/audio upload.
+
+The sections below are historical checkpoints, not the current feature boundary.
+
 ## Quick intake increment (2026-10-11)
 
 Text, CSV/TSV and XLSX intake now supports editable candidates, header/sheet mapping, explicit ambiguity/duplicate review, atomic creation, per-row provenance and conflict-protected undo. New unit/API coverage includes parser boundaries, alias ambiguity, impossible dates, duplicate and stale checks, transaction rollback, idempotency, workspace isolation, changed-entity/dependency protection, and undo after local schema-normalized reload. **146 unit/API tests passed**. The four new Chromium cases passed at desktop/375px and include a real synthetic XLSX workbook, Chinese review, axe scan, original cells, cancellation, unsaved navigation, reload, undo and zero demo API calls.

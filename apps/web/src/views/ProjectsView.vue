@@ -132,6 +132,10 @@ function saved(p: Project) {
   editing.value = "";
   expanded.value = p.id;
 }
+const portfolioProjects = computed(() =>
+  store.data.projects.filter((p) => !p.intakeInbox),
+);
+const inbox = computed(() => store.data.projects.find((p) => p.intakeInbox));
 function toggle(id: string) {
   if (!confirmDiscard()) return;
   editing.value = "";
@@ -151,7 +155,7 @@ function edit(id: string) {
         <h1>
           {{ t("Projects") + " "
           }}<span class="title-count">{{
-            formatNumber(store.data.projects.length)
+            formatNumber(portfolioProjects.length)
           }}</span>
         </h1>
         <span class="workspace-totals"
@@ -218,10 +222,17 @@ function edit(id: string) {
       }}</span>
     </section>
     <ProjectStages
-      :projects="store.data.projects"
+      :projects="portfolioProjects"
       :selected="stage"
       @select="stage = $event"
     />
+    <p v-if="inbox" class="muted">
+      {{ t("Unassigned work is kept separately in") }}
+      <RouterLink :to="`/projects/${inbox.id}`">{{
+        t("Intake inbox")
+      }}</RouterLink
+      >.
+    </p>
     <div class="insights-control">
       <button
         class="text-button"
@@ -237,7 +248,7 @@ function edit(id: string) {
     <div v-if="insightsOpen" id="portfolio-insights" class="portfolio-insights">
       <WeeklyChanges
         :activities="store.data.activities"
-        :projects="store.data.projects"
+        :projects="portfolioProjects"
         :projectIds="projects.map((project) => project.id)"
       /><NextWork
         :tasks="store.data.tasks"
@@ -262,6 +273,7 @@ function edit(id: string) {
             :aria-label="t('Filter by stage')"
           >
             <option value="">{{ t("All stages") }}</option>
+            <option value="unclassified">{{ stageLabels.unclassified }}</option>
             <option v-for="s in stages" :key="s" :value="s">
               {{ stageLabels[s] }}
             </option></select
@@ -367,7 +379,7 @@ function edit(id: string) {
                 <RouterLink :to="`/projects/${project.id}`">{{
                   project.name
                 }}</RouterLink
-                ><span>{{ project.client }}</span>
+                ><span>{{ project.client || t("Client to complete") }}</span>
               </div>
             </div>
             <StatusBadge :stage="project.stage" />
@@ -479,7 +491,7 @@ function edit(id: string) {
       {{
         t(
           "{count} projects · All team members can view and edit · Work scope is independent of due dates",
-          { count: projects.length },
+          { count: projects.filter((p) => !p.intakeInbox).length },
         )
       }}
     </p>

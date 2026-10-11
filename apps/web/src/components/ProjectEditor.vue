@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { catalogs, activeStages, catalogLabel } from "../composables/catalogs";
+import { catalogs, catalogLabel } from "../composables/catalogs";
 import { t } from "../locales";
 import { ref, computed } from "vue";
 import {
@@ -21,10 +21,10 @@ const empty: ProjectInput = {
   name: "",
   client: "",
   description: "",
-  stage: activeStages.value[0]?.id ?? "potential",
+  stage: "unclassified",
   categoryIds: [],
-  owner: store.user?.name ?? "Unassigned",
-  discipline: "Delivery",
+  owner: "Unassigned",
+  discipline: "Unassigned",
   latestUpdate: "",
   notes: "",
   aliases: [],
@@ -100,19 +100,18 @@ function reload() {
         >{{ t("Client / organization")
         }}<input
           v-model="draft.client"
-          required
           maxlength="120"
           :placeholder="t('Organization name')" /></label
       ><label
         >{{ t("Stage")
         }}<select v-model="draft.stage">
+          <option value="unclassified">{{ stageLabels.unclassified }}</option>
           <option v-for="s in stages" :key="s" :value="s">
             {{ stageLabels[s] }}
           </option>
         </select></label
       ><label
-        >{{ t("Owner")
-        }}<input v-model="draft.owner" required maxlength="80" /></label
+        >{{ t("Owner") }}<input v-model="draft.owner" maxlength="80" /></label
       ><label
         >{{ t("Responsibility")
         }}<select v-model="draft.discipline">

@@ -58,7 +58,8 @@ function activityLabel(action: string) {
       <div>
         <h1>{{ project.name }}</h1>
         <p class="page-subtitle">
-          {{ project.client }} <span class="dot-separator">·</span>
+          {{ project.client || t("Client to complete") }}
+          <span class="dot-separator">·</span>
           {{ t(project.discipline) }}
         </p>
       </div>
@@ -74,7 +75,8 @@ function activityLabel(action: string) {
     /><template v-else
       ><div class="detail-meta">
         <StatusBadge :stage="project.stage" /><span class="muted"
-          >{{ t("Owner") }} <strong>{{ project.owner }}</strong></span
+          >{{ t("Owner") }}
+          <strong>{{ t(project.owner || "Unassigned") }}</strong></span
         ><span class="muted">{{
           t("{done} of {total} tasks completed", {
             done: formatNumber(counts.done),

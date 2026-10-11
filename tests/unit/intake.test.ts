@@ -23,6 +23,7 @@ function input(s = source): IntakeInput {
     confirmed: true,
     rows: intakeCandidates(s, seed.projects).map((c) => ({
       sourceRow: c.sourceRow,
+      sourcePart: c.sourcePart,
       targetProjectId: c.targetProjectId,
       targetProjectVersion: c.targetProjectVersion,
       project: c.project,
@@ -138,4 +139,186 @@ describe("reviewed project intake", () => {
       }),
     ).toThrow("changed");
   });
+});
+
+describe("progressive capture with synthetic ambiguous notes (rules, not live LLM)", () => {
+  it("saves one recognizable item with no invented person, date or business stage", () => {
+    const s = { ...source, text: "整理下次讨论要点" };
+    const candidate = intakeCandidates(s, [])[0]!;
+    expect(candidate.project).toMatchObject({
+      name: "Intake inbox",
+      client: "",
+      owner: "Unassigned",
+      stage: "unclassified",
+    });
+    expect(candidate.task).toMatchObject({
+      title: s.text,
+      assignee: "Unassigned",
+      dueDate: null,
+      workWeek: null,
+    });
+    const batch = planIntake(input(s), seed, "Member", id);
+    expect(batch.tasks).toHaveLength(1);
+    expect(intakeProvenance(batch, batch.tasks[0]!.id)).toContain(s.text);
+  });
+  it("retains two explicit task labels on one source line and groups across projects", () => {
+    const s = {
+      ...source,
+      text: "项目：春河；任务：确认文案；任务：整理清单；项目：秋原；任务：准备讨论",
+    };
+    const parsed = input(s),
+      batch = planIntake(parsed, seed, "Member", id);
+    expect(batch.projects.map((p) => p.name)).toEqual(["春河", "秋原"]);
+    expect(batch.tasks.map((t) => t.title)).toEqual([
+      "确认文案",
+      "整理清单",
+      "准备讨论",
+    ]);
+    expect(batch.tasks[0]!.projectId).toBe(batch.tasks[1]!.projectId);
+    expect(batch.tasks[2]!.projectId).not.toBe(batch.tasks[0]!.projectId);
+    for (const task of batch.tasks)
+      expect(intakeProvenance(batch, task.id)).toContain(s.text);
+  });
+  it("keeps partial and conflicting project names unresolved instead of guessing", () => {
+    const p = seed.projects[0]!,
+      projects = [
+        { ...p, name: "星河门户", aliases: ["星河"] },
+        { ...p, id: "other", name: "星河运营", aliases: ["星河"] },
+      ];
+    const ambiguous = intakeCandidates(
+      { ...source, text: "项目：星河；任务：讨论方案" },
+      projects,
+    )[0]!;
+    expect(ambiguous.matches).toHaveLength(2);
+    expect(ambiguous.targetProjectId).toBe("");
+    expect(ambiguous.project.name).toBe("Intake inbox");
+    const partial = intakeCandidates(
+      { ...source, text: "项目：星河门；任务：讨论方案" },
+      projects,
+    )[0]!;
+    expect(partial.matches).toEqual([p.id]);
+    expect(partial.targetProjectId).toBe("");
+  });
+  it.each([
+    "明天",
+    "下周五",
+    "tomorrow Pacific/Auckland",
+    "2026-02-30",
+    "2026-10-12 or 2026-10-13",
+  ])(
+    "retains ambiguous date %s without resolving timezone or contradictions",
+    (date) => {
+      const c = intakeCandidates(
+        { ...source, text: `任务：确认评审；日期：${date}` },
+        [],
+      )[0]!;
+      expect(c.task!.dueDate).toBeNull();
+      expect(c.warnings).toContain("Date needs review. Use YYYY-MM-DD.");
+      expect(c.sourceText).toContain(date);
+    },
+  );
+  it("accepts a task-only table and reuses the existing pending inbox", () => {
+    const first = planIntake(
+      input({ ...source, text: "准备合成记录" }),
+      seed,
+      "Member",
+      id,
+    );
+    const table = {
+      ...source,
+      kind: "csv" as const,
+      text: "Task\nReview",
+      rows: [["Task"], ["Review"]],
+    };
+    const c = intakeCandidates(table, first.projects)[0]!;
+    expect(c.targetProjectId).toBe(first.projects[0]!.id);
+    expect(c.task!.title).toBe("Review");
+  });
+});
+
+it.each([0, 1, 2])(
+  "merges distributed missing details regardless of the complete row position (%s)",
+  (position) => {
+    const lines = [
+      "项目：新合成项目；任务：第一项",
+      "项目：新合成项目；任务：第二项",
+    ];
+    lines.splice(
+      position,
+      0,
+      "项目：新合成项目；客户：合成客户；负责人：合成负责人；阶段：实施中；任务：第三项",
+    );
+    const batch = planIntake(
+      input({ ...source, text: lines.join("\n") }),
+      seed,
+      "Member",
+      id,
+    );
+    expect(batch.projects).toHaveLength(1);
+    expect(batch.tasks).toHaveLength(3);
+    expect(batch.projects[0]).toMatchObject({
+      client: "合成客户",
+      owner: "合成负责人",
+      stage: "implementation",
+    });
+    expect(new Set(batch.tasks.map((t) => t.projectId)).size).toBe(1);
+    expect(batch.tasks.every((t) => t.assignee === "Unassigned")).toBe(true);
+  },
+);
+it.each([
+  "客户：另一客户",
+  "负责人：另一负责人",
+  "阶段：潜在需求",
+  "描述：不同的描述",
+])(
+  "rejects conflicting known facts (%s) instead of creating another project or picking a winner",
+  (conflict) => {
+    const s = {
+      ...source,
+      text: `项目：同名项目；客户：原客户；负责人：原负责人；阶段：实施中；描述：原描述；任务：第一项\n项目：同名项目；${conflict}；任务：第二项`,
+    };
+    expect(() => planIntake(input(s), seed, "Member", id)).toThrow(
+      "different details",
+    );
+  },
+);
+it("keeps distinct unknown-project notes in a neutral inbox without merging their business facts", () => {
+  const s = {
+    ...source,
+    text: "任务：第一项；客户：甲；负责人：李；描述：第一项上下文\n任务：第二项；客户：乙；负责人：王；描述：第二项上下文",
+  };
+  const batch = planIntake(input(s), seed, "Member", id);
+  expect(batch.projects).toHaveLength(1);
+  expect(batch.projects[0]).toMatchObject({
+    intakeInbox: true,
+    client: "",
+    owner: "Unassigned",
+    stage: "unclassified",
+    description: "",
+  });
+  expect(batch.tasks.map((t) => t.description)).toEqual([
+    "第一项上下文",
+    "第二项上下文",
+  ]);
+  expect(intakeProvenance(batch, batch.tasks[1]!.id)).toContain("负责人：王");
+});
+it("saves a name-only project and retains ambiguous project-only notes as actionable inbox items", () => {
+  const batch = planIntake(
+    input({ ...source, text: "项目：只确定了名字" }),
+    seed,
+    "Member",
+    id,
+  );
+  expect(batch.projects[0]).toMatchObject({
+    name: "只确定了名字",
+    client: "",
+    stage: "unclassified",
+  });
+  const p = seed.projects[0]!,
+    c = intakeCandidates({ ...source, text: `项目：${p.name}` }, [
+      p,
+      { ...p, id: "ambiguous" },
+    ])[0]!;
+  expect(c.project.intakeInbox).toBe(true);
+  expect(c.task!.title).toContain(p.name);
 });

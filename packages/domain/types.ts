@@ -13,6 +13,7 @@ export const disciplines = [
   "Delivery",
   "Engineering",
   "Operations",
+  "Unassigned",
 ] as const;
 const text = (max: number) => z.string().trim().min(1).max(max);
 export const dateSchema = z
@@ -27,14 +28,15 @@ export const dateSchema = z
 export const projectInput = z
   .object({
     name: text(120),
-    client: text(120),
+    intakeInbox: z.boolean().optional(),
+    client: z.string().trim().max(120),
     description: z.string().max(4000),
     stage: z.string().regex(/^[a-z][a-z0-9_-]{0,49}$/),
     categoryIds: z
       .array(z.string().regex(/^[a-z][a-z0-9_-]{0,49}$/))
       .max(20)
       .optional(),
-    owner: text(80),
+    owner: z.string().trim().max(80),
     discipline: z.enum(disciplines),
     latestUpdate: z.string().max(4000),
     notes: z.string().max(20000),
@@ -48,7 +50,7 @@ export const taskInput = z
     title: text(240),
     description: z.string().max(4000),
     status: z.enum(statuses),
-    assignee: text(80),
+    assignee: z.string().trim().max(80),
     dueDate: dateSchema.nullable(),
     workDates: z.array(dateSchema).max(31),
     workWeek: dateSchema.nullable(),

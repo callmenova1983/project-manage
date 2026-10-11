@@ -22,6 +22,8 @@ export const activeCategories = computed(() =>
     .sort((a, b) => a.order - b.order),
 );
 export function catalogLabel(kind: "stages" | "categories", id: string) {
+  if (kind === "stages" && id === "unclassified")
+    return locale.value === "zh-CN" ? "阶段待补" : "Stage to complete";
   const entry = catalogs.value[kind].find((s) => s.id === id);
   return entry ? (locale.value === "zh-CN" ? entry.zh : entry.en) : id;
 }

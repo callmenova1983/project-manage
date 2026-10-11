@@ -24,7 +24,7 @@ The demo offers **Simulate activation**. It creates no usable credential or real
 
 ## Stages, business categories and imports
 
-Entries have stable identifiers, bilingual labels, order, a restricted color palette and an archived state. The five original stage IDs remain. Add and edit entries, then Save classifications. Archive existing entries instead of deleting them; existing project/history references are retained. New assignments require active entries, while unchanged archived references may be retained during ordinary project editing. Business categories are separate from responsibility and are selectable in project editors and list filters.
+Entries have stable identifiers, bilingual labels, order, a restricted color palette and an archived state. The five original stage IDs remain. The reserved `unclassified` pending value is handled separately and cannot be redefined in the catalog. Add and edit entries, then Save classifications. Archive existing entries instead of deleting them; existing project/history references are retained. New assignments require active entries, while unchanged archived references may be retained during ordinary project editing. Business categories are separate from responsibility and are selectable in project editors and list filters.
 
 New exports use schema version **2**, including the registry. Legacy version 1 imports remain accepted. Import preview validates references and detects registry changes; importing changes to the registry requires administrator access. Existing IDs cannot be removed by an import. A saved catalog increments its own version to reject stale writes. Database migrations do not reset projects, tasks or synthetic seed data.
 

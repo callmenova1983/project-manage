@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { stageIds as stages, stageColors } from "../composables/catalogs";
+import { stageIds, stageColors } from "../composables/catalogs";
 import { computed } from "vue";
 import { type Project, type Stage } from "../../../../packages/domain/types";
 import { stageLabels } from "../locales/en";
@@ -7,6 +7,11 @@ import { t, formatNumber } from "../locales";
 import StatusBadge from "./StatusBadge.vue";
 const props = defineProps<{ projects: Project[]; selected: string }>();
 const emit = defineEmits<{ select: [stage: Stage | ""] }>();
+const stages = computed(() =>
+  props.projects.some((p) => p.stage === "unclassified")
+    ? [...stageIds.value, "unclassified"]
+    : stageIds.value,
+);
 const counts = computed(
   () =>
     Object.fromEntries(

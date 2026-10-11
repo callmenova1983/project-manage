@@ -494,13 +494,18 @@ export async function buildApp(options: {
       );
       repo.checkVersion(old, input.version);
       if (input.projectId !== old.projectId)
-        throw new HttpError(
-          400,
-          "Moving tasks between projects is not supported",
-        );
+        repo.get<Project>("projects", a.workspaceId, input.projectId);
       const children = repo
         .snapshot(a.workspaceId)
         .tasks.some((t) => t.parentId === old.id);
+      if (
+        input.projectId !== old.projectId &&
+        (old.parentId || input.parentId || children)
+      )
+        throw new HttpError(
+          400,
+          "Only standalone tasks can change project assignment",
+        );
       if (children && input.status !== old.status)
         throw new HttpError(
           400,
@@ -517,9 +522,11 @@ export async function buildApp(options: {
       repo.record(
         a,
         "task",
-        old.status !== t.status
-          ? `Changed status to ${t.status}`
-          : "Updated task",
+        old.projectId !== t.projectId
+          ? "Changed project assignment"
+          : old.status !== t.status
+            ? `Changed status to ${t.status}`
+            : "Updated task",
         old,
         t,
       );

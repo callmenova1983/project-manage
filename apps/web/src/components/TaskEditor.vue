@@ -31,7 +31,7 @@ const draft = ref<TaskInput>(
         title: "",
         description: "",
         status: "todo",
-        assignee: store.user?.name ?? "Unassigned",
+        assignee: "Unassigned",
         dueDate: null,
         workWeek: weekKey(),
         workDates: [],
@@ -98,6 +98,25 @@ function reload() {
     </div>
     <SaveError :error="error" @reload="reload" />
     <div class="form-grid">
+      <label v-if="original && !original.parentId && !isParent" class="full">
+        {{ t("Project assignment") }}
+        <select
+          v-model="draft.projectId"
+          :aria-label="t('Project assignment')"
+          aria-describedby="task-assignment-help"
+        >
+          <option
+            v-for="project in store.data.projects"
+            :key="project.id"
+            :value="project.id"
+          >
+            {{ project.name }}
+          </option>
+        </select>
+        <small id="task-assignment-help">{{
+          t("Save now and assign this task to a project later.")
+        }}</small>
+      </label>
       <label class="full"
         >{{ t("Task title")
         }}<input
@@ -116,7 +135,7 @@ function reload() {
         }}</small></label
       ><label
         >{{ t("Assignee")
-        }}<input v-model="draft.assignee" required maxlength="80" /></label
+        }}<input v-model="draft.assignee" maxlength="80" /></label
       ><label
         >{{ t("Due date") }}<input v-model="draft.dueDate" type="date"
       /></label>

@@ -199,6 +199,14 @@ export function createLocalApi(): WorkspaceApi {
       old.status !== data.status
     )
       throw new ApiError("Update the subtasks individually");
+    if (
+      old &&
+      data.projectId !== old.projectId &&
+      (old.parentId ||
+        data.parentId ||
+        state.tasks.some((x) => x.parentId === old.id))
+    )
+      throw new ApiError("Only standalone tasks can change project assignment");
     const t: Task = {
       ...data,
       id: id ?? crypto.randomUUID(),

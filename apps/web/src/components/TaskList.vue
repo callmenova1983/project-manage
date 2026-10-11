@@ -127,7 +127,7 @@ function close() {
         </div>
         <StatusBadge v-if="!parents.has(task.id)" :status="task.status" /><span
           class="task-assignee muted"
-          >{{ task.assignee }}</span
+          >{{ t(task.assignee || "Unassigned") }}</span
         ><span class="task-date muted">{{
           task.dueDate
             ? formatDate(task.dueDate, { month: "short", day: "numeric" })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { stageIds as stages, catalogs } from "../composables/catalogs";
+import { activeStages, catalogs } from "../composables/catalogs";
 import { computed, ref, onMounted, onBeforeUnmount } from "vue";
 import {
   PhUploadSimple,
@@ -34,7 +34,7 @@ const step = ref<"source" | "review" | "done">("source"),
   sheetIndex = ref(0),
   mapping = ref<IntakeField[]>([]),
   hasHeader = ref(true),
-  candidates = ref<(IntakeCandidate & { reviewed: boolean })[]>([]),
+  candidates = ref<IntakeCandidate[]>([]),
   reading = ref(false),
   error = ref(""),
   confirmed = ref(false),
@@ -60,13 +60,8 @@ const newProjectCount = computed(
   () =>
     new Set(
       selected.value
-        .filter((c) => !c.targetProjectId)
-        .map(
-          (c) =>
-            normalizeName(c.project.name) +
-            "|" +
-            normalizeName(c.project.client),
-        ),
+        .filter((c) => !c.targetProjectId && !c.project.intakeInbox)
+        .map((c) => normalizeName(c.project.name)),
     ).size,
 );
 const taskCount = computed(() => selected.value.filter((c) => c.task).length);
@@ -137,15 +132,19 @@ function preview() {
         resetMapping();
       }
     }
-    if (source.value.rows && !mapping.value.includes("project"))
-      throw new Error("Map a project name column before continuing");
+    if (
+      source.value.rows &&
+      !mapping.value.includes("project") &&
+      !mapping.value.includes("task")
+    )
+      throw new Error("Map a project name or task column before continuing");
     candidates.value = intakeCandidates(
       source.value,
       store.data.projects,
       source.value.rows ? mapping.value : undefined,
       hasHeader.value,
       catalogs.value,
-    ).map((c) => ({ ...c, reviewed: false }));
+    );
     if (!candidates.value.length)
       throw new Error("No candidates found. Add text or choose another sheet.");
     confirmed.value = false;
@@ -162,11 +161,12 @@ function targetChanged(c: IntakeCandidate) {
 }
 function duplicate(c: IntakeCandidate) {
   return !!(
-    store.data.projects.some((p) =>
-      [p.name, ...p.aliases].some(
-        (n) => normalizeName(n) === normalizeName(c.project.name),
-      ),
-    ) ||
+    (!c.targetProjectId &&
+      store.data.projects.some((p) =>
+        [p.name, ...p.aliases].some(
+          (n) => normalizeName(n) === normalizeName(c.project.name),
+        ),
+      )) ||
     (c.task &&
       store.data.tasks.some(
         (task) =>
@@ -186,14 +186,11 @@ async function apply() {
   if (store.busy) return;
   error.value = "";
   try {
-    if (selected.value.some((c) => c.warnings.length && !c.reviewed))
-      throw new Error(
-        "Review the flagged rows or exclude them before creating",
-      );
     const input = intakeInput.parse({
       source: source.value,
       rows: selected.value.map((c) => ({
         sourceRow: c.sourceRow,
+        sourcePart: c.sourcePart,
         targetProjectId: c.targetProjectId,
         targetProjectVersion: c.targetProjectVersion,
         project: c.project,
@@ -451,7 +448,15 @@ onBeforeUnmount(() => controller?.abort());
                 :disabled="!c.selected"
                 @change="targetChanged(c)"
               >
-                <option value="">{{ t("Create a new project") }}</option>
+                <option value="">
+                  {{
+                    t(
+                      c.project.intakeInbox
+                        ? "Save in Intake inbox"
+                        : "Create a new project",
+                    )
+                  }}
+                </option>
                 <option
                   v-for="p in store.data.projects"
                   :key="p.id"
@@ -474,7 +479,6 @@ onBeforeUnmount(() => controller?.abort());
               }}<input
                 v-model="c.project.client"
                 :disabled="!c.selected || !!c.targetProjectId"
-                required
                 maxlength="120"
             /></label>
             <label
@@ -482,7 +486,6 @@ onBeforeUnmount(() => controller?.abort());
               }}<input
                 v-model="c.project.owner"
                 :disabled="!c.selected || !!c.targetProjectId"
-                required
                 maxlength="80"
             /></label>
             <label
@@ -491,8 +494,15 @@ onBeforeUnmount(() => controller?.abort());
                 v-model="c.project.stage"
                 :disabled="!c.selected || !!c.targetProjectId"
               >
-                <option v-for="stage in stages" :key="stage" :value="stage">
-                  {{ stageLabels[stage] }}
+                <option value="unclassified">
+                  {{ stageLabels.unclassified }}
+                </option>
+                <option
+                  v-for="stage in activeStages"
+                  :key="stage.id"
+                  :value="stage.id"
+                >
+                  {{ stageLabels[stage.id] }}
                 </option>
               </select></label
             >
@@ -516,7 +526,6 @@ onBeforeUnmount(() => controller?.abort());
                 }}<input
                   v-model="c.task.assignee"
                   :disabled="!c.selected"
-                  required
                   maxlength="80" /></label
               ><label
                 >{{ t("Due date")
@@ -554,11 +563,6 @@ onBeforeUnmount(() => controller?.abort());
               {{ t(warning) }}
             </li>
           </ul>
-          <label v-if="c.warnings.length && c.selected" class="checkbox"
-            ><input v-model="c.reviewed" type="checkbox" />{{
-              t("I reviewed the flagged details")
-            }}</label
-          >
           <label v-if="duplicate(c) && c.selected" class="checkbox"
             ><input v-model="c.duplicateConfirmed" type="checkbox" />{{
               t("Allow a new project or task with a matching name")
@@ -576,6 +580,13 @@ onBeforeUnmount(() => controller?.abort());
       </article>
       <div class="panel intake-confirm">
         <h2>{{ t("Ready to create") }}</h2>
+        <p class="muted">
+          {{
+            t(
+              "Missing details do not block saving. Unresolved work stays in Intake inbox; owners, dates and stages can be completed later. Review warnings once before confirming.",
+            )
+          }}
+        </p>
         <p>
           {{
             t("{projects} new projects · {tasks} new tasks", {
@@ -625,7 +636,7 @@ onBeforeUnmount(() => controller?.abort());
       <p>
         {{
           t("{projects} new projects · {tasks} new tasks", {
-            projects: result.projects.length,
+            projects: result.projects.filter((p) => !p.intakeInbox).length,
             tasks: result.tasks.length,
           })
         }}
@@ -797,8 +808,7 @@ onBeforeUnmount(() => controller?.abort());
   font-size: 12px;
 }
 .intake-confirm {
-  position: sticky;
-  bottom: 12px;
+  position: static;
   border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-popover);
   margin-top: 20px;

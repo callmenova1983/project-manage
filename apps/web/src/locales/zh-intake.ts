@@ -1,4 +1,21 @@
 export const intakeZh: Record<string, string> = {
+  "Intake inbox": "待归属收件箱",
+  "Save in Intake inbox": "先存入待归属收件箱",
+  Unassigned: "未分配",
+  "Unassigned work is kept separately in": "未确定归属的事项单独保存在",
+  "Client to complete": "客户待补",
+  "Project assignment": "归属项目",
+  "Save now and assign this task to a project later.":
+    "先保存，之后可补充任务归属项目。",
+  "Map a project name or task column before continuing":
+    "请映射项目名称或任务列后继续",
+  "Partial project match. Confirm the target or keep it in Intake inbox.":
+    "项目名称部分匹配，请确认目标，或先留在待归属收件箱。",
+  "Unresolved project. Save in Intake inbox and assign it later.":
+    "项目归属待确认。可先存入待归属收件箱，之后再分配。",
+  "Missing details do not block saving. Unresolved work stays in Intake inbox; owners, dates and stages can be completed later. Review warnings once before confirming.":
+    "缺少信息也可保存。未确定归属的事项留在 Intake inbox（待归属收件箱）；责任人、日期和阶段均可后补。请集中审阅提示后确认。",
+
   Client: "客户",
   "Original source": "原始内容",
   "Quick intake": "快速录入",

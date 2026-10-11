@@ -45,6 +45,7 @@ export type IntakeField = (typeof intakeFields)[number];
 export interface IntakeCandidate {
   id: string;
   sourceRow: number;
+  sourcePart?: number;
   sourceText: string;
   selected: boolean;
   project: ProjectInput;
@@ -58,6 +59,7 @@ export interface IntakeCandidate {
 const rowSchema = z
   .object({
     sourceRow: z.number().int().min(1).max(1000),
+    sourcePart: z.number().int().min(0).max(199).optional(),
     targetProjectId: z.string().max(100),
     targetProjectVersion: z.number().int().positive().nullable(),
     project: projectInput,
@@ -213,9 +215,32 @@ export function intakeCandidates(
     mapping ?? (source.rows ? detectColumns(rows[0] ?? []) : undefined);
   const first = source.rows && header ? 1 : 0;
   const result: IntakeCandidate[] = [];
-  for (let index = first; index < rows.length; index++) {
-    const cells = rows[index]!;
-    if (!cells.some((c) => c.trim())) continue;
+  const fragments = rows.flatMap((cells, index) => {
+    if (index < first || !cells.some((c) => c.trim())) return [];
+    if (source.rows) return [{ cells, index, part: 0 }];
+    // Split only explicit project/task labels or plain semicolon-separated notes.
+    // Keep the original row untouched for provenance; no semantic model is used.
+    const line = cells[0]!;
+    const blocks = line.split(/[;；]\s*(?=(?:project|项目|项目名称)\s*[:：])/i);
+    const pieces = blocks
+      .flatMap((block) => {
+        const tasks = block.split(
+          /[;；]\s*(?=(?:task|任务|待办|事项)\s*[:：])/i,
+        );
+        if (tasks.length > 1) {
+          const first = tasks.shift()!;
+          if (/^(?:task|任务|待办|事项)\s*[:：]/i.test(first.trim()))
+            return [first, ...tasks];
+          return tasks.map((task) => `${first}; ${task}`);
+        }
+        if (!/(?:^|[;；])\s*[^;；:：]+[:：]/.test(block))
+          return block.split(/[;；]/);
+        return [block];
+      })
+      .filter((piece) => piece.trim());
+    return pieces.map((piece, part) => ({ cells: [piece], index, part }));
+  });
+  for (const { cells, index, part } of fragments) {
     const fields: Partial<Record<IntakeField, string>> = {};
     if (columns)
       columns.forEach((key, i) => {
@@ -245,9 +270,8 @@ export function intakeCandidates(
             normalizeName(line).includes(normalizeName(n)),
           ),
         );
-        fields.project =
-          matches.length === 1 ? matches[0]!.name : line.trim().slice(0, 120);
-        if (matches.length) fields.task = line.trim().slice(0, 240);
+        fields.project = matches.length === 1 ? matches[0]!.name : "";
+        fields.task = line.trim().slice(0, 240);
       }
     }
     const name = fields.project ?? "",
@@ -259,6 +283,33 @@ export function intakeCandidates(
         ) &&
         (!client || normalizeName(p.client) === normalizeName(client)),
     );
+    const exactMatch = matches.length === 1;
+    const partialMatches =
+      name && !matches.length
+        ? projects.filter((p) =>
+            [p.name, ...p.aliases].some((n) =>
+              normalizeName(n).includes(normalizeName(name)),
+            ),
+          )
+        : [];
+    const mentioned = !name
+      ? projects.filter((p) =>
+          [p.name, ...p.aliases].some((n) =>
+            normalizeName(cells[0]!).includes(normalizeName(n)),
+          ),
+        )
+      : [];
+    const hints = matches.length
+      ? matches
+      : partialMatches.length
+        ? partialMatches
+        : mentioned;
+    const needsInbox =
+      !name || hints.length > 1 || (!exactMatch && hints.length > 0);
+    const inbox = projects.find((p) => p.intakeInbox === true);
+    const target = exactMatch ? matches[0] : needsInbox ? inbox : undefined;
+    if (needsInbox && !fields.task)
+      fields.task = cells[0]!.trim().slice(0, 240);
     const stage =
         stageMap[normalizeName(fields.stage ?? "")] ??
         catalog.stages.find((s) =>
@@ -275,45 +326,55 @@ export function intakeCandidates(
       warnings.push("Unrecognized task status. Choose a status.");
     if (date && !dateSchema.safeParse(date).success)
       warnings.push("Date needs review. Use YYYY-MM-DD.");
-    if (matches.length > 1)
+    if (hints.length > 1)
       warnings.push("Several projects match. Choose the target.");
+    else if (!exactMatch && partialMatches.length)
+      warnings.push(
+        "Partial project match. Confirm the target or keep it in Intake inbox.",
+      );
+    if (needsInbox)
+      warnings.push(
+        "Unresolved project. Save in Intake inbox and assign it later.",
+      );
     if (!source.rows && !Object.keys(fields).includes("client"))
       warnings.push("Rule-assisted draft. Review the project details.");
     result.push({
-      id: `row-${index + 1}`,
+      id: `row-${index + 1}-${part}`,
       sourceRow: index + 1,
+      sourcePart: part,
       sourceText: sourceAt(source, index + 1),
       selected: true,
       project: {
-        name,
-        client: client || matches[0]?.client || "",
-        owner: fields.owner || matches[0]?.owner || "Unassigned",
+        name: target?.name ?? (needsInbox ? "Intake inbox" : name),
+        client: target?.client ?? (needsInbox ? "" : client),
+        owner:
+          target?.owner ??
+          (needsInbox ? "Unassigned" : fields.owner || "Unassigned"),
         stage:
-          stage ??
-          matches[0]?.stage ??
-          catalog.stages.find((s) => !s.archived)?.id ??
-          "potential",
-        discipline: "Delivery",
-        description: fields.description ?? "",
+          target?.stage ??
+          (needsInbox ? "unclassified" : (stage ?? "unclassified")),
+        discipline: target?.discipline ?? "Unassigned",
+        description: needsInbox ? "" : (fields.description ?? ""),
         latestUpdate: "",
         notes: "",
-        aliases: [],
+        aliases: target?.aliases ?? [],
+        ...(needsInbox ? { intakeInbox: true } : {}),
       },
       task: fields.task
         ? {
             title: fields.task,
-            description: "",
+            description: needsInbox ? (fields.description ?? "") : "",
             parentId: null,
             status: status ?? "todo",
-            assignee: fields.assignee || fields.owner || "Unassigned",
+            assignee: fields.assignee || "Unassigned",
             dueDate: dateSchema.safeParse(date).success ? date : null,
             workDates: [],
             workWeek: null,
           }
         : null,
-      matches: matches.map((p) => p.id),
-      targetProjectId: matches.length === 1 ? matches[0]!.id : "",
-      targetProjectVersion: matches.length === 1 ? matches[0]!.version : null,
+      matches: hints.map((p) => p.id),
+      targetProjectId: target?.id ?? "",
+      targetProjectVersion: target?.version ?? null,
       duplicateConfirmed: false,
       warnings,
     });
@@ -322,6 +383,36 @@ export function intakeCandidates(
     throw new DomainError("Source is too large. Use at most 200 rows.");
   return result;
 }
+
+/** Only fill missing fields. Never pick a winner between conflicting facts. */
+function mergeProjectDraft(
+  prior: ProjectInput,
+  next: ProjectInput,
+): ProjectInput {
+  const merged: Record<string, unknown> = { ...prior };
+  const missing = (field: string, value: unknown) =>
+    value === undefined ||
+    value === "" ||
+    (Array.isArray(value) && value.length === 0) ||
+    ((field === "owner" || field === "discipline") && value === "Unassigned") ||
+    (field === "stage" && value === "unclassified");
+  for (const [field, value] of Object.entries(next)) {
+    const previous = merged[field];
+    if (missing(field, value)) continue;
+    if (missing(field, previous)) merged[field] = value;
+    else if (
+      (field === "name" || field === "client") &&
+      normalizeName(String(previous)) === normalizeName(String(value))
+    )
+      continue;
+    else if (JSON.stringify(previous) !== JSON.stringify(value))
+      throw new DomainError(
+        `Rows for the same new project have different details (${field}). Review the conflicting rows before saving.`,
+      );
+  }
+  return projectInput.parse(merged);
+}
+
 export function planIntake(
   input: IntakeInput,
   snapshot: Snapshot,
@@ -334,12 +425,12 @@ export function planIntake(
     tasks: Task[] = [];
   const entries: IntakeBatch["entries"] = [];
   const names = new Map<string, Project>();
-  const seenRows = new Set<number>();
+  const seenRows = new Set<string>();
   for (const row of input.rows) {
     sourceAt(input.source, row.sourceRow);
-    if (seenRows.has(row.sourceRow))
-      throw new DomainError("Duplicate source row");
-    seenRows.add(row.sourceRow);
+    const rowKey = `${row.sourceRow}:${row.sourcePart ?? 0}`;
+    if (seenRows.has(rowKey)) throw new DomainError("Duplicate source row");
+    seenRows.add(rowKey);
     let project: Project;
     if (row.targetProjectId) {
       const target = snapshot.projects.find(
@@ -356,19 +447,15 @@ export function planIntake(
           "An existing project needs a new task. No project fields will be overwritten.",
         );
     } else {
-      const key =
-        normalizeName(row.project.name) +
-        "\u0000" +
-        normalizeName(row.project.client);
+      // A missing client must not create a second project, regardless of row order.
+      // Conflicting known clients for the same name require an explicit correction.
+      const key = normalizeName(row.project.name);
       const prior = names.get(key);
       if (prior) {
-        if (
-          JSON.stringify(projectInput.strip().parse(prior)) !==
-          JSON.stringify(row.project)
-        )
-          throw new DomainError(
-            "Rows for the same new project have different details",
-          );
+        Object.assign(
+          prior,
+          mergeProjectDraft(projectInput.strip().parse(prior), row.project),
+        );
         project = prior;
       } else {
         if (
