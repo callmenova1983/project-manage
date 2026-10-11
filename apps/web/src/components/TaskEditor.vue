@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from "../locales";
 import { computed, ref } from "vue";
 import {
   taskInput,
@@ -86,45 +87,50 @@ function reload() {
 <template>
   <form
     class="editor task-editor"
-    aria-label="Task editor"
+    :aria-label="t('Task editor')"
     @submit.prevent="save"
   >
     <div class="section-heading">
-      <h3>{{ task ? "Edit task" : parentId ? "New subtask" : "New task" }}</h3>
-      <span v-if="dirty" class="muted">Unsaved changes</span>
+      <h3>
+        {{ t(task ? "Edit task" : parentId ? "New subtask" : "New task") }}
+      </h3>
+      <span v-if="dirty" class="muted">{{ t("Unsaved changes") }}</span>
     </div>
     <SaveError :error="error" @reload="reload" />
     <div class="form-grid">
       <label class="full"
-        >Task title<input
+        >{{ t("Task title")
+        }}<input
           v-model="draft.title"
           required
           maxlength="240"
           autofocus /></label
       ><label
-        >Status<select v-model="draft.status" :disabled="isParent">
+        >{{ t("Status")
+        }}<select v-model="draft.status" :disabled="isParent">
           <option v-for="s in statuses" :key="s" :value="s">
             {{ statusLabels[s] }}
           </option></select
-        ><small v-if="isParent"
-          >Parent completion is calculated from subtasks.</small
-        ></label
+        ><small v-if="isParent">{{
+          t("Parent completion is calculated from subtasks.")
+        }}</small></label
       ><label
-        >Assignee<input
-          v-model="draft.assignee"
-          required
-          maxlength="80" /></label
-      ><label>Due date<input v-model="draft.dueDate" type="date" /></label>
+        >{{ t("Assignee")
+        }}<input v-model="draft.assignee" required maxlength="80" /></label
+      ><label
+        >{{ t("Due date") }}<input v-model="draft.dueDate" type="date"
+      /></label>
       <div class="planning">
-        <span>Work scope</span
+        <span>{{ t("Work scope") }}</span
         ><label class="check-label"
-          ><input v-model="week" type="checkbox" />This week</label
+          ><input v-model="week" type="checkbox" />{{ t("This week") }}</label
         ><label class="check-label"
-          ><input v-model="today" type="checkbox" />Today</label
+          ><input v-model="today" type="checkbox" />{{ t("Today") }}</label
         >
       </div>
       <label class="full"
-        >Description<textarea
+        >{{ t("Description")
+        }}<textarea
           v-model="draft.description"
           maxlength="4000"
           rows="3"
@@ -137,9 +143,9 @@ function reload() {
         :disabled="store.busy"
         @click="mayDiscard() && emit('close')"
       >
-        Cancel</button
+        {{ t("Cancel") }}</button
       ><button type="submit" class="primary" :disabled="store.busy">
-        {{ store.busy ? "Saving…" : "Save task" }}
+        {{ t(store.busy ? "Saving…" : "Save task") }}
       </button>
     </div>
   </form>

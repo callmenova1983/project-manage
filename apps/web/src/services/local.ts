@@ -65,6 +65,7 @@ export function createLocalApi(): WorkspaceApi {
     before: Project | Task | null,
     after: Project | Task | null,
     source = "Local edit",
+    action?: string,
   ) =>
     state.activities.unshift({
       id: crypto.randomUUID(),
@@ -72,7 +73,7 @@ export function createLocalApi(): WorkspaceApi {
         kind === "task" ? (after as Task)?.projectId : (after?.id ?? null),
       entityId: after?.id ?? "",
       kind,
-      action: before ? "Updated " + kind : "Created " + kind,
+      action: action ?? (before ? "Updated " + kind : "Created " + kind),
       actor: actor.name,
       createdAt: new Date().toISOString(),
       source,
@@ -83,6 +84,7 @@ export function createLocalApi(): WorkspaceApi {
     data: ProjectInput,
     id?: string,
     version?: number,
+    source = "Local edit",
   ) => {
     read();
     projectInput.parse(data);
@@ -115,11 +117,22 @@ export function createLocalApi(): WorkspaceApi {
     state.projects = old
       ? state.projects.map((x) => (x.id === id ? p : x))
       : [p, ...state.projects];
-    record("project", old ?? null, p);
+    record(
+      "project",
+      old ?? null,
+      p,
+      source,
+      source === "History restore" ? "Restored previous version" : undefined,
+    );
     persist();
     return p;
   };
-  const saveTask = async (data: TaskInput, id?: string, version?: number) => {
+  const saveTask = async (
+    data: TaskInput,
+    id?: string,
+    version?: number,
+    source = "Local edit",
+  ) => {
     read();
     taskInput.parse(data);
     const old = state.tasks.find((t) => t.id === id);
@@ -142,7 +155,13 @@ export function createLocalApi(): WorkspaceApi {
       ? state.tasks.map((x) => (x.id === id ? t : x))
       : [...state.tasks, t];
     validateGraph(state.projects, state.tasks);
-    record("task", old ?? null, t);
+    record(
+      "task",
+      old ?? null,
+      t,
+      source,
+      source === "History restore" ? "Restored previous version" : undefined,
+    );
     persist();
     return t;
   };
@@ -342,8 +361,18 @@ export function createLocalApi(): WorkspaceApi {
       const a = state.activities.find((x) => x.id === id);
       if (!a?.before) throw new ApiError("No restorable version");
       return a.kind === "project"
-        ? saveProject(projectInput.strip().parse(a.before), a.entityId, version)
-        : saveTask(taskInput.strip().parse(a.before), a.entityId, version);
+        ? saveProject(
+            projectInput.strip().parse(a.before),
+            a.entityId,
+            version,
+            "History restore",
+          )
+        : saveTask(
+            taskInput.strip().parse(a.before),
+            a.entityId,
+            version,
+            "History restore",
+          );
     },
   };
 }

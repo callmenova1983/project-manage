@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, formatNumber } from "../locales";
 import { ref, computed } from "vue";
 import {
   PhDownloadSimple,
@@ -32,7 +33,7 @@ async function exportData() {
     link.download = `project-manage-${new Date().toISOString().slice(0, 10)}.json`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    store.notify("Workspace exported");
+    store.notify(t("Workspace exported"));
   } catch (e) {
     error.value = (e as Error).message;
   }
@@ -46,7 +47,7 @@ async function choose(e: Event) {
   if (!file) return;
   try {
     if (file.size > 2 * 1024 * 1024)
-      throw new Error("Import files must be under 2 MB.");
+      throw new Error(t("Import files must be under 2 MB."));
     const parsed = snapshotImport.parse(JSON.parse(await file.text()));
     validateGraph(parsed.projects, parsed.tasks);
     pending.value = parsed;
@@ -62,7 +63,7 @@ async function importData() {
   try {
     await store.operation(
       () => api.importData(pending.value, revision.value),
-      "Workspace imported",
+      t("Workspace imported"),
     );
     pending.value = null;
     confirmed.value = false;
@@ -75,86 +76,124 @@ async function importData() {
   <section class="page settings-page">
     <div class="page-heading">
       <div>
-        <div class="eyebrow">YOUR SHARED SPACE</div>
-        <h1>Workspace</h1>
+        <div class="eyebrow">{{ t("YOUR SHARED SPACE") }}</div>
+        <h1>{{ t("Workspace") }}</h1>
         <p class="page-subtitle">
-          Portable data, clear boundaries, and a shared source of truth.
+          {{
+            t("Portable data, clear boundaries, and a shared source of truth.")
+          }}
         </p>
       </div>
       <PhDatabase :size="27" class="muted" />
     </div>
     <section class="panel">
-      <h2>Connection</h2>
+      <h2>{{ t("Connection") }}</h2>
       <dl class="settings-list">
         <div>
-          <dt>Storage</dt>
+          <dt>{{ t("Storage") }}</dt>
           <dd>
             {{
-              store.mode === "server"
-                ? "Authenticated server · SQLite"
-                : "Local demo · this browser only"
+              t(
+                store.mode === "server"
+                  ? "Authenticated server · SQLite"
+                  : "Local demo · this browser only",
+              )
             }}
           </dd>
         </div>
         <div>
-          <dt>Access</dt>
+          <dt>{{ t("Access") }}</dt>
           <dd>
-            Every member in this workspace can view and edit every project.
+            {{
+              t(
+                "Every member in this workspace can view and edit every project.",
+              )
+            }}
           </dd>
         </div>
         <div>
-          <dt>Updates</dt>
+          <dt>{{ t("Updates") }}</dt>
           <dd>
-            Background refresh every 20 seconds. Version checks protect
-            concurrent edits.
+            {{
+              t(
+                store.mode === "local"
+                  ? "Saved locally in this browser. No background server connection."
+                  : "Background refresh every 20 seconds. Version checks protect concurrent edits.",
+              )
+            }}
           </dd>
         </div>
         <div>
-          <dt>AI provider</dt>
+          <dt>{{ t("AI provider") }}</dt>
           <dd>
-            Not connected. Meeting notes use rule-assisted suggestions and
-            explicit review.
+            {{
+              t(
+                store.mode === "local"
+                  ? "Not connected. Meeting notes use rule-assisted suggestions and explicit review."
+                  : "Meeting suggestions always require review. Check Meeting notes for the current provider and connection status.",
+              )
+            }}
           </dd>
         </div>
       </dl>
     </section>
     <section class="panel">
-      <h2>Export workspace</h2>
+      <h2>{{ t("Export workspace") }}</h2>
       <p class="muted">
-        Download projects, tasks, and the latest activity records as JSON. Store
-        exports securely; they can include notes and names.
+        {{
+          t(
+            "Download projects, tasks, and the latest activity records as JSON. Store exports securely; they can include notes and names.",
+          )
+        }}
       </p>
       <button @click="exportData">
-        <PhDownloadSimple :size="17" />Export JSON
+        <PhDownloadSimple :size="17" />{{ t("Export JSON") }}
       </button>
     </section>
     <section class="panel">
-      <h2>Import workspace</h2>
+      <h2>{{ t("Import workspace") }}</h2>
       <p class="muted">
-        Preview a JSON export before replacing current projects and tasks.
-        Existing audit history is preserved. Export a backup first.
+        {{
+          t(
+            "Preview a JSON export before replacing current projects and tasks. Existing audit history is preserved. Export a backup first.",
+          )
+        }}
       </p>
       <label class="file-button button"
-        ><PhUploadSimple :size="17" />Choose JSON file<input
+        ><PhUploadSimple :size="17" />{{ t("Choose JSON file")
+        }}<input
           type="file"
           accept="application/json,.json"
-          aria-label="Import JSON file"
+          :aria-label="t('Import JSON file')"
           @change="choose"
       /></label>
       <div v-if="pending" class="import-preview">
-        <h3>Review replacement</h3>
+        <h3>{{ t("Review replacement") }}</h3>
         <p>
-          {{ pending.projects.length }} projects ·
-          {{ leafTasks(pending.tasks).length }} leaf tasks
+          {{
+            t("{projects} projects · {tasks} leaf tasks", {
+              projects: formatNumber(pending.projects.length),
+              tasks: formatNumber(leafTasks(pending.tasks).length),
+            })
+          }}
         </p>
         <p>
-          Replacing {{ store.data.projects.length }} projects and
-          {{ store.total.total }} leaf tasks. Task and project IDs are checked
-          for duplicates and invalid relationships.
+          {{
+            t(
+              "Replacing {projects} projects and {tasks} leaf tasks. Task and project IDs are checked for duplicates and invalid relationships.",
+              {
+                projects: formatNumber(store.data.projects.length),
+                tasks: formatNumber(store.total.total),
+              },
+            )
+          }}
         </p>
         <label class="check-label"
-          ><input v-model="confirmed" type="checkbox" />I have exported a backup
-          and confirm replacing the workspace data</label
+          ><input v-model="confirmed" type="checkbox" />{{
+            t(
+              "I have exported a backup and confirm replacing the workspace data",
+            )
+          }}</label
         >
         <div class="form-actions">
           <button
@@ -164,17 +203,17 @@ async function importData() {
               confirmed = false;
             "
           >
-            Cancel import</button
+            {{ t("Cancel import") }}</button
           ><button
             class="danger"
             :disabled="!confirmed || store.busy"
             @click="importData"
           >
-            {{ store.busy ? "Importing…" : "Replace workspace" }}
+            {{ t(store.busy ? "Importing…" : "Replace workspace") }}
           </button>
         </div>
       </div>
     </section>
-    <p v-if="error" class="error-box" role="alert">{{ error }}</p>
+    <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
   </section>
 </template>

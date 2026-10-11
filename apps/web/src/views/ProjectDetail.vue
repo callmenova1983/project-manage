@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, formatDate, formatNumber } from "../locales";
 import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
 import {
@@ -28,22 +29,33 @@ const activity = computed(() =>
     .filter((a) => a.projectId === project.value?.id)
     .slice(0, 8),
 );
+
+function activityLabel(action: string) {
+  const imported =
+    /^Replaced workspace with (\d+) projects and (\d+) tasks$/.exec(action);
+  return imported
+    ? t("Replaced workspace with {projects} projects and {tasks} tasks", {
+        projects: Number(imported[1]),
+        tasks: Number(imported[2]),
+      })
+    : t(action);
+}
 </script>
 <template>
   <section v-if="project" class="page detail-page">
     <RouterLink to="/projects" class="back-link"
-      ><PhArrowLeft :size="16" />All projects</RouterLink
+      ><PhArrowLeft :size="16" />{{ t("All projects") }}</RouterLink
     >
     <div class="page-heading">
       <div>
         <h1>{{ project.name }}</h1>
         <p class="page-subtitle">
           {{ project.client }} <span class="dot-separator">·</span>
-          {{ project.discipline }}
+          {{ t(project.discipline) }}
         </p>
       </div>
       <button :disabled="editing" @click="editing = true">
-        <PhPencilSimple :size="16" />Edit project
+        <PhPencilSimple :size="16" />{{ t("Edit project") }}
       </button>
     </div>
     <ProjectEditor
@@ -54,46 +66,53 @@ const activity = computed(() =>
     /><template v-else
       ><div class="detail-meta">
         <StatusBadge :stage="project.stage" /><span class="muted"
-          >Owner <strong>{{ project.owner }}</strong></span
-        ><span class="muted"
-          >{{ counts.done }} of {{ counts.total }} tasks completed</span
-        >
+          >{{ t("Owner") }} <strong>{{ project.owner }}</strong></span
+        ><span class="muted">{{
+          t("{done} of {total} tasks completed", {
+            done: formatNumber(counts.done),
+            total: formatNumber(counts.total),
+          })
+        }}</span>
       </div>
       <div class="detail-grid">
         <section class="panel">
-          <h3>Latest reported update</h3>
+          <h3>{{ t("Latest reported update") }}</h3>
           <p class="report-text">
-            {{ project.latestUpdate || "No update reported yet." }}
+            {{ project.latestUpdate || t("No update reported yet.") }}
           </p>
           <span class="muted"
             >{{
               project.reportedAt
-                ? new Date(project.reportedAt).toLocaleString()
-                : "Report time unavailable"
+                ? formatDate(project.reportedAt, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })
+                : t("Report time unavailable")
             }}
-            · {{ project.reportedBy ?? "Reporter unavailable" }}</span
+            · {{ project.reportedBy ?? t("Reporter unavailable") }}</span
           >
         </section>
         <section class="panel">
-          <h3>Project context</h3>
-          <p>{{ project.description || "Add context for the team." }}</p>
+          <h3>{{ t("Project context") }}</h3>
+          <p>{{ project.description || t("Add context for the team.") }}</p>
           <p class="muted">
-            Aliases: {{ project.aliases.join(", ") || "None" }}
+            {{ t("Aliases:") }} {{ project.aliases.join(", ") || t("None") }}
           </p>
         </section>
       </div>
       <section v-if="project.notes" class="panel">
-        <h3>Working notes</h3>
+        <h3>{{ t("Working notes") }}</h3>
         <pre class="working-notes">{{ project.notes }}</pre>
       </section></template
     >
     <section class="panel tasks-panel">
       <div class="section-heading">
         <h2>
-          Tasks <span class="title-count">{{ counts.total }}</span>
+          {{ t("Tasks") }}
+          <span class="title-count">{{ formatNumber(counts.total) }}</span>
         </h2>
         <button :disabled="paste" @click="paste = true">
-          <PhClipboardText :size="16" />Paste tasks
+          <PhClipboardText :size="16" />{{ t("Paste tasks") }}
         </button>
       </div>
       <PasteTasks
@@ -104,10 +123,10 @@ const activity = computed(() =>
     </section>
     <section class="panel">
       <div class="section-heading">
-        <h3>Recent activity</h3>
-        <RouterLink :to="`/activity?project=${project.id}`"
-          >View history</RouterLink
-        >
+        <h3>{{ t("Recent activity") }}</h3>
+        <RouterLink :to="`/activity?project=${project.id}`">{{
+          t("View history")
+        }}</RouterLink>
       </div>
       <div v-for="event in activity" :key="event.id" class="activity-mini">
         <span class="avatar small">{{
@@ -118,14 +137,22 @@ const activity = computed(() =>
             .join("")
         }}</span>
         <div>
-          <strong>{{ event.actor }}</strong> {{ event.action.toLowerCase()
-          }}<small>{{ new Date(event.createdAt).toLocaleString() }}</small>
+          <strong>{{ event.actor }}</strong>
+          {{ activityLabel(event.action).toLocaleLowerCase()
+          }}<small>{{
+            formatDate(event.createdAt, {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })
+          }}</small>
         </div>
       </div>
     </section>
   </section>
   <section v-else class="empty">
-    <h1>Project not found</h1>
-    <RouterLink to="/projects" class="button">Return to projects</RouterLink>
+    <h1>{{ t("Project not found") }}</h1>
+    <RouterLink to="/projects" class="button">{{
+      t("Return to projects")
+    }}</RouterLink>
   </section>
 </template>

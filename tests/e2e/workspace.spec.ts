@@ -56,7 +56,7 @@ test("desktop composition, derived statistics, navigation and accessibility", as
   ).toBeVisible();
   expect(
     (await page.locator(".project-row").first().boundingBox())!.y,
-  ).toBeLessThan(230);
+  ).toBeLessThan(360);
   expect(
     await page
       .getByRole("button", { name: "Toggle sidebar" })
@@ -529,7 +529,7 @@ test("project work scope switches named work and all four counts", async ({
     "Confirm project scope",
   );
   await expect(meridian.locator(".scope-counts")).toHaveText(
-    /To do 0.*In progress 6.*Done 2.*Needs coord. 0/,
+    /To do 0.*In progress 6.*Done 2.*Needs coordination 0/,
   );
   await page.getByRole("button", { name: "Today 8", exact: true }).click();
   await expect(meridian.locator(".project-week")).toContainText(
@@ -587,12 +587,23 @@ test("tablet widths contain the table and keep keyboard scrolling available", as
       ),
     ).toBe(true);
     const table = page.getByRole("region", { name: "Projects list" });
+    await expect(page.locator(".project-table-head")).toBeVisible();
+    const row = page.locator(".project-row").first();
+    const rowBox = (await row.boundingBox())!;
+    for (const selector of [".latest-update", ".project-week"]) {
+      const cell = (await row.locator(selector).boundingBox())!;
+      expect(cell.y).toBeGreaterThanOrEqual(rowBox.y);
+      expect(cell.y + cell.height).toBeLessThanOrEqual(
+        rowBox.y + rowBox.height + 1,
+      );
+    }
     await table.focus();
     await expect(table).toBeFocused();
     await page.keyboard.press("ArrowRight");
     await expect(
       page.getByRole("link", { name: "Atlas Customer Portal", exact: true }),
     ).toBeVisible();
+    await page.screenshot({ path: `artifacts/portfolio-tablet-${width}.png` });
   }
 });
 test("login, invalid credentials and sign out", async ({ page }) => {

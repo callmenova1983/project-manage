@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, formatDate, formatNumber } from "../locales";
 import { computed, ref, watch } from "vue";
 import {
   projectInput,
@@ -98,7 +99,7 @@ async function applyDate(line: number) {
           confirmed: true,
           overwriteConfirmed: overwrite.value,
         }),
-      "Reviewed date saved",
+      t("Reviewed date saved"),
     );
     resetReview();
   } catch (e) {
@@ -112,10 +113,10 @@ async function applyDate(line: number) {
     :class="{ 'has-note-table': noteTables.length }"
   >
     <div class="section-heading">
-      <h4>Original notes</h4>
+      <h4>{{ t("Original notes") }}</h4>
       <span class="muted"
-        >{{ dirty ? "Unsaved changes" : "Text / table paste" }} · v{{
-          original.version
+        >{{ t(dirty ? "Unsaved changes" : "Text / table paste") }} · v{{
+          formatNumber(original.version)
         }}</span
       >
     </div>
@@ -125,17 +126,23 @@ async function applyDate(line: number) {
       :key="index"
       class="note-table-scroll"
       role="region"
-      :aria-label="`Readable original table ${index + 1}`"
+      :aria-label="
+        t('Readable original table {count}', { count: formatNumber(index + 1) })
+      "
       tabindex="0"
     >
       <table>
         <caption>
-          Readable table · original text retained below
+          {{
+            t("Readable table · original text retained below")
+          }}
         </caption>
         <thead>
           <tr>
             <th v-for="(cell, column) in rows[0]" :key="column" scope="col">
-              {{ cell || `Column ${column + 1}` }}
+              {{
+                cell || t("Column {count}", { count: formatNumber(column + 1) })
+              }}
             </th>
           </tr>
         </thead>
@@ -149,16 +156,18 @@ async function applyDate(line: number) {
     <form @submit.prevent="save">
       <textarea
         v-model="draft"
-        :aria-label="`Original notes for ${project.name}`"
+        :aria-label="t('Original notes for {name}', { name: project.name })"
         rows="5"
         maxlength="20000"
-        placeholder="Capture what happened. Paste notes or a table here…"
+        :placeholder="t('Capture what happened. Paste notes or a table here…')"
         @input="resetReview"
       ></textarea>
       <div v-if="dirty" class="form-actions">
         <button type="button" :disabled="store.busy" @click="cancel">
-          Cancel notes</button
-        ><button class="primary" :disabled="store.busy">Save notes</button>
+          {{ t("Cancel notes") }}</button
+        ><button class="primary" :disabled="store.busy">
+          {{ t("Save notes") }}
+        </button>
       </div>
     </form>
     <div v-for="c in candidates" :key="c.sourceLine" class="date-candidate">
@@ -172,21 +181,32 @@ async function applyDate(line: number) {
           overwrite = false;
         "
       >
-        Review date · “{{ c.phrase }}” · line {{ c.sourceLine }}
+        {{
+          t("Review date · “{phrase}” · line {line}", {
+            phrase: c.phrase,
+            line: formatNumber(c.sourceLine),
+          })
+        }}
       </button>
-      <span v-if="dirty" class="muted">Save notes to review dates</span>
+      <span v-if="dirty" class="muted">{{
+        t("Save notes to review dates")
+      }}</span>
       <form
         v-if="review === c.sourceLine && !dirty"
         class="date-review"
         @submit.prevent="applyDate(c.sourceLine)"
       >
         <p class="muted">
-          Rule-assisted candidate. Read the neighboring lines and choose the
-          intended date.
+          {{
+            t(
+              "Rule-assisted candidate. Read the neighboring lines and choose the intended date.",
+            )
+          }}
         </p>
         <pre>{{ c.context }}</pre>
         <label
-          >Apply to task<select
+          >{{ t("Apply to task")
+          }}<select
             v-model="taskId"
             required
             @change="
@@ -194,14 +214,15 @@ async function applyDate(line: number) {
               overwrite = false;
             "
           >
-            <option value="">Choose a task</option>
-            <option v-for="t in tasks" :key="t.id" :value="t.id">
-              {{ t.title }}
+            <option value="">{{ t("Choose a task") }}</option>
+            <option v-for="task in tasks" :key="task.id" :value="task.id">
+              {{ task.title }}
             </option>
           </select></label
         >
         <label
-          >Confirmed due date<input
+          >{{ t("Confirmed due date")
+          }}<input
             v-model="dueDate"
             type="date"
             required
@@ -211,20 +232,24 @@ async function applyDate(line: number) {
             "
         /></label>
         <p v-if="selected" class="muted">
-          Current due date: {{ selected.dueDate ?? "None" }}
+          {{ t("Current due date:") }}
+          {{ selected.dueDate ? formatDate(selected.dueDate) : t("None") }}
         </p>
         <label class="check-label"
-          ><input v-model="confirmed" type="checkbox" />I checked the source,
-          task and date</label
+          ><input v-model="confirmed" type="checkbox" />{{
+            t("I checked the source, task and date")
+          }}</label
         >
         <label
           v-if="selected?.dueDate && selected.dueDate !== dueDate"
           class="check-label"
-          ><input v-model="overwrite" type="checkbox" />Replace the existing due
-          date</label
+          ><input v-model="overwrite" type="checkbox" />{{
+            t("Replace the existing due date")
+          }}</label
         >
         <div class="form-actions">
-          <button type="button" @click="resetReview">Cancel review</button
+          <button type="button" @click="resetReview">
+            {{ t("Cancel review") }}</button
           ><button
             class="primary"
             :disabled="
@@ -237,7 +262,7 @@ async function applyDate(line: number) {
               store.busy
             "
           >
-            Apply reviewed date
+            {{ t("Apply reviewed date") }}
           </button>
         </div>
       </form>

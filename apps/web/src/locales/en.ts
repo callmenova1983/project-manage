@@ -1,21 +1,49 @@
-// Central labels are the first locale surface. Add a zh-CN dictionary here before localizing copy.
+import { t } from "./index";
 export const stageLabels = {
-  potential: "Potential",
-  proposal: "Proposal & quote",
-  approved: "Ready to start",
-  implementation: "In progress",
-  operations: "Operations",
+  get potential() {
+    return t("Potential");
+  },
+  get proposal() {
+    return t("Proposal & quote");
+  },
+  get approved() {
+    return t("Ready to start");
+  },
+  get implementation() {
+    return t("In progress");
+  },
+  get operations() {
+    return t("Operations");
+  },
 };
 export const statusLabels = {
-  todo: "To do",
-  in_progress: "In progress",
-  done: "Done",
-  blocked: "Needs coordination",
+  get todo() {
+    return t("To do");
+  },
+  get in_progress() {
+    return t("In progress");
+  },
+  get done() {
+    return t("Done");
+  },
+  get blocked() {
+    return t("Needs coordination");
+  },
 };
 export const navLabels = {
-  projects: "Projects",
-  tasks: "Tasks",
-  activity: "Activity",
-  meetings: "Meeting notes",
-  settings: "Workspace",
+  get projects() {
+    return t("Projects");
+  },
+  get tasks() {
+    return t("Tasks");
+  },
+  get activity() {
+    return t("Activity");
+  },
+  get meetings() {
+    return t("Meeting notes");
+  },
+  get settings() {
+    return t("Workspace");
+  },
 };

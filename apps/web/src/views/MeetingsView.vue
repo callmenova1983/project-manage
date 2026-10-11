@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, formatNumber } from "../locales";
 import { computed, onMounted, ref, watch } from "vue";
 import {
   PhNotePencil,
@@ -25,8 +26,9 @@ async function loadCapabilities() {
     capabilities.value = await api.aiCapabilities();
     capabilityError.value = "";
   } catch {
-    capabilityError.value =
-      "Could not check Qwen availability. Rule-assisted review is still available.";
+    capabilityError.value = t(
+      "Could not check Qwen availability. Rule-assisted review is still available.",
+    );
   }
 }
 onMounted(loadCapabilities);
@@ -107,7 +109,7 @@ async function apply() {
   try {
     const result = await store.operation(
       () => api.applyProposal(proposal.value!, suggestions),
-      "Reviewed suggestions applied",
+      t("Reviewed suggestions applied"),
     );
     proposal.value = result;
   } catch (e) {
@@ -126,10 +128,12 @@ function reset() {
   <section class="page meetings-page">
     <div class="page-heading">
       <div>
-        <div class="eyebrow">FROM CONVERSATION TO ACTION</div>
-        <h1>Meeting notes</h1>
+        <div class="eyebrow">{{ t("FROM CONVERSATION TO ACTION") }}</div>
+        <h1>{{ t("Meeting notes") }}</h1>
         <p class="page-subtitle">
-          Review the source. Choose the project. Confirm every change.
+          {{
+            t("Review the source. Choose the project. Confirm every change.")
+          }}
         </p>
       </div>
       <PhNotePencil :size="28" class="muted" />
@@ -138,33 +142,46 @@ function reset() {
       <PhWarningCircle :size="20" />
       <div>
         <strong>{{
-          qwenReview
-            ? proposal?.generator
-              ? "Qwen-generated suggestions · human review required"
-              : "Qwen configured · connection not yet verified"
-            : "Rule-assisted review · AI is not connected"
+          t(
+            qwenReview
+              ? proposal?.generator
+                ? "Qwen-generated suggestions · human review required"
+                : "Qwen configured · connection not yet verified"
+              : "Rule-assisted review · AI is not connected",
+          )
         }}</strong>
         <p v-if="qwenReview">
           {{ proposal?.generator?.model ?? capabilities?.model }} ·
-          {{ proposal?.generator?.region ?? capabilities?.region }}. Suggestions
-          may be wrong. Verify every source, project and change. Generating
-          suggestions does not update projects or tasks.
+          {{ proposal?.generator?.region ?? capabilities?.region }}.
+          {{
+            t(
+              "Suggestions may be wrong. Verify every source, project and change. Generating suggestions does not update projects or tasks.",
+            )
+          }}
         </p>
         <p v-else>
-          Project names and aliases are matched literally. These suggestions are
-          not model-generated. No changes are saved to projects until you
-          confirm them.
+          {{
+            t(
+              "Project names and aliases are matched literally. These suggestions are not model-generated. No changes are saved to projects until you confirm them.",
+            )
+          }}
         </p>
       </div>
     </div>
     <div v-if="proposal?.status === 'applied'" class="success-panel">
       <PhCheckCircle :size="36" />
-      <h2>Reviewed and recorded</h2>
+      <h2>{{ t("Reviewed and recorded") }}</h2>
       <p>
-        Your changes are saved with their original source and review history.
+        {{
+          t(
+            "Your changes are saved with their original source and review history.",
+          )
+        }}
       </p>
       <div class="heading-actions">
-        <RouterLink to="/activity" class="button">View activity</RouterLink
+        <RouterLink to="/activity" class="button">{{
+          t("View activity")
+        }}</RouterLink
         ><button
           class="primary"
           @click="
@@ -172,20 +189,24 @@ function reset() {
             proposal = null;
           "
         >
-          Review more notes
+          {{ t("Review more notes") }}
         </button>
       </div>
     </div>
     <template v-else
       ><section v-if="!proposal" class="panel">
         <label v-if="capabilities?.provider === 'qwen'">
-          Review method
+          {{ t("Review method") }}
           <select v-model="engine" :disabled="working">
             <option value="rules">
-              Rule-assisted · no external processing
+              {{ t("Rule-assisted · no external processing") }}
             </option>
             <option value="qwen" :disabled="!capabilities.enabled">
-              Qwen · {{ capabilities.remainingAttempts }} attempts remaining
+              {{
+                t("Qwen · {count} attempts remaining", {
+                  count: formatNumber(capabilities.remainingAttempts),
+                })
+              }}
             </option>
           </select>
         </label>
@@ -196,16 +217,24 @@ function reset() {
           v-if="capabilities?.provider === 'qwen' && !capabilities.enabled"
           class="muted"
         >
-          Qwen budget is exhausted or expired. Ask the server administrator to
-          review it.
+          {{
+            t(
+              "Qwen budget is exhausted or expired. Ask the server administrator to review it.",
+            )
+          }}
         </p>
         <label class="source-label"
-          >Meeting notes<textarea
+          >{{ t("Meeting notes")
+          }}<textarea
             v-model="source"
             :disabled="working"
             rows="10"
             maxlength="20000"
-            placeholder="Paste one action or update per line. Include a project name or alias.&#10;&#10;Atlas: confirm acceptance checklist&#10;Meridian: design review completed&#10;Schedule a follow-up with the delivery team"
+            :placeholder="
+              t(
+                'Paste one action or update per line. Include a project name or alias.\n\nAtlas: confirm acceptance checklist\nMeridian: design review completed\nSchedule a follow-up with the delivery team',
+              )
+            "
           ></textarea>
         </label>
         <label v-if="engine === 'qwen'" class="check-label">
@@ -214,13 +243,17 @@ function reset() {
             type="checkbox"
             :disabled="working"
           />
-          I approve sending these notes and project names, IDs and aliases to
-          Alibaba Cloud using the {{ capabilities?.region }} API region for this
-          review. I have removed secrets and data that should not be sent.
+          {{
+            t(
+              "I approve sending these notes and project names, IDs and aliases to Alibaba Cloud using the {region} API region for this review. I have removed secrets and data that should not be sent.",
+              { region: capabilities?.region ?? "" },
+            )
+          }}
         </label>
         <div class="form-actions">
-          <span class="muted"
-            >Original wording is retained with line numbers.</span
+          <span class="muted">{{
+            t("Original wording is retained with line numbers.")
+          }}</span
           ><button
             :disabled="
               !source.trim() ||
@@ -231,7 +264,7 @@ function reset() {
             class="primary"
             @click="review"
           >
-            {{ working ? "Preparing…" : "Review suggestions"
+            {{ t(working ? "Preparing…" : "Review suggestions")
             }}<PhArrowRight :size="16" />
           </button>
         </div>
@@ -239,18 +272,30 @@ function reset() {
       <template v-else
         ><div class="section-heading">
           <h2>
-            {{ proposal.suggestions.length }} suggestions
-            <span class="muted">· {{ selected.length }} selected</span>
+            {{
+              t("{count} suggestions", {
+                count: formatNumber(proposal.suggestions.length),
+              })
+            }}
+            <span class="muted"
+              >·
+              {{
+                t("{count} selected", { count: formatNumber(selected.length) })
+              }}</span
+            >
           </h2>
-          <button @click="reset">Cancel review</button>
+          <button @click="reset">{{ t("Cancel review") }}</button>
         </div>
         <details class="original-source">
-          <summary>Original source · version 1</summary>
+          <summary>{{ t("Original source · version 1") }}</summary>
           <pre>{{ proposal.source }}</pre>
         </details>
         <p v-if="!proposal.suggestions.length" class="notice" role="status">
-          No supported actions or updates were found. Cancel review to edit the
-          notes or choose rule-assisted review.
+          {{
+            t(
+              "No supported actions or updates were found. Cancel review to edit the notes or choose rule-assisted review.",
+            )
+          }}
         </p>
         <article
           v-for="(s, index) in proposal.suggestions"
@@ -258,19 +303,26 @@ function reset() {
           class="suggestion-card"
         >
           <div class="suggestion-source">
-            <span class="eyebrow"
-              >SOURCE LINE {{ s.sourceLine }} · VERSION 1</span
-            >
+            <span class="eyebrow">{{
+              t("SOURCE LINE {line} · VERSION 1", {
+                line: formatNumber(s.sourceLine),
+              })
+            }}</span>
             <blockquote>{{ s.sourceText }}</blockquote>
           </div>
           <div class="form-grid">
             <label
-              >Project<select
+              >{{ t("Project")
+              }}<select
                 v-model="s.selectedProjectId"
-                :aria-label="`Project for suggestion ${index + 1}`"
+                :aria-label="
+                  t('Project for suggestion {count}', {
+                    count: formatNumber(index + 1),
+                  })
+                "
                 @change="s.overwriteConfirmed = false"
               >
-                <option value="">Choose a project</option>
+                <option value="">{{ t("Choose a project") }}</option>
                 <option
                   v-for="p in store.data.projects"
                   :key="p.id"
@@ -281,10 +333,10 @@ function reset() {
               ><small :class="s.candidates.length !== 1 ? 'amber' : 'muted'">{{
                 s.candidates.length === 1
                   ? proposal.generator
-                    ? "Model candidate — please verify"
-                    : "Name / alias match — please verify"
+                    ? t("Model candidate — please verify")
+                    : t("Name / alias match — please verify")
                   : s.candidates.length > 1
-                    ? "Ambiguous: " +
+                    ? t("Ambiguous: ") +
                       s.candidates
                         .map(
                           (c) =>
@@ -293,27 +345,40 @@ function reset() {
                             )?.name,
                         )
                         .join(", ")
-                    : "No match found. Select the correct project."
+                    : t("No match found. Select the correct project.")
               }}</small
               ><small v-if="proposal.generator" class="muted">{{
                 s.candidates.map((c) => c.reason).join(" · ")
               }}</small></label
             ><label
-              >Proposed change<select
+              >{{ t("Proposed change")
+              }}<select
                 v-model="s.action"
-                :aria-label="`Action for suggestion ${index + 1}`"
+                :aria-label="
+                  t('Action for suggestion {count}', {
+                    count: formatNumber(index + 1),
+                  })
+                "
                 @change="s.overwriteConfirmed = false"
               >
-                <option value="task">Create task</option>
-                <option value="update">Replace latest project update</option>
+                <option value="task">{{ t("Create task") }}</option>
+                <option value="update">
+                  {{ t("Replace latest project update") }}
+                </option>
               </select></label
             ><label class="full"
-              >Reviewed text<input
+              >{{ t("Reviewed text")
+              }}<input
                 v-model="s.title"
                 maxlength="240"
-                :aria-label="`Text for suggestion ${index + 1}`" /></label
+                :aria-label="
+                  t('Text for suggestion {count}', {
+                    count: formatNumber(index + 1),
+                  })
+                " /></label
             ><label v-if="s.action === 'task'"
-              >Task status<select v-model="s.status">
+              >{{ t("Task status")
+              }}<select v-model="s.status">
                 <option v-for="st in statuses" :key="st" :value="st">
                   {{ statusLabels[st] }}
                 </option>
@@ -321,12 +386,12 @@ function reset() {
             >
           </div>
           <div v-if="s.action === 'update'" class="overwrite-review">
-            <strong>Current latest update</strong>
+            <strong>{{ t("Current latest update") }}</strong>
             <p>
               {{
                 store.data.projects.find((p) => p.id === s.selectedProjectId)
                   ?.latestUpdate ||
-                "Choose a project to review its current update."
+                t("Choose a project to review its current update.")
               }}
             </p>
             <label class="check-label"
@@ -334,15 +399,19 @@ function reset() {
                 v-model="s.overwriteConfirmed"
                 type="checkbox"
                 :disabled="!s.selectedProjectId"
-              />I reviewed and confirm replacing this update</label
+              />{{ t("I reviewed and confirm replacing this update") }}</label
             >
           </div>
           <label class="check-label confirm-suggestion"
             ><input
               v-model="s.confirmed"
               type="checkbox"
-              :aria-label="`Confirm suggestion ${index + 1}`"
-            />I confirm the project and this proposed change</label
+              :aria-label="
+                t('Confirm suggestion {count}', {
+                  count: formatNumber(index + 1),
+                })
+              "
+            />{{ t("I confirm the project and this proposed change") }}</label
           >
         </article>
         <section
@@ -350,15 +419,20 @@ function reset() {
           :key="update.id"
           class="panel"
         >
-          <h3>Combined update · {{ update.name }}</h3>
+          <h3>{{ t("Combined update · {name}", { name: update.name }) }}</h3>
           <p class="muted">
-            The confirmed lines replace this project's latest update together,
-            in source order.
+            {{
+              t(
+                "The confirmed lines replace this project's latest update together, in source order.",
+              )
+            }}
           </p>
           <pre class="working-notes">{{ update.text }}</pre>
         </section>
         <div class="review-footer">
-          <p class="muted">Unselected items will not change your workspace.</p>
+          <p class="muted">
+            {{ t("Unselected items will not change your workspace.") }}
+          </p>
           <button
             class="primary"
             :disabled="!valid || store.busy"
@@ -366,13 +440,15 @@ function reset() {
           >
             {{
               store.busy
-                ? "Applying…"
-                : `Apply ${selected.length} confirmed changes`
+                ? t("Applying…")
+                : t("Apply {count} confirmed changes", {
+                    count: formatNumber(selected.length),
+                  })
             }}
           </button>
         </div></template
       ></template
     >
-    <p v-if="error" class="error-box" role="alert">{{ error }}</p>
+    <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
   </section>
 </template>

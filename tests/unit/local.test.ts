@@ -111,3 +111,33 @@ it("never enables Qwen or sends notes from the browser-local adapter", async () 
   );
   expect(outbound).not.toHaveBeenCalled();
 });
+
+it("records history restoration distinctly from newly completed work", async () => {
+  const { taskInput } = await import("../../packages/domain/types");
+  const { isCompletionAction } =
+    await import("../../apps/web/src/composables/activity-summary");
+  const api = createLocalApi();
+  const seed = await api.snapshot();
+  const original = seed.tasks.find(
+    (task) =>
+      task.status === "done" &&
+      !seed.tasks.some((child) => child.parentId === task.id),
+  )!;
+  const reopened = await api.saveTask(
+    { ...taskInput.strip().parse(original), status: "todo" },
+    original.id,
+    original.version,
+  );
+  const afterEdit = await api.snapshot();
+  const event = afterEdit.activities[0]!;
+  await api.restore(event.id, reopened.version);
+  const restored = await api.snapshot();
+  expect(restored.activities).toHaveLength(afterEdit.activities.length + 1);
+  expect(restored.activities[0]).toMatchObject({
+    source: "History restore",
+    action: "Restored previous version",
+    before: { status: "todo" },
+    after: { status: "done" },
+  });
+  expect(isCompletionAction(restored.activities[0]!)).toBe(false);
+});

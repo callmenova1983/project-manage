@@ -1,6 +1,7 @@
 import { createApp, h } from "vue";
 import { createPinia } from "pinia";
 import { createRouter, createWebHistory, RouterLink } from "vue-router";
+import { t } from "./locales";
 import { routerBase } from "./services/mode";
 import App from "./App.vue";
 import ProjectsView from "./views/ProjectsView.vue";
@@ -29,12 +30,12 @@ const router = createRouter({
       component: {
         render: () =>
           h("section", { class: "empty" }, [
-            h("h1", "Page not found"),
-            h(RouterLink, { to: "/projects" }, () => "Return to projects"),
+            h("h1", t("Page not found")),
+            h(RouterLink, { to: "/projects" }, () => t("Return to projects")),
           ]),
       },
     },
   ],
-  scrollBehavior: () => ({ top: 0 }),
+  scrollBehavior: (to) => (to.hash ? { el: to.hash, top: 72 } : { top: 0 }),
 });
 createApp(App).use(createPinia()).use(router).mount("#app");

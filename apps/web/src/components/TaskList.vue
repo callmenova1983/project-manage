@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, formatDate, formatNumber } from "../locales";
 import { computed, ref } from "vue";
 import {
   PhPlus,
@@ -71,11 +72,11 @@ function close() {
 </script>
 <template>
   <div class="task-list">
-    <p v-if="error" class="error-box" role="alert">{{ error }}</p>
+    <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
     <div v-if="!tasks.length" class="empty compact">
       <PhCheckSquare :size="28" />
-      <h3>No tasks here yet</h3>
-      <p>Add a task or adjust your filters.</p>
+      <h3>{{ t("No tasks here yet") }}</h3>
+      <p>{{ t("Add a task or adjust your filters.") }}</p>
     </div>
     <template v-for="task in ordered" :key="task.id"
       ><TaskEditor
@@ -94,7 +95,7 @@ function close() {
             ><PhSquaresFour :size="18" /></span
           ><select
             v-else
-            :aria-label="`Status for ${task.title}`"
+            :aria-label="t('Status for {title}', { title: task.title })"
             :value="task.status"
             :disabled="store.busy"
             @change="change(task, $event)"
@@ -117,27 +118,25 @@ function close() {
             >{{
               store.data.projects.find((p) => p.id === task.projectId)?.name
             }}</RouterLink
-          ><span v-if="parents.has(task.id)" class="muted"
-            >{{ children(task).done }}/{{ children(task).total }} subtasks
-            completed</span
-          >
+          ><span v-if="parents.has(task.id)" class="muted">{{
+            t("{done}/{total} subtasks completed", {
+              done: formatNumber(children(task).done),
+              total: formatNumber(children(task).total),
+            })
+          }}</span>
         </div>
         <StatusBadge v-if="!parents.has(task.id)" :status="task.status" /><span
           class="task-assignee muted"
           >{{ task.assignee }}</span
         ><span class="task-date muted">{{
           task.dueDate
-            ? new Date(task.dueDate + "T00:00:00Z").toLocaleDateString("en", {
-                month: "short",
-                day: "numeric",
-                timeZone: "UTC",
-              })
-            : "No due date"
+            ? formatDate(task.dueDate, { month: "short", day: "numeric" })
+            : t("No due date")
         }}</span
         ><button
           v-if="projectId"
           class="icon-button"
-          :aria-label="`Add subtask to ${task.title}`"
+          :aria-label="t('Add subtask to {title}', { title: task.title })"
           @click="
             if (confirmDiscard()) {
               parentId = task.id;
@@ -148,7 +147,7 @@ function close() {
           <PhPlus :size="15" /></button
         ><button
           class="icon-button"
-          :aria-label="`Edit ${task.title}`"
+          :aria-label="t('Edit {title}', { title: task.title })"
           @click="confirmDiscard() && (editing = task)"
         >
           <PhPencilSimple :size="15" />
@@ -165,7 +164,7 @@ function close() {
       class="text-button add-task"
       @click="adding = true"
     >
-      <PhPlus :size="16" />Add task
+      <PhPlus :size="16" />{{ t("Add task") }}
     </button>
   </div>
 </template>

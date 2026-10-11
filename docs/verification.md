@@ -1,5 +1,18 @@
 # Executed verification
 
+## Latest increment: bilingual themes and factual project tracking (2026-10-11)
+
+- **135 unit/API tests passed**, 11 files. New coverage exercises locale fallback/interpolation, independent theme preferences and contrast, leaf-task focus, and factual weekly activity (seed exclusion, deduplication, completion transitions, UTC week boundaries, restore/import exclusions).
+- The Chromium suite now contains **42 cases**, including eight EN/中文 × dark/light × desktop/375px combinations. The first full local run passed 41 and exposed tablet overflow from visually hidden status labels. The corrected 768/1024px case passed separately; the exact-commit CI runs all 42 together. The tablet regression now also checks that report/work cells stay within their rows and headings remain visible.
+- All eight preference combinations check persistence, retained original user content, stage filtering, no page overflow, no unexpected browser errors, zero demo API requests, and initial-view axe WCAG 2/2.1 A/AA scans. Additional cases verify a real local save/completion → weekly history → exact activity anchor, plus task focus and browser Back.
+- Lint, Vue/API typecheck, normal production build, formatting and diff checks passed. Built browser smoke passed for login, protected routing, isolated demo save/reload, unchanged formal session/data and process restart persistence. **Zero unexpected console/page errors.**
+- The actual Chromium replay of the measured Codespaces Origin/Referer rewrite passed again, including Secure session and CSRF-protected save/reload. It remains a local intercepted simulation, not a live public deployment test.
+- Final screenshots were captured from the running application. Desktop, narrow and corrected tablet pixels were inspected. The dense list, default-collapsed sidebar and factual update/work columns remain; optional weekly history and next work expand on demand. No Gantt, calendar or delay dashboard was added.
+
+Evidence: [English dark desktop](screenshots/portfolio-en-dark-1536.png), [Chinese light desktop](screenshots/portfolio-zh-CN-light-1536.png), [Chinese dark mobile](screenshots/portfolio-zh-CN-dark-375.png), [Chinese light mobile](screenshots/portfolio-zh-CN-light-375.png), [weekly history](screenshots/portfolio-changes-desktop.png), [768px tablet](screenshots/portfolio-tablet-768.png), [1024px tablet](screenshots/portfolio-tablet-1024.png). All eight language/theme/size screenshots are versioned in `docs/screenshots`. Runtime evidence is in `artifacts/built-runtime.json` and `artifacts/codespaces-browser.json`.
+
+Scope and deployment notes: [experience update](experience-update.md). No schema migration, account change, real provider call, public deployment or merge was performed. Lightweight project intake, speech recognition, admin roles/user management, configurable catalogs and model administration remain **unimplemented next-batch work**. The previous limitations below still apply unless explicitly superseded here; automated checks are not production-launch approval.
+
 ## Latest increment: browser demo and measured proxy compatibility (2026-10-11)
 
 The isolated `/demo/` entry is independently deployable at commit `1e05f36b4fe23fd35c1f8863e497ac366123ec32`. The subsequent proxy change is separate, so demo delivery does not depend on formal login recovery.

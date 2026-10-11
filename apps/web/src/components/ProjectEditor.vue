@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from "../locales";
 import { ref, computed } from "vue";
 import {
   projectInput,
@@ -67,69 +68,84 @@ function reload() {
 }
 </script>
 <template>
-  <form class="editor" aria-label="Project editor" @submit.prevent="save">
+  <form class="editor" :aria-label="t('Project editor')" @submit.prevent="save">
     <div class="section-heading">
-      <h3>{{ project ? "Edit project" : "New project" }}</h3>
-      <span v-if="dirty" class="muted">Unsaved changes</span>
+      <h3>{{ t(project ? "Edit project" : "New project") }}</h3>
+      <span v-if="dirty" class="muted">{{ t("Unsaved changes") }}</span>
     </div>
     <SaveError :error="error" @reload="reload" />
     <div class="form-grid">
       <label
-        >Project name<input
+        >{{ t("Project name")
+        }}<input
           v-model="draft.name"
           required
           maxlength="120"
           autofocus
-          placeholder="A clear, memorable name" /></label
+          :placeholder="t('A clear, memorable name')" /></label
       ><label
-        >Client / organization<input
+        >{{ t("Client / organization")
+        }}<input
           v-model="draft.client"
           required
           maxlength="120"
-          placeholder="Organization name" /></label
+          :placeholder="t('Organization name')" /></label
       ><label
-        >Stage<select v-model="draft.stage">
+        >{{ t("Stage")
+        }}<select v-model="draft.stage">
           <option v-for="s in stages" :key="s" :value="s">
             {{ stageLabels[s] }}
           </option>
         </select></label
       ><label
-        >Owner<input v-model="draft.owner" required maxlength="80" /></label
+        >{{ t("Owner")
+        }}<input v-model="draft.owner" required maxlength="80" /></label
       ><label
-        >Responsibility<select v-model="draft.discipline">
-          <option v-for="d in disciplines" :key="d">{{ d }}</option>
+        >{{ t("Responsibility")
+        }}<select v-model="draft.discipline">
+          <option v-for="d in disciplines" :key="d" :value="d">
+            {{ t(d) }}
+          </option>
         </select></label
       ><label
-        >Aliases, comma separated<input
+        >{{ t("Aliases, comma separated")
+        }}<input
           v-model="aliases"
-          placeholder="Alternative names for matching" /></label
+          :placeholder="t('Alternative names for matching')" /></label
       ><label class="full"
-        >Description<textarea
+        >{{ t("Description")
+        }}<textarea
           v-model="draft.description"
           rows="2"
           maxlength="4000"
         ></textarea></label
       ><label class="full"
-        >Latest reported update<textarea
+        >{{ t("Latest reported update")
+        }}<textarea
           v-model="draft.latestUpdate"
           rows="3"
           maxlength="4000"
-          placeholder="What happened? What was completed? What is next?"
+          :placeholder="t('What happened? What was completed? What is next?')"
         ></textarea></label
       ><label class="full"
-        >Working notes — paste free text or a table<textarea
+        >{{ t("Working notes — paste free text or a table")
+        }}<textarea
           v-model="draft.notes"
           rows="4"
           maxlength="20000"
-          placeholder="Notes stay as editable text. Paste task rows in the task section to create tasks."
+          :placeholder="
+            t(
+              'Notes stay as editable text. Paste task rows in the task section to create tasks.',
+            )
+          "
         ></textarea>
       </label>
     </div>
     <div class="form-actions">
       <button type="button" :disabled="store.busy" @click="cancel">
-        Cancel</button
+        {{ t("Cancel") }}</button
       ><button class="primary" :disabled="store.busy" type="submit">
-        {{ store.busy ? "Saving…" : "Save project" }}
+        {{ t(store.busy ? "Saving…" : "Save project") }}
       </button>
     </div>
   </form>

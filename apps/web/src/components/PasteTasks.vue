@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, formatDate, formatNumber } from "../locales";
 import { ref, computed } from "vue";
 import {
   parsePaste,
@@ -21,7 +22,7 @@ async function save() {
   error.value = "";
   try {
     if (rows.value.length < 1 || rows.value.length > 100)
-      throw new Error("Paste between 1 and 100 rows.");
+      throw new Error(t("Paste between 1 and 100 rows."));
     const tasks = rows.value.map((r) =>
       taskInput.parse({
         ...r,
@@ -35,7 +36,7 @@ async function save() {
     );
     await store.operation(
       () => api.addTasks(tasks),
-      `${tasks.length} tasks added`,
+      t("{count} tasks added", { count: formatNumber(tasks.length) }),
     );
     text.value = "";
     emit("close");
@@ -46,13 +47,17 @@ async function save() {
 </script>
 <template>
   <section class="editor">
-    <h3>Paste tasks</h3>
+    <h3>{{ t("Paste tasks") }}</h3>
     <p class="muted">
-      One task per line, or paste spreadsheet columns: title, assignee, due date
-      (YYYY-MM-DD). Review before saving.
+      {{
+        t(
+          "One task per line, or paste spreadsheet columns: title, assignee, due date (YYYY-MM-DD). Review before saving.",
+        )
+      }}
     </p>
     <label
-      >Source text<textarea
+      >{{ t("Source text")
+      }}<textarea
         v-model="text"
         rows="5"
         maxlength="20000"
@@ -60,37 +65,41 @@ async function save() {
       ></textarea>
     </label>
     <div v-if="review" class="paste-preview">
-      <h4>{{ rows.length }} tasks to create</h4>
+      <h4>
+        {{ t("{count} tasks to create", { count: formatNumber(rows.length) }) }}
+      </h4>
       <table>
         <thead>
           <tr>
-            <th>Title</th>
-            <th>Assignee</th>
-            <th>Due date</th>
+            <th>{{ t("Title") }}</th>
+            <th>{{ t("Assignee") }}</th>
+            <th>{{ t("Due date") }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="(r, i) in rows" :key="i">
             <td>{{ r.title }}</td>
             <td>{{ r.assignee }}</td>
-            <td>{{ r.dueDate || "No date" }}</td>
+            <td>{{ r.dueDate ? formatDate(r.dueDate) : t("No date") }}</td>
           </tr>
         </tbody>
       </table>
     </div>
-    <p v-if="error" role="alert" class="error-box">{{ error }}</p>
+    <p v-if="error" role="alert" class="error-box">{{ t(error) }}</p>
     <div class="form-actions">
       <button :disabled="store.busy" @click="discard() && emit('close')">
-        Cancel</button
+        {{ t("Cancel") }}</button
       ><button
         v-if="!review"
         class="primary"
         :disabled="!rows.length"
         @click="review = true"
       >
-        Review {{ rows.length }} tasks</button
+        {{
+          t("Review {count} tasks", { count: formatNumber(rows.length) })
+        }}</button
       ><button v-else class="primary" :disabled="store.busy" @click="save">
-        {{ store.busy ? "Saving…" : "Save tasks" }}
+        {{ t(store.busy ? "Saving…" : "Save tasks") }}
       </button>
     </div>
   </section>

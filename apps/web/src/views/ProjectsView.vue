@@ -13,6 +13,7 @@ import {
 import { useWorkspace } from "../stores/workspace";
 import {
   stages,
+  statuses,
   disciplines,
   statistics,
   leafTasks,
@@ -27,6 +28,12 @@ import ProjectEditor from "../components/ProjectEditor.vue";
 import TaskList from "../components/TaskList.vue";
 import InlineNotes from "../components/InlineNotes.vue";
 import PasteTasks from "../components/PasteTasks.vue";
+import { t, formatDate, formatNumber } from "../locales";
+import TaskDistribution from "../components/TaskDistribution.vue";
+import ProjectStages from "../components/ProjectStages.vue";
+import WeeklyChanges from "../components/WeeklyChanges.vue";
+import NextWork from "../components/NextWork.vue";
+const insightsOpen = ref(false);
 const store = useWorkspace();
 const query = ref(""),
   stage = ref(""),
@@ -40,7 +47,7 @@ const query = ref(""),
 const scope = ref<"week" | "today">("week");
 const scopeDate = computed(() => {
   const format = (date: Date) =>
-    date.toLocaleDateString("en", {
+    formatDate(date, {
       month: "short",
       day: "numeric",
       timeZone: "UTC",
@@ -97,14 +104,14 @@ function summary(id: string) {
 }
 function reportTime(p: Project) {
   return p.reportedAt
-    ? new Date(p.reportedAt).toLocaleString("en", {
+    ? formatDate(p.reportedAt, {
         month: "short",
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
         timeZone: "UTC",
       }) + " UTC"
-    : "Report time unavailable";
+    : t("Report time unavailable");
 }
 function saved(p: Project) {
   creating.value = false;
@@ -128,37 +135,43 @@ function edit(id: string) {
     <section class="page-heading">
       <div class="compact-title">
         <h1>
-          Projects
-          <span class="title-count">{{ store.data.projects.length }}</span>
+          {{ t("Projects") + " "
+          }}<span class="title-count">{{
+            formatNumber(store.data.projects.length)
+          }}</span>
         </h1>
         <span class="workspace-totals"
-          >{{ store.total.total }} tasks <span>·</span>
-          {{ store.total.done }} completed <span>·</span>
-          {{ store.total.unfinished }} open</span
+          >{{ t("{count} tasks", { count: store.total.total }) }} <span>·</span>
+          {{ t("{count} completed", { count: store.total.done }) }}
+          <span>·</span>
+          {{ t("{count} open", { count: store.total.unfinished }) }}</span
         >
       </div>
       <div class="heading-actions">
         <RouterLink to="/meetings" class="button secondary"
-          ><PhNotePencil :size="17" />Review meeting notes</RouterLink
+          ><PhNotePencil :size="17" />{{
+            t("Review meeting notes")
+          }}</RouterLink
         ><button class="primary" :disabled="creating" @click="creating = true">
-          <PhPlus :size="17" />New project
+          <PhPlus :size="17" />{{ t("New project") }}
         </button>
       </div>
     </section>
-    <section class="work-scope-bar" aria-label="Workspace overview">
-      <div class="scope-switch" aria-label="Project work scope">
+    <section class="work-scope-bar" :aria-label="t('Workspace overview')">
+      <div class="scope-switch" :aria-label="t('Project work scope')">
         <button
           :aria-pressed="scope === 'today'"
           :class="{ active: scope === 'today' }"
           @click="scope = 'today'"
         >
-          Today <span>{{ store.today.total }}</span></button
+          {{ t("Today")
+          }}<span>{{ formatNumber(store.today.total) }}</span></button
         ><button
           :aria-pressed="scope === 'week'"
           :class="{ active: scope === 'week' }"
           @click="scope = 'week'"
         >
-          This week <span>{{ store.week.total }}</span>
+          {{ t("This week") }}<span>{{ formatNumber(store.week.total) }}</span>
         </button>
       </div>
       <span class="scope-date" aria-live="polite">{{ scopeDate }}</span>
@@ -171,10 +184,50 @@ function edit(id: string) {
         ><span><StatusBadge status="done" />{{ scopeStats.done }}</span
         ><span><StatusBadge status="blocked" />{{ scopeStats.blocked }}</span>
       </div>
-      <span class="muted scope-caption"
-        >Work planned · independent of due dates</span
-      >
+      <TaskDistribution
+        class="overview-distribution"
+        :tasks="
+          leafTasks(store.data.tasks).filter((task) =>
+            scope === 'week'
+              ? task.workWeek === weekKey()
+              : task.workDates.includes(dayKey()),
+          )
+        "
+        compact
+        :showLegend="false"
+      />
+      <span class="muted scope-caption">{{
+        t("Work planned · independent of due dates")
+      }}</span>
     </section>
+    <ProjectStages
+      :projects="store.data.projects"
+      :selected="stage"
+      @select="stage = $event"
+    />
+    <div class="insights-control">
+      <button
+        class="text-button"
+        :aria-expanded="insightsOpen"
+        aria-controls="portfolio-insights"
+        @click="insightsOpen = !insightsOpen"
+      >
+        <PhCaretDown :size="14" :class="{ collapsed: !insightsOpen }" />{{
+          t("Changes & next work")
+        }}</button
+      ><span class="muted">{{ t("Saved history · upcoming tasks") }}</span>
+    </div>
+    <div v-if="insightsOpen" id="portfolio-insights" class="portfolio-insights">
+      <WeeklyChanges
+        :activities="store.data.activities"
+        :projects="store.data.projects"
+        :projectIds="projects.map((project) => project.id)"
+      /><NextWork
+        :tasks="store.data.tasks"
+        :projects="projects"
+        :scope="scope"
+      />
+    </div>
     <ProjectEditor v-if="creating" @close="creating = false" @saved="saved" />
     <section class="project-section">
       <div class="filterbar">
@@ -182,30 +235,35 @@ function edit(id: string) {
           ><PhMagnifyingGlass :size="17" /><input
             v-model="query"
             data-global-search
-            aria-label="Search projects"
-            placeholder="Search projects, updates, people…"
+            :aria-label="t('Search projects')"
+            :placeholder="t('Search projects, updates, people…')"
           /><kbd>/</kbd></label
         >
         <div class="filter-controls">
           <PhFunnel :size="16" class="muted" /><select
             v-model="stage"
-            aria-label="Filter by stage"
+            :aria-label="t('Filter by stage')"
           >
-            <option value="">All stages</option>
+            <option value="">{{ t("All stages") }}</option>
             <option v-for="s in stages" :key="s" :value="s">
               {{ stageLabels[s] }}
             </option></select
-          ><select v-model="owner" aria-label="Filter by owner">
-            <option value="">All owners</option>
+          ><select v-model="owner" :aria-label="t('Filter by owner')">
+            <option value="">{{ t("All owners") }}</option>
             <option v-for="o in owners" :key="o">{{ o }}</option></select
-          ><select v-model="discipline" aria-label="Filter by responsibility">
-            <option value="">All responsibilities</option>
-            <option v-for="d in disciplines" :key="d">{{ d }}</option></select
-          ><select v-model="sort" aria-label="Sort projects">
-            <option value="updated">Latest report</option>
-            <option value="name">Name A–Z</option></select
+          ><select
+            v-model="discipline"
+            :aria-label="t('Filter by responsibility')"
+          >
+            <option value="">{{ t("All responsibilities") }}</option>
+            <option v-for="d in disciplines" :key="d" :value="d">
+              {{ t(d) }}
+            </option></select
+          ><select v-model="sort" :aria-label="t('Sort projects')">
+            <option value="updated">{{ t("Latest report") }}</option>
+            <option value="name">{{ t("Name A–Z") }}</option></select
           ><button v-if="filtered" class="text-button" @click="clear">
-            Clear
+            {{ t("Clear") }}
           </button>
         </div>
       </div>
@@ -213,36 +271,43 @@ function edit(id: string) {
         <PhMagnifyingGlass :size="32" />
         <h2>
           {{
-            filtered ? "No matching projects" : "Your next project starts here"
+            t(
+              filtered
+                ? "No matching projects"
+                : "Your next project starts here",
+            )
           }}
         </h2>
         <p>
           {{
-            filtered
-              ? "Try a different search or clear your filters."
-              : "Create a project to bring the team’s work together."
+            t(
+              filtered
+                ? "Try a different search or clear your filters."
+                : "Create a project to bring the team’s work together.",
+            )
           }}
         </p>
-        <button v-if="filtered" @click="clear">Clear filters</button
+        <button v-if="filtered" @click="clear">{{ t("Clear filters") }}</button
         ><button v-else class="primary" @click="creating = true">
-          New project
+          {{ t("New project") }}
         </button>
       </div>
       <div
         v-else
         class="project-table"
         role="region"
-        aria-label="Projects list"
+        :aria-label="t('Projects list')"
         tabindex="0"
       >
         <div class="project-table-head">
-          <span>Project</span><span>Stage</span
-          ><span>Latest reported update</span
+          <span>{{ t("Project") }}</span
+          ><span>{{ t("Stage") }}</span
+          ><span>{{ t("Latest reported update") }}</span
           ><span>{{
-            scope === "week" ? "This week's work" : "Today's work"
+            t(scope === "week" ? "This week's work" : "Today's work")
           }}</span
           ><span>{{
-            scope === "week" ? "This week summary" : "Today summary"
+            t(scope === "week" ? "This week summary" : "Today summary")
           }}</span
           ><span></span>
         </div>
@@ -256,7 +321,7 @@ function edit(id: string) {
             <div class="project-cell">
               <button
                 class="icon-button expand-button"
-                :aria-label="`Expand ${project.name}`"
+                :aria-label="t('Expand {name}', { name: project.name })"
                 :aria-expanded="expanded === project.id"
                 @click="toggle(project.id)"
               >
@@ -276,16 +341,19 @@ function edit(id: string) {
               </div>
             </div>
             <StatusBadge :stage="project.stage" />
-            <div class="latest-update">
+            <div
+              class="latest-update"
+              :data-label="t('Latest reported update')"
+            >
               <p :title="project.latestUpdate">
-                {{ project.latestUpdate || "No update reported yet." }}
+                {{ project.latestUpdate || t("No update reported yet.") }}
               </p>
               <span
                 >{{ reportTime(project) }} ·
-                {{ project.reportedBy ?? "Reporter unavailable" }}</span
+                {{ project.reportedBy ?? t("Reporter unavailable") }}</span
               >
             </div>
-            <div class="project-week">
+            <div class="project-week" :data-label="t('Planned work')">
               <RouterLink
                 v-for="task in scopedTasks(project.id).slice(0, 2)"
                 :key="task.id"
@@ -296,31 +364,43 @@ function edit(id: string) {
                   >{{ task.title }}</span
                 ></RouterLink
               >
-              <span v-if="!scopedTasks(project.id).length" class="muted"
-                >No work planned</span
-              >
+              <span v-if="!scopedTasks(project.id).length" class="muted">{{
+                t("No work planned")
+              }}</span>
             </div>
             <div class="project-scope-summary">
               <RouterLink
                 v-if="summary(project.id).total"
                 class="scope-summary-link"
                 :to="`/tasks?scope=${scope}&project=${project.id}`"
-                :aria-label="`View ${summary(project.id).total} planned tasks for ${project.name}`"
+                :aria-label="
+                  t('View {count} planned tasks for {name}', {
+                    count: summary(project.id).total,
+                    name: project.name,
+                  })
+                "
               >
+                <TaskDistribution
+                  :tasks="scopedTasks(project.id)"
+                  compact
+                  :showLegend="false"
+                />
                 <span class="scope-counts"
-                  ><span>To do {{ summary(project.id).todo }}</span
-                  ><span>In progress {{ summary(project.id).in_progress }}</span
-                  ><span>Done {{ summary(project.id).done }}</span
-                  ><span
-                    >Needs coord. {{ summary(project.id).blocked }}</span
+                  ><span v-for="status in statuses" :key="status"
+                    ><StatusBadge :status="status" iconOnly />{{
+                      " " + formatNumber(summary(project.id)[status])
+                    }}</span
                   ></span
-                > </RouterLink
-              ><span v-else class="muted">No work planned</span>
+                >
+              </RouterLink>
+              <span v-else class="muted" :aria-label="t('No work planned')"
+                >—</span
+              >
             </div>
             <RouterLink
               :to="`/projects/${project.id}`"
               class="icon-button"
-              :aria-label="`Open ${project.name}`"
+              :aria-label="t('Open {name}', { name: project.name })"
               ><PhArrowUpRight :size="17"
             /></RouterLink>
           </div>
@@ -335,16 +415,16 @@ function edit(id: string) {
               <InlineNotes :project="project" />
               <section class="inline-subtasks">
                 <div class="section-heading">
-                  <h4>Tasks & subtasks</h4>
+                  <h4>{{ t("Tasks & subtasks") }}</h4>
                   <div>
                     <button class="text-button" @click="edit(project.id)">
-                      Edit project</button
+                      {{ t("Edit project") }}</button
                     ><button
                       class="text-button"
                       :disabled="pasting === project.id"
                       @click="pasting = project.id"
                     >
-                      Paste tasks
+                      {{ t("Paste tasks") }}
                     </button>
                   </div>
                 </div>
@@ -366,8 +446,81 @@ function edit(id: string) {
       </div>
     </section>
     <p class="list-footnote">
-      {{ projects.length }} projects · All team members can view and edit · Work
-      scope is independent of due dates
+      {{
+        t(
+          "{count} projects · All team members can view and edit · Work scope is independent of due dates",
+          { count: projects.length },
+        )
+      }}
     </p>
   </div>
 </template>
+
+<style scoped>
+.overview-distribution {
+  width: 130px;
+  flex-shrink: 0;
+}
+.insights-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 5px 0 7px;
+}
+.insights-control > button {
+  min-height: 36px;
+  font-size: 12px;
+  gap: 6px;
+}
+.insights-control > span {
+  font-size: 11px;
+}
+.insights-control .collapsed {
+  transform: rotate(-90deg);
+}
+.portfolio-insights {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+  align-items: start;
+}
+.project-scope-summary .scope-summary-link {
+  display: block;
+}
+.project-scope-summary :deep(.distribution-track) {
+  margin-bottom: 3px;
+}
+.project-scope-summary .scope-counts {
+  font-size: 11px;
+  display: flex;
+  justify-content: space-between;
+}
+.scope-counts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.scope-counts :deep(.badge) {
+  border: 0;
+  background: none;
+  padding: 0;
+}
+@media (max-width: 1200px) {
+  .overview-distribution {
+    display: none;
+  }
+}
+@media (max-width: 700px) {
+  .portfolio-insights {
+    grid-template-columns: 1fr;
+  }
+  .insights-control > button {
+    min-height: 44px;
+  }
+  .insights-control > span {
+    display: none;
+  }
+}
+</style>
