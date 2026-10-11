@@ -58,6 +58,8 @@ npm run user:create
 unset PM_USER_PASSWORD
 ```
 
+已有测试账号需要自行设置新密码时，在自己的私人 Codespace 终端运行 `npm run user:reset-password -- demo@example.test`。按提示两次隐藏输入 14–500 字符的新密码，最后输入 `RESET` 确认提交；旧会话全部失效。此命令不读取旧密码、不接收聊天或命令行密码、不增加公共重置接口。更新部署与手机操作步骤见 [自主改密说明](docs/password-reset.md)。
+
 密码使用随机盐和 scrypt。会话 token 仅保存哈希，HttpOnly / SameSite=Strict Cookie，12 小时到期；生产模式使用 Secure Cookie。写入要求 CSRF token、允许来源、版本号与幂等请求 ID。没有公共注册或匿名写入。SQLite 使用 WAL、外键、预编译语句和事务。幂等结果保留 7 天。
 
 备份请停止写入后复制数据库，或用 SQLite backup API/工具生成一致快照；不要只复制正在写入的主文件而遗漏 WAL。JSON 导出仅包含最近 500 条活动，不能替代完整数据库备份。

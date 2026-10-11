@@ -176,19 +176,28 @@ export async function buildApp(options: {
         throw new HttpError(401, "Email or password is incorrect");
       const token = randomBytes(32).toString("hex"),
         csrf = randomBytes(24).toString("hex");
-      repo.db
-        .prepare("DELETE FROM sessions WHERE expires_at<?")
-        .run(Date.now());
-      repo.db
-        .prepare(
-          "INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)",
-        )
-        .run(
-          hashToken(token),
-          String(user.id),
-          csrf,
-          Date.now() + 12 * 3600000,
-        );
+      repo.transaction(() => {
+        // A local reset may have completed while scrypt was verifying the old
+        // password. Do not issue a new session for an obsolete credential.
+        const current = repo.db
+          .prepare("SELECT password_hash FROM users WHERE id=?")
+          .get(String(user.id));
+        if (!current || current.password_hash !== user.password_hash)
+          throw new HttpError(401, "Email or password is incorrect");
+        repo.db
+          .prepare("DELETE FROM sessions WHERE expires_at<?")
+          .run(Date.now());
+        repo.db
+          .prepare(
+            "INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)",
+          )
+          .run(
+            hashToken(token),
+            String(user.id),
+            csrf,
+            Date.now() + 12 * 3600000,
+          );
+      });
       reply.setCookie("pm_session", token, {
         httpOnly: true,
         secure: !!options.production,
