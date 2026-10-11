@@ -157,6 +157,79 @@ try {
     },
   });
   assert.equal(saved.status(), 200);
+  // The same built site can offer a demo even when this browser already owns
+  // a real session. Demo edits must not use, clear or mutate that session/data.
+  const serverBeforeDemo = await (
+    await page.request.get(origin + "/api/workspace")
+  ).json();
+  const demoContext = await browser.newContext({
+    storageState: await page.context().storageState(),
+    viewport: { width: 390, height: 844 },
+  });
+  const demoPage = await demoContext.newPage();
+  const demoApiRequests = [];
+  demoPage.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/api/"))
+      demoApiRequests.push(request.url());
+  });
+  demoPage.on("pageerror", (error) => errors.push(error.message));
+  demoPage.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await demoPage.goto(origin + "/demo/projects");
+  await demoPage
+    .getByRole("heading", { name: "Projects 20", exact: true })
+    .waitFor();
+  await demoPage
+    .getByRole("button", { name: "Expand Atlas Customer Portal", exact: true })
+    .click();
+  await demoPage
+    .getByRole("button", { name: "Edit project", exact: true })
+    .click();
+  await demoPage
+    .getByLabel("Latest reported update", { exact: true })
+    .fill("Built browser demo persistence only");
+  await demoPage
+    .getByRole("button", { name: "Save project", exact: true })
+    .click();
+  await demoPage
+    .getByRole("status")
+    .filter({ hasText: "Project updated" })
+    .waitFor();
+  await demoPage.reload();
+  await demoPage
+    .getByRole("button", { name: "Expand Atlas Customer Portal", exact: true })
+    .click();
+  await demoPage
+    .getByRole("button", { name: "Edit project", exact: true })
+    .click();
+  assert.equal(
+    await demoPage
+      .getByLabel("Latest reported update", { exact: true })
+      .inputValue(),
+    "Built browser demo persistence only",
+  );
+  await demoPage.getByRole("button", { name: "Cancel", exact: true }).click();
+  await demoPage
+    .getByRole("link", { name: "Atlas Customer Portal", exact: true })
+    .click();
+  await demoPage.reload();
+  await demoPage
+    .getByRole("heading", { name: "Atlas Customer Portal", exact: true })
+    .waitFor();
+  assert.deepEqual(demoApiRequests, []);
+  assert.equal(
+    (await demoContext.cookies()).find((cookie) => cookie.name === "pm_session")
+      .value,
+    (await page.context().cookies()).find(
+      (cookie) => cookie.name === "pm_session",
+    ).value,
+  );
+  assert.deepEqual(
+    await (await page.request.get(origin + "/api/workspace")).json(),
+    serverBeforeDemo,
+  );
+  await demoContext.close();
   await stop();
   await start();
   const restored = await (
@@ -168,6 +241,7 @@ try {
     build: "passed",
     staticRouting: "passed",
     authenticatedBrowser: "passed",
+    browserDemoIsolationAndPersistence: "passed",
     processRestartPersistence: "passed",
     unexpectedConsoleErrors: errors.length,
     chromium: browser.version(),

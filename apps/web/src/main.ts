@@ -1,6 +1,7 @@
-import { createApp } from "vue";
+import { createApp, h } from "vue";
 import { createPinia } from "pinia";
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter, createWebHistory, RouterLink } from "vue-router";
+import { routerBase } from "./services/mode";
 import App from "./App.vue";
 import ProjectsView from "./views/ProjectsView.vue";
 import ProjectDetail from "./views/ProjectDetail.vue";
@@ -14,7 +15,7 @@ import "@fontsource/inter/latin-600.css";
 import "@fontsource/inter/latin-700.css";
 import "./style.css";
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(routerBase),
   routes: [
     { path: "/", redirect: "/projects" },
     { path: "/projects", component: ProjectsView },
@@ -26,8 +27,11 @@ const router = createRouter({
     {
       path: "/:pathMatch(.*)*",
       component: {
-        template:
-          '<section class="empty"><h1>Page not found</h1><a href="/projects">Return to projects</a></section>',
+        render: () =>
+          h("section", { class: "empty" }, [
+            h("h1", "Page not found"),
+            h(RouterLink, { to: "/projects" }, () => "Return to projects"),
+          ]),
       },
     },
   ],

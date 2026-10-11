@@ -19,7 +19,9 @@ npm run dev:all
 - `APP_ORIGIN` 必须与浏览器来源一致。使用 `terminal.local` 或其他主机名时修改实际启动环境并重启 API（已导出的变量优先于 `.env`）。登录报 `Origin not allowed` 是来源配置问题，发生在密码校验前；[排查与无凭证验证步骤](docs/origin-troubleshooting.md)。
 - 配置见 `.env.example`。不要提交 `.env`、数据库、用户导出或真实业务纪要。
 
-独立运行 Web/API：`npm run dev` / `npm run dev:api`。在无后端的临时展示中，可运行 `VITE_DEMO_MODE=1 npm run dev`；界面明确标记“Local demo · browser only”，使用独立的 localStorage，不会同步到服务器。
+**免登录体验：打开同一站点的 `/demo/`**，直接使用 20 个合成项目；项目/任务编辑保存在当前浏览器，不请求 API、不创建后端会话。正式 `/projects` 与 API 继续要求登录。[演示边界、手机拍摄和部署说明](docs/browser-demo.md)。
+
+独立运行 Web/API：`npm run dev` / `npm run dev:api`。无后端且全站均为演示时，仍可运行 `VITE_DEMO_MODE=1 npm run dev`。同站同时提供正式工作区和 `/demo/` 时使用正常构建，不设置此变量。
 
 ## 当前功能
 

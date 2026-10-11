@@ -252,7 +252,7 @@ function edit(id: string) {
           class="project-record"
           :class="{ expanded: expanded === project.id }"
         >
-          <div class="project-row" @dblclick="edit(project.id)">
+          <div class="project-row">
             <div class="project-cell">
               <button
                 class="icon-button expand-button"

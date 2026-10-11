@@ -1330,6 +1330,22 @@ blockquote {
   width: 100%;
   margin-top: 8px;
 }
+.demo-entry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  margin-top: 20px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #cbc8ff;
+  text-align: center;
+}
+.demo-entry:hover {
+  background: rgba(151, 137, 249, 0.1);
+}
 .fine-print {
   font-size: 10px;
   line-height: 1.8;

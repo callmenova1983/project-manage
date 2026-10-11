@@ -16,6 +16,7 @@ import {
   PhX,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "./stores/workspace";
+import { embeddedDemo } from "./services/mode";
 const store = useWorkspace(),
   router = useRouter();
 const sidebarPanel = ref<HTMLElement | null>(null);
@@ -154,9 +155,12 @@ function search() {
       <button class="primary" type="submit" :disabled="signingIn">
         {{ signingIn ? "Signing in…" : "Sign in" }}<PhArrowRight :size="16" />
       </button>
+      <p class="fine-print">Use the account provisioned for your workspace.</p>
+      <a class="demo-entry" href="/demo/"
+        >Try demo · no sign-in required<PhArrowRight :size="16"
+      /></a>
       <p class="fine-print">
-        Use the account provisioned for your workspace.<br />Local setup creates
-        credentials in data/local-login.txt.
+        Explore synthetic projects. Demo changes stay in this browser.
       </p>
     </form>
   </main>
@@ -202,7 +206,15 @@ function search() {
         aria-label="Workspace settings"
         ><PhGearSix :size="21" />Workspace settings</RouterLink
       >
-      <button class="nav-item" aria-label="Sign out" @click="signOut">
+      <a v-if="embeddedDemo" class="nav-item" href="/projects"
+        ><PhArrowRight :size="20" />Open shared workspace</a
+      >
+      <button
+        v-else-if="store.mode !== 'local'"
+        class="nav-item"
+        aria-label="Sign out"
+        @click="signOut"
+      >
         <PhSignOut :size="20" />Sign out
       </button>
     </aside>
@@ -266,8 +278,8 @@ function search() {
         </div>
       </header>
       <div v-if="store.mode === 'local'" class="demo-notice" role="note">
-        Browser demo · changes stay on this device. No shared backend or AI
-        connection.
+        Browser demo · synthetic projects. Changes stay in this browser. No
+        shared backend or AI connection.
       </div>
       <div v-if="store.error" role="alert" class="global-error">
         <span>{{ store.error }}</span
@@ -275,16 +287,22 @@ function search() {
       </div>
       <main id="main-content" tabindex="-1"><RouterView /></main>
       <footer class="app-footer">
-        <span>Shared visibility. Shared momentum.</span
+        <span>{{
+          store.mode === "local"
+            ? "Your local demo workspace."
+            : "Shared visibility. Shared momentum."
+        }}</span
         ><span v-if="store.lastSynced"
-          >Synced
+          >{{ store.mode === "local" ? "Saved locally" : "Synced" }}
           {{
             store.lastSynced.toLocaleTimeString("en", {
               hour: "2-digit",
               minute: "2-digit",
             })
           }}
-          · updates every 20s</span
+          <template v-if="store.mode !== 'local'"
+            >· updates every 20s</template
+          ></span
         >
       </footer>
     </div>

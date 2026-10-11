@@ -14,6 +14,7 @@ import {
   type WorkspaceApi,
   type ReviewedSuggestion,
 } from "./contracts";
+import { browserDemo } from "./mode";
 export { ApiError } from "./contracts";
 export type { WorkspaceApi, ReviewedSuggestion } from "./contracts";
 class HttpApi implements WorkspaceApi {
@@ -134,7 +135,6 @@ class HttpApi implements WorkspaceApi {
     });
   }
 }
-export const api: WorkspaceApi =
-  import.meta.env.VITE_DEMO_MODE === "1"
-    ? (await import("./local")).createLocalApi()
-    : new HttpApi();
+export const api: WorkspaceApi = browserDemo
+  ? (await import("./local")).createLocalApi()
+  : new HttpApi();
