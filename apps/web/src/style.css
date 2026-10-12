@@ -1131,6 +1131,9 @@ small {
   background: var(--accent-bg);
   color: var(--accent-text);
 }
+html {
+  scroll-padding-top: var(--task-feedback-offset, 0px);
+}
 .task-list {
   border-top: 1px solid var(--border);
 }

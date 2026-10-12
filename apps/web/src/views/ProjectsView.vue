@@ -4,7 +4,8 @@ import {
   catalogs,
   catalogLabel,
 } from "../composables/catalogs";
-import { computed, ref } from "vue";
+import { computed, ref, toRefs, nextTick, onMounted, watch } from "vue";
+import { onBeforeRouteLeave } from "vue-router";
 import {
   PhMagnifyingGlass,
   PhPlus,
@@ -14,6 +15,7 @@ import {
   PhFunnel,
   PhNotePencil,
   PhSquaresFour,
+  PhCaretUp,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
 import {
@@ -37,19 +39,45 @@ import TaskDistribution from "../components/TaskDistribution.vue";
 import ProjectStages from "../components/ProjectStages.vue";
 import WeeklyChanges from "../components/WeeklyChanges.vue";
 import NextWork from "../components/NextWork.vue";
-const insightsOpen = ref(false);
 const store = useWorkspace();
-const query = ref(""),
-  stage = ref(""),
-  owner = ref(""),
-  discipline = ref(""),
-  category = ref(""),
-  sort = ref("updated"),
-  expanded = ref(""),
-  editing = ref(""),
+const {
+  query,
+  stage,
+  owner,
+  discipline,
+  category,
+  sort,
+  expanded,
+  scope,
+  insightsOpen,
+} = toRefs(store.projectNavigation);
+const editing = ref(""),
   creating = ref(false),
   pasting = ref("");
-const scope = ref<"week" | "today">("week");
+const expandButtons = new Map<string, HTMLElement>();
+function rememberButton(id: string, element: unknown) {
+  if (element instanceof HTMLElement) expandButtons.set(id, element);
+  else expandButtons.delete(id);
+}
+async function returnFocus() {
+  const id = store.projectNavigation.returnFocus;
+  if (!id) return;
+  await nextTick();
+  const button = expandButtons.get(id);
+  if (button) {
+    button.focus({ preventScroll: true });
+    store.projectNavigation.returnFocus = "";
+  }
+}
+onMounted(returnFocus);
+watch(() => store.data.projects.length, returnFocus);
+onBeforeRouteLeave(() => {
+  const record = document.activeElement?.closest<HTMLElement>(
+    "[data-project-record]",
+  );
+  store.projectNavigation.returnFocus =
+    record?.dataset.projectRecord ?? expanded.value;
+});
 const scopeDate = computed(() => {
   const format = (date: Date) =>
     formatDate(date, {
@@ -136,11 +164,13 @@ const portfolioProjects = computed(() =>
   store.data.projects.filter((p) => !p.intakeInbox),
 );
 const inbox = computed(() => store.data.projects.find((p) => p.intakeInbox));
-function toggle(id: string) {
+async function toggle(id: string) {
   if (!confirmDiscard()) return;
   editing.value = "";
   pasting.value = "";
   expanded.value = expanded.value === id ? "" : id;
+  await nextTick();
+  expandButtons.get(id)?.focus({ preventScroll: !!expanded.value });
 }
 function edit(id: string) {
   if (!confirmDiscard()) return;
@@ -357,12 +387,15 @@ function edit(id: string) {
           v-for="project in projects"
           :key="project.id"
           class="project-record"
+          :data-project-record="project.id"
           :class="{ expanded: expanded === project.id }"
         >
           <div class="project-row">
             <div class="project-cell">
               <button
                 class="icon-button expand-button"
+                :ref="(element) => rememberButton(project.id, element)"
+                :aria-controls="`project-details-${project.id}`"
                 :aria-label="t('Expand {name}', { name: project.name })"
                 :aria-expanded="expanded === project.id"
                 @click="toggle(project.id)"
@@ -446,7 +479,11 @@ function edit(id: string) {
               ><PhArrowUpRight :size="17"
             /></RouterLink>
           </div>
-          <div v-if="expanded === project.id" class="expanded-content">
+          <div
+            v-if="expanded === project.id"
+            :id="`project-details-${project.id}`"
+            class="expanded-content"
+          >
             <ProjectEditor
               v-if="editing === project.id"
               :project="project"
@@ -483,6 +520,18 @@ function edit(id: string) {
                 </div>
               </section>
             </div>
+            <div class="project-return-actions">
+              <button
+                class="text-button"
+                :aria-label="t('Collapse {name}', { name: project.name })"
+                @click="toggle(project.id)"
+              >
+                <PhCaretUp :size="16" />{{ t("Collapse project details") }}
+              </button>
+              <RouterLink class="text-button" to="/intake"
+                ><PhNotePencil :size="16" />{{ t("Quick intake") }}</RouterLink
+              >
+            </div>
           </div>
         </article>
       </div>
@@ -499,6 +548,49 @@ function edit(id: string) {
 </template>
 
 <style scoped>
+.project-return-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 12px;
+}
+.project-return-actions > * {
+  min-height: 36px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.project-record {
+  scroll-margin-top: 72px;
+}
+.expanded-content {
+  animation: project-reveal 0.16s ease-out;
+}
+@keyframes project-reveal {
+  from {
+    opacity: 0.6;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (max-width: 760px) {
+  .project-return-actions > * {
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .expanded-content {
+    animation: none;
+  }
+}
 .overview-distribution {
   width: 130px;
   flex-shrink: 0;

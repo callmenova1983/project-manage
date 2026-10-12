@@ -40,6 +40,7 @@ const router = createRouter({
       },
     },
   ],
-  scrollBehavior: (to) => (to.hash ? { el: to.hash, top: 72 } : { top: 0 }),
+  scrollBehavior: (to, _from, savedPosition) =>
+    savedPosition ?? (to.hash ? { el: to.hash, top: 72 } : { top: 0 }),
 });
 createApp(App).use(createPinia()).use(router).mount("#app");
