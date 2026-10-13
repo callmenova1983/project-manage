@@ -1,3 +1,4 @@
+import { orderedProjectIds } from "../../packages/domain/project-order";
 import { test, expect } from "@playwright/test";
 
 for (const width of [1440, 390]) {
@@ -161,17 +162,16 @@ test("dragging onto a stage moves the complete project, preserves its work and f
     localStorage.setItem("project-manage-locale", "en"),
   );
   await page.goto("/demo/projects");
+  await expect(page.locator(".project-record").first()).toBeVisible();
   const before = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("project-manage-demo-v1")!),
   );
-  const source = page
-    .locator(".project-record")
-    .filter({
-      has: page.getByRole("link", {
-        name: "Atlas Customer Portal",
-        exact: true,
-      }),
-    });
+  const source = page.locator(".project-record").filter({
+    has: page.getByRole("link", {
+      name: "Atlas Customer Portal",
+      exact: true,
+    }),
+  });
   const grip = source.getByRole("button", {
     name: "Move Atlas Customer Portal",
     exact: true,
@@ -212,7 +212,9 @@ test("dragging onto a stage moves the complete project, preserves its work and f
     updatedAt: expect.any(String),
   });
   expect(after.tasks).toEqual(before.tasks);
-  expect(after.projectOrder).toEqual(before.projectOrder);
+  expect(orderedProjectIds(after.projects, after.projectOrder)).toEqual(
+    orderedProjectIds(before.projects, before.projectOrder),
+  );
   expect(after.activities[0].before.stage).toBe(old.stage);
   expect(after.activities[0].after.stage).toBe("approved");
   await expect(page.getByRole("dialog")).toHaveCount(0);

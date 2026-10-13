@@ -8,7 +8,6 @@ import {
   PhSquaresFour,
 } from "@phosphor-icons/vue";
 import {
-  taskInput,
   leafTasks,
   statistics,
   statuses,
@@ -22,6 +21,7 @@ import TaskQuickField from "./TaskQuickField.vue";
 import TaskReviewPanel from "./TaskReviewPanel.vue";
 import TaskQuickAdd from "./TaskQuickAdd.vue";
 import StatusBadge from "./StatusBadge.vue";
+import TaskCompletion from "./TaskCompletion.vue";
 const props = defineProps<{
   tasks: Task[];
   projectId?: string;
@@ -55,12 +55,9 @@ function children(t: Task) {
 async function change(t: Task, e: Event) {
   error.value = "";
   try {
-    await store.saveTask(
-      {
-        ...taskInput.strip().parse(t),
-        status: (e.target as HTMLSelectElement).value as Task["status"],
-      },
+    await store.changeTaskStatus(
       t,
+      (e.target as HTMLSelectElement).value as Task["status"],
     );
   } catch (e) {
     error.value = (e as Error).message;
@@ -91,7 +88,11 @@ function close() {
       <div
         v-else
         class="task-row"
-        :class="{ subtask: task.parentId, parent: parents.has(task.id) }"
+        :class="{
+          subtask: task.parentId,
+          parent: parents.has(task.id),
+          'is-done': !parents.has(task.id) && task.status === 'done',
+        }"
       >
         <div class="task-status">
           <span v-if="parents.has(task.id)" class="muted"
@@ -109,7 +110,15 @@ function close() {
           </select>
         </div>
         <div class="task-name">
-          <TaskQuickField :task="task" field="title" /><RouterLink
+          <div class="task-title-line">
+            <TaskCompletion
+              v-if="!parents.has(task.id)"
+              :task="task"
+              @error="error = $event"
+            />
+            <TaskQuickField :task="task" field="title" />
+          </div>
+          <RouterLink
             v-if="showProject"
             class="muted task-project"
             :to="`/projects/${task.projectId}`"
@@ -177,3 +186,20 @@ function close() {
     </button>
   </div>
 </template>
+<style scoped>
+.task-title-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.task-title-line > .text-button {
+  text-align: left;
+  min-width: 0;
+}
+.is-done .task-title-line > .text-button {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  color: var(--muted);
+}
+</style>

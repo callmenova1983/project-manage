@@ -1,5 +1,15 @@
 # Executed verification
 
+## Task feedback and mobile navigation (2026-10-12)
+
+Current increment: [behavior, final screenshots and limits](interaction-feedback.md). **201 unit/API tests across 21 files and the full 68-case Chromium E2E suite passed locally.** Lint, Vue/API typecheck, formatting, build and diff checks passed. Compiled-runtime smoke passed authentication, routing, XLSX under production CSP, isolated demo persistence and process restart with zero unexpected browser errors. Local Codespaces proxy replay passed origin/referer handling, secure session and CSRF save/reload with zero unexpected errors; this remains a simulation, not a deployment test.
+
+Ten new unit cases and seven new E2E cases verify acknowledged completion, real weekly history, version-protected undo, later edits, failed requests/retry identity, late snapshots, account reset, mobile collapse/cancel/focus/Back, all-project reachability, planned-work date semantics, card selection/scrolling, empty state and intake draft recovery. The full run also includes existing 375/390px editing flows and all eight locale/theme/viewport preference combinations. An initial full run exposed save double-click fall-through into a project link; after fixing repeated pointer activation, the affected 11 cases and then the complete 68 cases passed. Final source checks and runtime smokes were rerun after that correction.
+
+Six new synthetic screenshots were captured and opened for visual inspection; settled light-theme and upcoming-work accessibility scans passed. Four supplied phone references could not be downloaded through the supported Library flow, so this executor has not inspected their pixels. Functional implementation was explicitly authorized from parent-supplied descriptions; no reference-fidelity acceptance is claimed. Actual Safari/iOS, the reported 0 KB issue, Codespaces sleep, real multi-person deployment and real model calls remain unverified. There is no schema migration or deployment in this increment. Exact-commit CI is linked in draft PR #1.
+
+The following sections are historical checkpoints.
+
 ## M1 connection and intake recovery (2026-10-11)
 
 Current increment: [M1 implementation, before/after screenshots and limits](m1-recovery.md). Lint, typecheck, format, build and compiled runtime smoke passed; 191 unit/API tests passed. The full local 60-case E2E run passed, then the final 8-case recovery suite passed after adding account-switch recovery and narrowing expected HTTP-error filtering. The final suite has 61 cases; exact-commit CI evidence is linked in the draft PR. The three-month plan is [2026-10-12 through 2027-01-11](improvement-plan.md). Codespaces sleep, real iOS 0 KB and real model evaluation remain unverified/unresolved; this increment was not deployed.

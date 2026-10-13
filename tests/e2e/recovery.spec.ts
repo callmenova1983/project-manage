@@ -33,7 +33,7 @@ async function reloadDirty(page: Page) {
   await page.reload();
 }
 for (const width of [1536, 390])
-  test(`restore reviewed edits after reload, require confirmation, save once at ${width}px`, async ({
+  test(`restore issue edits after reload without auto-submitting, save once at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1024 });
@@ -94,10 +94,7 @@ test("route return preserves source; explicit cancel and recovery discard remove
   await page.goto("/demo/intake");
   await fillReview(page);
   page.once("dialog", (d) => d.accept());
-  await page
-    .getByRole("link", { name: "All tasks", exact: true })
-    .first()
-    .click();
+  await page.getByRole("link", { name: "Tasks", exact: true }).first().click();
   await page.goBack();
   await page
     .getByRole("button", { name: "Restore draft", exact: true })

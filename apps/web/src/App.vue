@@ -21,6 +21,7 @@ import { embeddedDemo } from "./services/mode";
 import { t, formatDate } from "./locales";
 import PreferencesControls from "./components/PreferencesControls.vue";
 import ActivateAccount from "./components/ActivateAccount.vue";
+import TaskFeedback from "./components/TaskFeedback.vue";
 import { initialActivationToken } from "./services/activation";
 const activationToken = ref(initialActivationToken);
 const store = useWorkspace(),
@@ -59,6 +60,18 @@ watch(expanded, async (open) => {
   }
 });
 let interval: ReturnType<typeof setInterval>;
+function guardRepeatedActivation(event: MouseEvent) {
+  // A saved editor can disappear between clicks. Do not let the second click
+  // activate an unrelated button/link newly exposed at the same coordinates.
+  if (
+    event.detail > 1 &&
+    event.target instanceof Element &&
+    event.target.closest("button, a[href]")
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
 function shortcut(event: KeyboardEvent) {
   if (event.key === "Escape" && expanded.value) {
     expanded.value = false;
@@ -94,6 +107,7 @@ function shortcut(event: KeyboardEvent) {
 onMounted(() => {
   if (!activationToken.value) void store.initialize();
   window.addEventListener("keydown", shortcut);
+  window.addEventListener("click", guardRepeatedActivation, true);
   interval = setInterval(() => {
     if (store.user && !store.busy && !document.hidden) void store.refresh(true);
   }, 20000);
@@ -102,6 +116,7 @@ onBeforeUnmount(() => {
   clearInterval(interval);
   document.body.style.overflow = previousOverflow;
   window.removeEventListener("keydown", shortcut);
+  window.removeEventListener("click", guardRepeatedActivation, true);
 });
 async function signIn() {
   signingIn.value = true;
@@ -377,6 +392,7 @@ function search() {
         <span>{{ t(store.error) }}</span
         ><button @click="store.refresh()">{{ t("Retry") }}</button>
       </div>
+      <TaskFeedback />
       <main id="main-content" tabindex="-1"><RouterView /></main>
       <footer class="app-footer">
         <span>{{
