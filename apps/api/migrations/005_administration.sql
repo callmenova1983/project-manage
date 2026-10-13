@@ -1,0 +1,11 @@
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('member','admin'));
+ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled','pending'));
+ALTER TABLE users ADD COLUMN requires_activation INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+CREATE TABLE user_activations(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires_at INTEGER NOT NULL,used_at INTEGER);
+CREATE TABLE workspace_catalogs(workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),data TEXT NOT NULL);
+CREATE TABLE model_settings(workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),data TEXT NOT NULL);
+CREATE TABLE admin_audit(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),created_at TEXT NOT NULL,data TEXT NOT NULL);
+CREATE TABLE model_logs(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),created_at TEXT NOT NULL,data TEXT NOT NULL);
+CREATE INDEX model_logs_workspace_date ON model_logs(workspace_id,created_at DESC);
+CREATE INDEX admin_audit_workspace_date ON admin_audit(workspace_id,created_at DESC);

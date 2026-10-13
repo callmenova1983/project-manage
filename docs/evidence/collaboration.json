@@ -1,0 +1,466 @@
+{
+  "environment": {
+    "node": "v24.19.0",
+    "chromium": "154.0.8037.57",
+    "os": "linux 6.18.44",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "logicalCpus": 5,
+    "memoryGiB": 17.59,
+    "viewport": "1536x1024",
+    "network": "loopback, no throttling",
+    "build": "compiled Vite + Node/Fastify/SQLite, local HTTP"
+  },
+  "independentAccounts": 5,
+  "independentCookieJars": 5,
+  "groups": [
+    {
+      "group": 1,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 2,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 3,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 4,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 5,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        409,
+        200
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        409,
+        200
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 6,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        200,
+        409,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        200,
+        409,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 7,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        200,
+        409,
+        409,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        200,
+        409,
+        409,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 8,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        200,
+        409,
+        409,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        200,
+        409,
+        409,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 9,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 10,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        200,
+        409,
+        409,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        200,
+        409,
+        409,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 11,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 12,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        409,
+        200
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        409,
+        200
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 13,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        200,
+        409,
+        409,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        200,
+        409,
+        409,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 14,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 15,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        200,
+        409,
+        409,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        200,
+        409,
+        409,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 16,
+      "sessions": 5,
+      "firstResponsesLost": [
+        200,
+        409,
+        409,
+        409,
+        409
+      ],
+      "recoveredResponses": [
+        200,
+        409,
+        409,
+        409,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 17,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        409,
+        200
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        409,
+        200
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 18,
+      "sessions": 5,
+      "firstResponsesLost": [
+        200,
+        409,
+        409,
+        409,
+        409
+      ],
+      "recoveredResponses": [
+        200,
+        409,
+        409,
+        409,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 19,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        200,
+        409,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        200,
+        409,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    },
+    {
+      "group": 20,
+      "sessions": 5,
+      "firstResponsesLost": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "recoveredResponses": [
+        409,
+        409,
+        409,
+        200,
+        409
+      ],
+      "originalKeysPreserved": true,
+      "draftPreserved": true,
+      "committedProjectVersions": 1,
+      "createdTasks": 5
+    }
+  ],
+  "exactFinalCounts": {
+    "projects": 20,
+    "projectUpdates": 20,
+    "tasks": 100,
+    "auditRecords": 120
+  },
+  "unexpectedBrowserErrors": [],
+  "expectedInjectedNetworkAndConflictErrors": 284,
+  "limits": "Synthetic loopback browser faults; no real network, multi-process database, physical device or production deployment claim"
+}

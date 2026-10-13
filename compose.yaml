@@ -1,0 +1,21 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      # Local-only HTTP demo. Production requires HTTPS and NODE_ENV=production.
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      APP_ORIGIN: http://localhost:3001
+      DATABASE_PATH: /app/data/project-manage.sqlite
+    volumes:
+      - project_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+volumes:
+  project_data:
