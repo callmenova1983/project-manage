@@ -1,3 +1,5 @@
+import { timeZoneZh } from "./zh-time-zone";
+import { workspaceTimeZone } from "../composables/calendar";
 import { ref, watch } from "vue";
 import { tasksZh } from "./zh-tasks";
 import { commonZh } from "./zh-common";
@@ -38,6 +40,7 @@ watch(
 );
 const chinese: Record<string, string> = {
   ...commonZh,
+  ...timeZoneZh,
   ...editorsZh,
   ...activityZh,
   ...tasksZh,
@@ -76,6 +79,9 @@ export function formatDate(
   if (!Number.isFinite(date.getTime())) return "—";
   return new Intl.DateTimeFormat(locale.value === "en" ? "en-US" : "zh-CN", {
     ...options,
-    timeZone: "UTC",
+    timeZone:
+      typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? "UTC"
+        : (options.timeZone ?? workspaceTimeZone.value),
   }).format(date);
 }

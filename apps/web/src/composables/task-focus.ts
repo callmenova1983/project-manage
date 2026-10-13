@@ -49,14 +49,15 @@ export function filterTaskWork(
   filters: TaskFilters,
   now = new Date(),
   members: readonly Member[] = [],
+  timeZone = "UTC",
 ): Task[] {
   const query = filters.query.trim().toLocaleLowerCase();
   return leafTasks(tasks).filter(
     (task) =>
       (filters.scope === "all" ||
         (filters.scope === "today"
-          ? task.workDates.includes(dayKey(now))
-          : task.workWeek === weekKey(now))) &&
+          ? task.workDates.includes(dayKey(now, timeZone))
+          : task.workWeek === weekKey(now, timeZone))) &&
       (!filters.status || task.status === filters.status) &&
       (!filters.project || task.projectId === filters.project) &&
       (filters.focus === "all" ||

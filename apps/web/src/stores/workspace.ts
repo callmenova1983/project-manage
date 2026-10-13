@@ -1,3 +1,4 @@
+import { workspaceTimeZone } from "../composables/calendar";
 import { setCatalogs } from "../composables/catalogs";
 import { defineStore } from "pinia";
 import { ref, computed, nextTick } from "vue";
@@ -84,13 +85,23 @@ export const useWorkspace = defineStore("workspace", () => {
       activities: [],
     };
     setCatalogs();
+    workspaceTimeZone.value = "UTC";
     lastSynced.value = null;
     error.value = "";
     loading.value = false;
   }
   const total = computed(() => statistics(data.value.tasks)),
-    week = computed(() => statistics(data.value.tasks, "week")),
-    today = computed(() => statistics(data.value.tasks, "today"));
+    week = computed(() =>
+      statistics(data.value.tasks, "week", new Date(), workspaceTimeZone.value),
+    ),
+    today = computed(() =>
+      statistics(
+        data.value.tasks,
+        "today",
+        new Date(),
+        workspaceTimeZone.value,
+      ),
+    );
   const notify = (message: string) => {
     if (message) dismissTaskFeedback();
     toast.value = message;
@@ -107,6 +118,7 @@ export const useWorkspace = defineStore("workspace", () => {
         return;
       data.value = snapshot;
       setCatalogs(snapshot.catalogs);
+      workspaceTimeZone.value = snapshot.settings?.timeZone ?? "UTC";
       lastSynced.value = new Date();
       error.value = "";
     } catch (e) {
@@ -266,6 +278,7 @@ export const useWorkspace = defineStore("workspace", () => {
     week,
     today,
     mode: api.mode,
+    timeZone: workspaceTimeZone,
     initialize,
     login,
     logout,

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import WorkspaceTimezone from "../components/WorkspaceTimezone.vue";
 import { t, formatNumber } from "../locales";
 import { ref, computed } from "vue";
 import {
@@ -95,6 +96,7 @@ async function importData() {
       </div>
       <PhDatabase :size="27" class="muted" />
     </div>
+    <WorkspaceTimezone />
     <section class="panel">
       <h2>{{ t("Connection") }}</h2>
       <dl class="settings-list">
@@ -201,6 +203,14 @@ async function importData() {
           {{
             t(
               "This file includes stage and category definitions. Importing changes to these definitions requires administrator access.",
+            )
+          }}
+        </p>
+        <p class="muted">
+          {{
+            t(
+              "Imported files do not change the workspace time zone. Current setting: {zone}",
+              { zone: store.timeZone },
             )
           }}
         </p>

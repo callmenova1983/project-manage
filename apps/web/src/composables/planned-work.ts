@@ -10,10 +10,11 @@ export function plannedWork(
   projects: Project[],
   scope: "today" | "week",
   now = new Date(),
+  timeZone = "UTC",
 ) {
   const ids = new Set(projects.map((project) => project.id));
-  const today = dayKey(now),
-    week = weekKey(now);
+  const today = dayKey(now, timeZone),
+    week = weekKey(now, timeZone);
   return leafTasks(tasks)
     .filter(
       (task) =>

@@ -1,11 +1,8 @@
 <script setup lang="ts">
+import { currentWeek } from "../composables/calendar";
 import { t, formatDate, formatNumber } from "../locales";
 import { ref, computed } from "vue";
-import {
-  parsePaste,
-  taskInput,
-  weekKey,
-} from "../../../../packages/domain/types";
+import { parsePaste, taskInput } from "../../../../packages/domain/types";
 import { api } from "../services/api";
 import { useWorkspace } from "../stores/workspace";
 import { useUnsaved } from "../composables/unsaved";
@@ -30,7 +27,7 @@ async function save() {
         parentId: null,
         status: "todo",
         description: "",
-        workWeek: weekKey(),
+        workWeek: currentWeek(),
         workDates: [],
       }),
     );

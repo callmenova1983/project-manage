@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { currentWeek } from "../composables/calendar";
+import { calendarWeek } from "../../../../packages/domain/time-zone";
 import { computed, ref, useId } from "vue";
 import {
   PhArrowUpRight,
@@ -10,11 +12,7 @@ import {
   PhNotePencil,
   PhTray,
 } from "@phosphor-icons/vue";
-import {
-  weekKey,
-  type Activity,
-  type Project,
-} from "../../../../packages/domain/types";
+import { type Activity, type Project } from "../../../../packages/domain/types";
 import {
   describeActivity,
   type ActivityTone,
@@ -34,7 +32,7 @@ const sectionId = useId();
 const store = useWorkspace();
 const selectedWeek = ref<string | null>(null);
 const week = computed(
-  () => selectedWeek.value ?? weekKey(store.lastSynced ?? new Date()),
+  () => selectedWeek.value ?? currentWeek(store.lastSynced ?? new Date()),
 );
 const history = useActivityHistory(() => ({
   weekStart: week.value,
@@ -64,7 +62,7 @@ const historyLink = computed(() => ({
 }));
 function selectWeek(event: Event) {
   const value = (event.target as HTMLInputElement).value;
-  selectedWeek.value = value ? weekKey(new Date(value)) : null;
+  selectedWeek.value = value ? calendarWeek(value) : null;
 }
 const icons = {
   completed: PhCheckCircle,
@@ -113,7 +111,7 @@ function dayLabel(day: { date: string; count: number }) {
         >
           <PhClockCounterClockwise :size="17" aria-hidden="true" />
           <span>{{
-            t(week === weekKey() ? "This week's changes" : "Weekly changes")
+            t(week === currentWeek() ? "This week's changes" : "Weekly changes")
           }}</span>
           <PhCaretDown
             :size="12"
@@ -129,7 +127,7 @@ function dayLabel(day: { date: string; count: number }) {
     </header>
 
     <label class="week-selector"
-      >{{ t("Week starting (UTC)")
+      >{{ t("Week starting ({zone})", { zone: store.timeZone })
       }}<input type="date" :value="week" @change="selectWeek"
     /></label>
     <p v-if="history.newChanges.value" role="status">
@@ -167,7 +165,9 @@ function dayLabel(day: { date: string; count: number }) {
       <ol
         v-if="summary.total"
         class="week-pulse"
-        :aria-label="t('Saved changes by day, UTC')"
+        :aria-label="
+          t('Saved changes by day, {zone}', { zone: store.timeZone })
+        "
       >
         <li
           v-for="day in summary.days"
@@ -191,7 +191,7 @@ function dayLabel(day: { date: string; count: number }) {
         <p>
           {{
             t(
-              week === weekKey()
+              week === currentWeek()
                 ? "No saved changes this week"
                 : "No saved changes in the selected week",
             )
@@ -267,7 +267,11 @@ function dayLabel(day: { date: string; count: number }) {
       </button>
     </div>
     <p class="history-limit">
-      {{ t("Complete selected week · Action counts · UTC") }}
+      {{
+        t("Complete selected week · Action counts · {zone}", {
+          zone: store.timeZone,
+        })
+      }}
     </p>
   </section>
 </template>

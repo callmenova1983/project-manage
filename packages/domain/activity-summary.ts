@@ -1,6 +1,6 @@
 import { weekKey, type Activity, type Project, type Task } from "./types.js";
 
-const DAY_MS = 86_400_000;
+import { weekBounds, zonedDay } from "./time-zone.js";
 
 export type ActivityTone =
   | "completed"
@@ -140,14 +140,17 @@ export function summarizeWeeklyActivity(
   activities: readonly Activity[],
   options: {
     now?: Date;
+    timeZone?: string;
     weekStart?: string;
     projectIds?: readonly string[];
   } = {},
 ): WeeklyActivitySummary {
   const now = options.now ?? new Date();
-  const weekStart = options.weekStart ?? weekKey(now);
-  const startMs = Date.parse(`${weekStart}T00:00:00Z`);
-  const endMs = startMs + 7 * DAY_MS;
+  const timeZone = options.timeZone ?? "UTC";
+  const weekStart = options.weekStart ?? weekKey(now, timeZone);
+  const bounds = weekBounds(weekStart, timeZone);
+  const startMs = Date.parse(bounds.start);
+  const endMs = Date.parse(bounds.end);
   const scope = options.projectIds ? new Set(options.projectIds) : null;
   const seenIds = new Set<string>();
   const events = [...activities]
@@ -176,15 +179,10 @@ export function summarizeWeeklyActivity(
   // Retried copies of the same task version transition are one action. A later
   // reopen and completion has new versions, so it remains a separate action.
   const completionVersions = new Set<string>();
-  const days = Array.from({ length: 7 }, (_, index) => ({
-    date: new Date(startMs + index * DAY_MS).toISOString().slice(0, 10),
-    count: 0,
-  }));
+  const days = bounds.days.map((date) => ({ date, count: 0 }));
+  const dayCounts = new Map(days.map((day) => [day.date, day]));
   for (const activity of events) {
-    const dayIndex = Math.floor(
-      (Date.parse(activity.createdAt) - startMs) / DAY_MS,
-    );
-    days[dayIndex]!.count++;
+    dayCounts.get(zonedDay(new Date(activity.createdAt), timeZone))!.count++;
     if (isCompletionAction(activity)) {
       completionVersions.add(
         `${activity.entityId}:${activity.before!.version}:${activity.after!.version}`,

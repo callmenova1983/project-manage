@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { currentDay, currentWeek } from "../composables/calendar";
 import { computed, ref } from "vue";
 import { onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import {
@@ -9,12 +10,7 @@ import {
   PhSquaresFour,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
-import {
-  dayKey,
-  weekKey,
-  statuses,
-  type Task,
-} from "../../../../packages/domain/types";
+import { statuses, type Task } from "../../../../packages/domain/types";
 import { statusLabels } from "../locales/en";
 import { t, formatDate, formatNumber } from "../locales";
 import { confirmDiscard } from "../composables/unsaved";
@@ -42,6 +38,7 @@ const tasks = computed(() =>
     filters.value,
     new Date(),
     store.data.members,
+    store.timeZone,
   ),
 );
 const scopeCounts = computed(() =>
@@ -53,6 +50,7 @@ const scopeCounts = computed(() =>
         { ...filters.value, scope },
         new Date(),
         store.data.members,
+        store.timeZone,
       ).length,
     ]),
   ),
@@ -66,6 +64,7 @@ const focusCounts = computed(() =>
         { ...filters.value, focus },
         new Date(),
         store.data.members,
+        store.timeZone,
       ).length,
     ]),
   ),
@@ -243,13 +242,16 @@ function saved(task: Task) {
               )
             }}
           </h3>
-          <span class="muted task-summary-date">{{
-            filters.scope === "today"
-              ? formatDate(dayKey())
-              : filters.scope === "week"
-                ? t("Week of {date}", { date: formatDate(weekKey()) })
-                : t("All planned and unplanned work")
-          }}</span>
+          <span class="muted task-summary-date"
+            >{{
+              filters.scope === "today"
+                ? formatDate(currentDay())
+                : filters.scope === "week"
+                  ? t("Week of {date}", { date: formatDate(currentWeek()) })
+                  : t("All planned and unplanned work")
+            }}
+            · {{ store.timeZone }}</span
+          >
         </div>
         <span class="muted task-result-count" aria-live="polite">{{
           t("{count} leaf tasks", { count: tasks.length })

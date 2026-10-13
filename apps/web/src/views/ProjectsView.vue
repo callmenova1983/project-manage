@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { currentDay, currentWeek } from "../composables/calendar";
 import { memberName } from "../../../../packages/domain/members";
 import {
   stageIds as stages,
@@ -24,8 +25,6 @@ import {
   disciplines,
   statistics,
   leafTasks,
-  dayKey,
-  weekKey,
   type Project,
 } from "../../../../packages/domain/types";
 import { stageLabels } from "../locales/en";
@@ -80,19 +79,19 @@ onBeforeRouteLeave(() => {
     record?.dataset.projectRecord ?? expanded.value;
 });
 const scopeDate = computed(() => {
-  const format = (date: Date) =>
-    formatDate(date, {
-      month: "short",
-      day: "numeric",
-      timeZone: "UTC",
-    });
+  const format = (date: string) =>
+    formatDate(date, { month: "short", day: "numeric" });
   if (scope.value === "today")
-    return `${format(new Date())}, ${new Date().getUTCFullYear()} · UTC`;
-  const start = new Date(weekKey() + "T00:00:00Z");
-  const end = new Date(start.getTime() + 6 * 86400000);
-  return `${format(start)}–${format(end)}, ${end.getUTCFullYear()} · UTC`;
+    return `${format(currentDay())}, ${currentDay().slice(0, 4)} · ${store.timeZone}`;
+  const start = currentWeek();
+  const end = new Date(Date.parse(start) + 6 * 86400000)
+    .toISOString()
+    .slice(0, 10);
+  return `${format(start)}–${format(end)}, ${end.slice(0, 4)} · ${store.timeZone}`;
 });
-const scopeStats = computed(() => statistics(store.data.tasks, scope.value));
+const scopeStats = computed(() =>
+  statistics(store.data.tasks, scope.value, new Date(), store.timeZone),
+);
 const ownerKey = (p: Project) =>
   JSON.stringify(p.ownerId ? ["member", p.ownerId] : ["text", p.owner]);
 const ownerName = (p: Project) =>
@@ -159,12 +158,12 @@ function tasks(id: string) {
 function scopedTasks(id: string) {
   return leafTasks(tasks(id)).filter((t) =>
     scope.value === "week"
-      ? t.workWeek === weekKey()
-      : t.workDates.includes(dayKey()),
+      ? t.workWeek === currentWeek()
+      : t.workDates.includes(currentDay()),
   );
 }
 function summary(id: string) {
-  return statistics(tasks(id), scope.value);
+  return statistics(tasks(id), scope.value, new Date(), store.timeZone);
 }
 function reportTime(p: Project) {
   return p.reportedAt
@@ -173,8 +172,9 @@ function reportTime(p: Project) {
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
-        timeZone: "UTC",
-      }) + " UTC"
+      }) +
+        " " +
+        store.timeZone
     : t("Report time unavailable");
 }
 function saved(p: Project) {
@@ -262,8 +262,8 @@ function edit(id: string) {
         :tasks="
           leafTasks(store.data.tasks).filter((task) =>
             scope === 'week'
-              ? task.workWeek === weekKey()
-              : task.workDates.includes(dayKey()),
+              ? task.workWeek === currentWeek()
+              : task.workDates.includes(currentDay()),
           )
         "
         compact

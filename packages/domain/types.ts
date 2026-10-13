@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  zonedDay,
+  zonedWeek,
+  workspaceSettingsInput,
+  type WorkspaceSettings,
+} from "./time-zone.js";
 import { catalogsInput, type Catalogs } from "./admin.js";
 export const stages = [
   "potential",
@@ -100,6 +106,7 @@ export interface Activity {
 export interface Snapshot {
   schemaVersion: 1 | 2;
   catalogs?: Catalogs;
+  settings?: WorkspaceSettings;
   members?: Member[];
   revision: number;
   projects: Project[];
@@ -115,6 +122,7 @@ export interface Member {
 export const snapshotImport = z.object({
   schemaVersion: z.union([z.literal(1), z.literal(2)]),
   catalogs: catalogsInput.optional(),
+  settings: workspaceSettingsInput.optional(),
   projects: z.array(projectSchema).max(1000),
   tasks: z.array(taskSchema).max(10000),
 });
@@ -153,10 +161,13 @@ export interface AiCapabilities {
   connectionVerified: false;
   remainingAttempts: number;
 }
-export function dayKey(date = new Date()): string {
-  return date.toISOString().slice(0, 10);
+export function dayKey(date = new Date(), timeZone = "UTC"): string {
+  return timeZone === "UTC"
+    ? date.toISOString().slice(0, 10)
+    : zonedDay(date, timeZone);
 }
-export function weekKey(date = new Date()): string {
+export function weekKey(date = new Date(), timeZone = "UTC"): string {
+  if (timeZone !== "UTC") return zonedWeek(date, timeZone);
   const d = new Date(dayKey(date) + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
   return dayKey(d);
@@ -169,13 +180,14 @@ export function statistics(
   tasks: Task[],
   scope: "all" | "week" | "today" = "all",
   date = new Date(),
+  timeZone = "UTC",
 ) {
   const leaves = leafTasks(tasks).filter(
     (t) =>
       scope === "all" ||
       (scope === "today"
-        ? t.workDates.includes(dayKey(date))
-        : t.workWeek === weekKey(date)),
+        ? t.workDates.includes(dayKey(date, timeZone))
+        : t.workWeek === weekKey(date, timeZone)),
   );
   return {
     total: leaves.length,

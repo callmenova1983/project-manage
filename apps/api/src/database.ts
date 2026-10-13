@@ -2,6 +2,10 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, mkdirSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import {
+  weekBounds,
+  type WorkspaceSettings,
+} from "../../../packages/domain/time-zone.js";
 import { createSeed } from "../../../packages/domain/seed.js";
 import {
   projectMembers,
@@ -109,6 +113,7 @@ export class Repository {
     return {
       schemaVersion: 2,
       catalogs: this.catalogs(workspaceId),
+      settings: this.settings(workspaceId),
       members: this.members(workspaceId),
       revision: Number(row.revision),
       projects: this.read<Project>("projects", workspaceId),
@@ -131,9 +136,27 @@ export class Repository {
       )
       .all(workspaceId) as unknown as Member[];
   }
-  activityPage(workspaceId: string, query: ActivityQuery) {
+  settings(workspaceId: string): WorkspaceSettings {
+    const row = this.db
+      .prepare("SELECT time_zone,settings_version FROM workspaces WHERE id=?")
+      .get(workspaceId);
+    if (!row) throw new HttpError(404, "Workspace not found");
+    return {
+      timeZone: String(row.time_zone),
+      version: Number(row.settings_version),
+    };
+  }
+  activityPage(workspaceId: string, query: ActivityQuery, exportAll = false) {
+    const timeZone = this.settings(workspaceId).timeZone;
+    if (query.timeZone && query.timeZone !== timeZone)
+      throw new HttpError(
+        409,
+        "Workspace time zone changed. Refresh history before continuing.",
+      );
+    query = { ...query, timeZone };
     const through =
       query.cursor?.through ??
+      query.checkpoint?.through ??
       Number(
         this.db
           .prepare(
@@ -141,13 +164,13 @@ export class Repository {
           )
           .get(workspaceId)!.n,
       );
-    const asOf = query.cursor?.asOf ?? new Date().toISOString();
-    const start = query.weekStart
-      ? query.weekStart + "T00:00:00Z"
-      : "0001-01-01T00:00:00Z";
-    const end = query.weekStart
-      ? new Date(Date.parse(start) + 7 * 86400000).toISOString()
-      : "9999-12-31T23:59:59.999Z";
+    const asOf =
+      query.cursor?.asOf ?? query.checkpoint?.asOf ?? new Date().toISOString();
+    const bounds = query.weekStart
+      ? weekBounds(query.weekStart, timeZone)
+      : null;
+    const start = bounds?.start ?? "0001-01-01T00:00:00Z";
+    const end = bounds?.end ?? "9999-12-31T23:59:59.999Z";
     const rows = this.db
       .prepare(
         "SELECT data FROM activities WHERE workspace_id=? AND rowid<=? AND julianday(created_at)>=julianday(?) AND julianday(created_at)<julianday(?) AND julianday(created_at)<=julianday(?) ORDER BY julianday(created_at) DESC,id ASC",
@@ -156,7 +179,7 @@ export class Repository {
     function* events() {
       for (const row of rows) yield JSON.parse(String(row.data)) as Activity;
     }
-    return queryActivities(events(), query, through);
+    return queryActivities(events(), query, through, new Date(), exportAll);
   }
   activity(workspaceId: string, id: string): Activity {
     const row = this.db

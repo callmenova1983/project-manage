@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { calendarWeek } from "../../../../packages/domain/time-zone";
 import { t, formatDate, formatNumber } from "../locales";
 import { computed, ref, watch, nextTick, onBeforeUnmount } from "vue";
 import { useRoute } from "vue-router";
@@ -8,7 +9,7 @@ import {
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
 import { api } from "../services/api";
-import { weekKey, type Activity } from "../../../../packages/domain/types";
+import { type Activity } from "../../../../packages/domain/types";
 import { useActivityHistory } from "../composables/activity-history";
 const store = useWorkspace(),
   route = useRoute();
@@ -39,6 +40,29 @@ const history = useActivityHistory(() => ({
   limit: 25,
 }));
 const { page, loading, loadingMore, error: loadError } = history;
+const exporting = ref(false);
+async function exportHistory() {
+  if (!page.value || loading.value || exporting.value) return;
+  exporting.value = true;
+  error.value = "";
+  const query = { ...history.query.value, checkpoint: page.value.checkpoint };
+  try {
+    const result = await api.exportActivity(query);
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(result, null, 2)], { type: "application/json" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `project-history-${result.weekStart ?? "all"}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    store.notify(t("Filtered history exported"));
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    exporting.value = false;
+  }
+}
 const linked = ref<Activity | null>(null);
 let anchorRequest = 0;
 watch(
@@ -70,7 +94,7 @@ const activities = computed(() => {
 });
 function selectWeek(event: Event) {
   const value = (event.target as HTMLInputElement).value;
-  week.value = value ? weekKey(new Date(value)) : "";
+  week.value = value ? calendarWeek(value) : "";
   linked.value = null;
 }
 watch([project, query, excludeSeed], () => (linked.value = null));
@@ -144,7 +168,7 @@ function activityLabel(action: string) {
     </div>
     <div class="history-controls">
       <label
-        >{{ t("Week starting (UTC)")
+        >{{ t("Week starting ({zone})", { zone: store.timeZone })
         }}<input type="date" :value="week" @change="selectWeek"
       /></label>
       <button
@@ -163,6 +187,12 @@ function activityLabel(action: string) {
       >
       <button :disabled="loading" @click="history.refresh()">
         {{ t("Refresh history") }}
+      </button>
+      <button
+        :disabled="loading || exporting || !page || !!loadError"
+        @click="exportHistory"
+      >
+        {{ t(exporting ? "Exporting…" : "Export filtered history") }}
       </button>
     </div>
     <p v-if="history.newChanges.value" role="status">
@@ -186,8 +216,9 @@ function activityLabel(action: string) {
     <p v-if="page" class="list-footnote">
       {{
         t(
-          "Showing {shown} of {total} matching events · Complete history · UTC",
+          "Showing {shown} of {total} matching events · Complete history · {zone}",
           {
+            zone: page.timeZone,
             shown: formatNumber(history.events.value.length),
             total: formatNumber(page.total),
           },

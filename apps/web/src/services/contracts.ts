@@ -1,3 +1,4 @@
+import type { WorkspaceSettings } from "../../../../packages/domain/time-zone";
 import type {
   ManagedUser,
   Catalogs,
@@ -54,6 +55,10 @@ export interface WorkspaceApi {
   logout(): Promise<void>;
   snapshot(): Promise<Snapshot>;
   activityPage(query: ActivityQuery): Promise<ActivityPage>;
+  exportActivity(query: ActivityQuery): Promise<ActivityPage>;
+  saveWorkspaceSettings(
+    input: WorkspaceSettings & { confirmed: true },
+  ): Promise<WorkspaceSettings>;
   activity(id: string): Promise<Activity>;
   saveProject(
     data: ProjectInput,

@@ -1,14 +1,21 @@
 import { z } from "zod";
 import { dateSchema, weekKey, type Activity } from "./types.js";
+import { weekBounds, zonedDay, timeZoneInput } from "./time-zone.js";
 import { isCompletionAction } from "./activity-summary.js";
 
 export const activityQueryInput = z
   .object({
+    timeZone: timeZoneInput.optional(),
+    checkpoint: z
+      .object({
+        scope: z.string().max(110000),
+        through: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+        asOf: z.string().datetime(),
+      })
+      .strict()
+      .optional(),
     weekStart: dateSchema
-      .refine(
-        (v) => weekKey(new Date(v)) === v,
-        "Choose a Monday UTC week start",
-      )
+      .refine((v) => weekKey(new Date(v)) === v, "Choose a Monday week start")
       .optional(),
     projectIds: z.array(z.string().min(1).max(100)).max(1000).optional(),
     search: z.string().trim().max(200).optional(),
@@ -35,11 +42,14 @@ export interface ActivityPage {
   completionActions: number;
   days: { date: string; count: number }[];
   weekStart: string | null;
-  timeZone: "UTC";
+  timeZone: string;
+  bounds: { start: string; end: string } | null;
+  checkpoint: { scope: string; through: number; asOf: string };
   asOf: string;
 }
 export function activityScope(query: ActivityQuery) {
   return JSON.stringify({
+    timeZone: query.timeZone ?? "UTC",
     weekStart: query.weekStart ?? null,
     projectIds: query.projectIds ? [...new Set(query.projectIds)].sort() : null,
     search: query.search?.trim().toLowerCase() ?? "",
@@ -50,16 +60,17 @@ export function matchesActivity(
   activity: Activity,
   query: ActivityQuery,
   asOf: string,
+  bounds = query.weekStart
+    ? weekBounds(query.weekStart, query.timeZone ?? "UTC")
+    : null,
 ) {
   const at = Date.parse(activity.createdAt);
-  const start = query.weekStart
-    ? Date.parse(query.weekStart + "T00:00:00Z")
-    : -Infinity;
+  const start = bounds ? Date.parse(bounds.start) : -Infinity;
   const search = query.search?.trim().toLowerCase();
   return (
     Number.isFinite(at) &&
     at >= start &&
-    (!query.weekStart || at < start + 7 * 86400000) &&
+    (!bounds || at < Date.parse(bounds.end)) &&
     at <= Date.parse(asOf) &&
     (!query.excludeSeed || activity.source !== "Synthetic demo seed") &&
     (!query.projectIds ||
@@ -87,12 +98,18 @@ export function queryActivities(
   query: ActivityQuery,
   through: number,
   now = new Date(),
+  exportAll = false,
 ): ActivityPage {
   activityQueryInput.parse(query);
   const scope = activityScope(query);
-  if (query.cursor && query.cursor.scope !== scope)
+  if (
+    [query.cursor, query.checkpoint].some(
+      (point) => point && point.scope !== scope,
+    )
+  )
     throw new Error("Activity filters changed. Reload the first page.");
-  const asOf = query.cursor?.asOf ?? now.toISOString();
+  const asOf =
+    query.cursor?.asOf ?? query.checkpoint?.asOf ?? now.toISOString();
   if (Date.parse(asOf) > now.getTime())
     throw new Error("History cutoff cannot be in the future");
   const events: Activity[] = [];
@@ -100,31 +117,30 @@ export function queryActivities(
   const projects = new Set<string>(),
     completions = new Set<string>(),
     seen = new Set<string>();
-  const start = query.weekStart
-    ? Date.parse(query.weekStart + "T00:00:00Z")
-    : 0;
-  const days = query.weekStart
-    ? Array.from({ length: 7 }, (_, i) => ({
-        date: new Date(start + i * 86400000).toISOString().slice(0, 10),
-        count: 0,
-      }))
-    : [];
-  const limit = query.limit ?? 25;
+  const timeZone = query.timeZone ?? "UTC";
+  const bounds = query.weekStart ? weekBounds(query.weekStart, timeZone) : null;
+  const days = bounds ? bounds.days.map((date) => ({ date, count: 0 })) : [];
+  const dayCounts = new Map(days.map((day) => [day.date, day]));
+  const limit = exportAll ? 10000 : (query.limit ?? 25);
   for (const a of source) {
-    if (seen.has(a.id) || !matchesActivity(a, query, asOf)) continue;
+    if (seen.has(a.id) || !matchesActivity(a, query, asOf, bounds)) continue;
     seen.add(a.id);
     total++;
     if (a.projectId) projects.add(a.projectId);
     if (days.length)
-      days[Math.floor((Date.parse(a.createdAt) - start) / 86400000)]!.count++;
+      dayCounts.get(zonedDay(new Date(a.createdAt), timeZone))!.count++;
     if (isCompletionAction(a))
       completions.add(`${a.entityId}:${a.before!.version}:${a.after!.version}`);
     if (
       events.length <= limit &&
-      (!query.cursor || compareActivities(a, query.cursor) > 0)
+      (exportAll || !query.cursor || compareActivities(a, query.cursor) > 0)
     )
       events.push(a);
   }
+  if (exportAll && total > 10000)
+    throw new Error(
+      "Export up to 10000 events at a time. Narrow the history filters.",
+    );
   const more = events.length > limit;
   if (more) events.pop();
   const last = events.at(-1);
@@ -135,7 +151,9 @@ export function queryActivities(
     completionActions: completions.size,
     days,
     weekStart: query.weekStart ?? null,
-    timeZone: "UTC",
+    timeZone,
+    bounds: bounds ? { start: bounds.start, end: bounds.end } : null,
+    checkpoint: { scope, through, asOf },
     asOf,
     nextCursor:
       more && last

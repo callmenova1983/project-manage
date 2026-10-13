@@ -1,10 +1,10 @@
 export const activityZh: Record<string, string> = {
   "Weekly changes": "每周变化",
-  "Week starting (UTC)": "周起始日（UTC）",
+  "Week starting ({zone})": "周起始日（{zone}）",
   "Loading history…": "正在加载历史…",
   "Load more changes": "加载更多变更",
-  "Complete selected week · Action counts · UTC":
-    "完整所选周 · 按动作统计 · UTC",
+  "Complete selected week · Action counts · {zone}":
+    "完整所选周 · 按动作统计 · {zone}",
   "No saved changes in the selected week": "所选周暂无已保存的变更",
   "Projects from list filters": "列表筛选范围内的项目",
   "All dates": "全部日期",
@@ -12,8 +12,8 @@ export const activityZh: Record<string, string> = {
   "Refresh history": "刷新历史",
   "Linked history record is shown separately from the current filters.":
     "链接指向的历史记录单独显示，不计入当前筛选结果。",
-  "Showing {shown} of {total} matching events · Complete history · UTC":
-    "已显示 {shown} / {total} 条匹配记录 · 完整历史 · UTC",
+  "Showing {shown} of {total} matching events · Complete history · {zone}":
+    "已显示 {shown} / {total} 条匹配记录 · 完整历史 · {zone}",
   "Activity filters changed. Reload the first page.":
     "历史筛选条件已改变，请重新加载第一页。",
   "Project participants": "项目参与者",
@@ -40,7 +40,7 @@ export const activityZh: Record<string, string> = {
   "Marked done": "标记完成",
   "Saved status changes to done; not a count of completed tasks. Imports and restores are excluded.":
     "统计保存后切换为完成的动作，不是已完成任务总数；不含导入和历史还原。",
-  "Saved changes by day, UTC": "每日记录的变更（UTC）",
+  "Saved changes by day, {zone}": "每日记录的变更（{zone}）",
   "{day}: {count} saved changes": "{day}：已记录 {count} 次变更",
   "No saved changes this week": "本周暂无已保存的变更",
   "Project edits and task updates will appear here.":

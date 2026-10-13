@@ -1,11 +1,11 @@
 <script setup lang="ts">
+import { currentDay, currentWeek } from "../composables/calendar";
+import { calendarWeek } from "../../../../packages/domain/time-zone";
 import { t } from "../locales";
 import { computed, ref } from "vue";
 import {
   taskInput,
   statuses,
-  dayKey,
-  weekKey,
   type Task,
   type TaskInput,
 } from "../../../../packages/domain/types";
@@ -34,7 +34,7 @@ const draft = ref<TaskInput>(
         status: "todo",
         assignee: "Unassigned",
         dueDate: null,
-        workWeek: weekKey(),
+        workWeek: currentWeek(),
         workDates: [],
       },
 );
@@ -46,21 +46,21 @@ const isParent = computed(() =>
   store.data.tasks.some((t) => t.parentId === props.task?.id),
 );
 const week = computed({
-  get: () => draft.value.workWeek === weekKey(),
+  get: () => draft.value.workWeek === currentWeek(),
   set: (v: boolean) => {
-    draft.value.workWeek = v ? weekKey() : null;
+    draft.value.workWeek = v ? currentWeek() : null;
     draft.value.workDates = v
       ? draft.value.workDates.filter(
-          (date) => weekKey(new Date(date)) === weekKey(),
+          (date) => calendarWeek(date) === currentWeek(),
         )
       : [];
   },
 });
 const today = computed({
-  get: () => draft.value.workDates.includes(dayKey()),
+  get: () => draft.value.workDates.includes(currentDay()),
   set: (v: boolean) => {
-    draft.value.workDates = v ? [dayKey()] : [];
-    if (v) draft.value.workWeek = weekKey();
+    draft.value.workDates = v ? [currentDay()] : [];
+    if (v) draft.value.workWeek = currentWeek();
   },
 });
 async function save() {

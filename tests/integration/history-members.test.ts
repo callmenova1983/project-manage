@@ -190,7 +190,7 @@ it("normalizes timezone offsets, excludes next week and future events, and keeps
   const local = queryActivities(
     records.sort(compareActivities),
     query,
-    records.length,
+    result.checkpoint.through,
     new Date(result.asOf),
   );
   expect({ ...result, nextCursor: null }).toEqual(local);

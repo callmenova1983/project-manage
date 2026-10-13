@@ -9,7 +9,7 @@ import type { Activity } from "../../../../packages/domain/types";
 
 export function useActivityHistory(input: () => ActivityQuery) {
   const store = useWorkspace();
-  const query = computed(input);
+  const query = computed(() => ({ ...input(), timeZone: store.timeZone }));
   const page = ref<ActivityPage | null>(null),
     events = ref<Activity[]>([]);
   const loading = ref(false),
@@ -72,6 +72,7 @@ export function useActivityHistory(input: () => ActivityQuery) {
   );
   onBeforeUnmount(() => generation++);
   return {
+    query,
     page,
     events,
     loading,

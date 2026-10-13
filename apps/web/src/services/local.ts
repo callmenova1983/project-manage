@@ -1,4 +1,8 @@
 import {
+  defaultWorkspaceSettings,
+  workspaceSettingsInput,
+} from "../../../../packages/domain/time-zone";
+import {
   defaultCatalogs,
   defaultModelSettings,
   catalogsInput,
@@ -290,6 +294,31 @@ export function createLocalApi(): WorkspaceApi {
       target,
     });
   }
+  function historyPage(
+    query: import("../../../../packages/domain/activity-query").ActivityQuery,
+    exportAll = false,
+  ) {
+    const timeZone = (state.settings ?? defaultWorkspaceSettings).timeZone;
+    if (query.timeZone && query.timeZone !== timeZone)
+      throw new ApiError(
+        "Workspace time zone changed. Refresh history before continuing.",
+        409,
+      );
+    const through =
+      query.cursor?.through ??
+      query.checkpoint?.through ??
+      state.activities.length;
+    const events = through
+      ? state.activities.slice(-through).sort(compareActivities)
+      : [];
+    return queryActivities(
+      events,
+      { ...query, timeZone },
+      through,
+      new Date(),
+      exportAll,
+    );
+  }
   function modelState() {
     return {
       settings: structuredClone(administration().model),
@@ -330,6 +359,7 @@ export function createLocalApi(): WorkspaceApi {
       const snapshot = read();
       return {
         ...snapshot,
+        settings: state.settings ?? { ...defaultWorkspaceSettings },
         members: administration().users.map(({ id, name, email, status }) => ({
           id,
           name,
@@ -338,13 +368,35 @@ export function createLocalApi(): WorkspaceApi {
         })),
       };
     },
+    async saveWorkspaceSettings(input) {
+      read();
+      const old = state.settings ?? defaultWorkspaceSettings;
+      if (!input.confirmed)
+        throw new ApiError("Confirm changing the workspace time zone");
+      const parsed = workspaceSettingsInput.parse({
+        timeZone: input.timeZone,
+        version: input.version,
+      });
+      if (old.version !== parsed.version)
+        throw new ApiError(
+          "Workspace settings changed. Reload the current settings before saving.",
+          409,
+        );
+      state.settings = { timeZone: parsed.timeZone, version: old.version + 1 };
+      auditAdmin(
+        `Changed workspace time zone: ${old.timeZone} → ${parsed.timeZone}`,
+        actor.workspaceId,
+      );
+      persist();
+      return structuredClone(state.settings);
+    },
     async activityPage(query) {
       read();
-      const through = query.cursor?.through ?? state.activities.length;
-      const events = through
-        ? state.activities.slice(-through).sort(compareActivities)
-        : [];
-      return queryActivities(events, query, through);
+      return historyPage(query);
+    },
+    async exportActivity(query) {
+      read();
+      return historyPage(query, true);
     },
     async activity(id) {
       read();
@@ -408,7 +460,11 @@ export function createLocalApi(): WorkspaceApi {
       return result;
     },
     async exportData() {
-      return read();
+      const result = read();
+      return {
+        ...result,
+        settings: state.settings ?? { ...defaultWorkspaceSettings },
+      };
     },
     async importData(data, revision) {
       read();
@@ -437,6 +493,7 @@ export function createLocalApi(): WorkspaceApi {
       );
       state = {
         ...parsed,
+        settings: state.settings ?? { ...defaultWorkspaceSettings },
         schemaVersion: 2,
         catalogs,
         revision: state.revision,

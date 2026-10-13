@@ -62,7 +62,7 @@ it("upgrades a synthetic v3 database without changing users/projects and restore
         .prepare("SELECT version FROM migrations ORDER BY version")
         .all()
         .map((r) => r.version),
-    ).toEqual([1, 2, 3, 4, 5, 6]);
+    ).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(upgraded.db.prepare("SELECT * FROM users").get()).toMatchObject({
       ...originalUser,
       role: "member",
@@ -103,10 +103,10 @@ it("adds the v6 history index without rewriting v5 business data and restores th
   try {
     const initial = new Repository(path);
     initial.seed("synthetic");
-    initial.db.exec(
-      "DROP INDEX activity_workspace_instant; DELETE FROM migrations WHERE version=6;",
-    );
     const before = initial.snapshot("synthetic");
+    initial.db.exec(
+      "DROP INDEX activity_workspace_instant; DELETE FROM migrations WHERE version>=6; ALTER TABLE workspaces DROP COLUMN time_zone; ALTER TABLE workspaces DROP COLUMN settings_version;",
+    );
     await backupDatabase(path, saved);
     initial.close();
     const upgraded = new Repository(path);
@@ -147,6 +147,69 @@ it("adds the v6 history index without rewriting v5 business data and restores th
     expect(
       restored.prepare("SELECT COUNT(*) AS n FROM projects").get()!.n,
     ).toBe(before.projects.length);
+    expect(
+      restored.prepare("PRAGMA integrity_check").get()!.integrity_check,
+    ).toBe("ok");
+    restored.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("migrates a real v6 schema to UTC without rewriting records, persists IANA settings and restores the v6 backup", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pm-v7-upgrade-")),
+    path = join(dir, "db.sqlite"),
+    saved = join(dir, "v6.sqlite");
+  try {
+    const initial = new Repository(path);
+    initial.seed("synthetic");
+    const records = () =>
+      ["projects", "tasks", "activities"].map((table) =>
+        initial.db.prepare(`SELECT * FROM ${table}`).all(),
+      );
+    const before = records();
+    initial.db.exec(
+      "ALTER TABLE workspaces DROP COLUMN time_zone; ALTER TABLE workspaces DROP COLUMN settings_version; DELETE FROM migrations WHERE version=7;",
+    );
+    await backupDatabase(path, saved);
+    initial.close();
+    const upgraded = new Repository(path);
+    expect(upgraded.settings("synthetic")).toEqual({
+      timeZone: "UTC",
+      version: 1,
+    });
+    expect(
+      ["projects", "tasks", "activities"].map((table) =>
+        upgraded.db.prepare(`SELECT * FROM ${table}`).all(),
+      ),
+    ).toEqual(before);
+    upgraded.db
+      .prepare(
+        "UPDATE workspaces SET time_zone='Asia/Shanghai',settings_version=2 WHERE id=?",
+      )
+      .run("synthetic");
+    upgraded.close();
+    const reopened = new Repository(path);
+    expect(reopened.settings("synthetic")).toEqual({
+      timeZone: "Asia/Shanghai",
+      version: 2,
+    });
+    reopened.close();
+    const restored = new DatabaseSync(saved, { readOnly: true });
+    expect(
+      restored.prepare("SELECT MAX(version) AS n FROM migrations").get()!.n,
+    ).toBe(6);
+    expect(
+      ["projects", "tasks", "activities"].map((table) =>
+        restored.prepare(`SELECT * FROM ${table}`).all(),
+      ),
+    ).toEqual(before);
+    expect(
+      restored
+        .prepare("PRAGMA table_info(workspaces)")
+        .all()
+        .some((row) => row.name === "time_zone"),
+    ).toBe(false);
     expect(
       restored.prepare("PRAGMA integrity_check").get()!.integrity_check,
     ).toBe("ok");

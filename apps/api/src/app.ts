@@ -34,7 +34,13 @@ import { safeOriginDiagnostic } from "./origin-diagnostics.js";
 import { registerAiRoutes } from "./ai/routes.js";
 import { AiError } from "./ai/provider.js";
 import { registerIntakeRoutes } from "./intake.js";
-import { registerAdminRoutes, workspaceQwen } from "./admin.js";
+import {
+  registerAdminRoutes,
+  workspaceQwen,
+  adminActor,
+  adminAudit,
+} from "./admin.js";
+import { workspaceSettingsInput } from "../../../packages/domain/time-zone.js";
 import {
   checkProjectCatalog,
   importCatalogs,
@@ -293,6 +299,32 @@ export async function buildApp(options: {
     return { ok: true };
   });
   app.get("/api/workspace", (req) => repo.snapshot(actor(req).workspaceId));
+  app.put("/api/admin/workspace-settings", (req) =>
+    mutate(req, (a) => {
+      adminActor(repo, a);
+      const input = workspaceSettingsInput
+        .extend({ confirmed: z.literal(true) })
+        .parse(req.body);
+      const old = repo.settings(a.workspaceId);
+      if (old.version !== input.version)
+        throw new HttpError(
+          409,
+          "Workspace settings changed. Reload the current settings before saving.",
+        );
+      repo.db
+        .prepare(
+          "UPDATE workspaces SET time_zone=?,settings_version=settings_version+1,revision=revision+1 WHERE id=?",
+        )
+        .run(input.timeZone, a.workspaceId);
+      adminAudit(
+        repo,
+        a,
+        `Changed workspace time zone: ${old.timeZone} → ${input.timeZone}`,
+        a.workspaceId,
+      );
+      return repo.settings(a.workspaceId);
+    }),
+  );
   app.get("/api/projects", (req) => {
     const q = z
       .object({
@@ -352,6 +384,21 @@ export async function buildApp(options: {
     try {
       return repo.activityPage(actor(req).workspaceId, query);
     } catch (e) {
+      if (e instanceof HttpError) throw e;
+      throw new HttpError(400, (e as Error).message);
+    }
+  });
+  app.post("/api/activity/export", (req, reply) => {
+    const query = activityQueryInput.parse(req.body);
+    try {
+      const result = repo.activityPage(actor(req).workspaceId, query, true);
+      reply.header(
+        "Content-Disposition",
+        'attachment; filename="project-manage-history.json"',
+      );
+      return result;
+    } catch (e) {
+      if (e instanceof HttpError) throw e;
       throw new HttpError(400, (e as Error).message);
     }
   });
