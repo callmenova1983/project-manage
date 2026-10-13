@@ -246,3 +246,62 @@ it("rejects moving parents, children or cross-workspace targets without partial 
   ).toBe(404);
   expect(context.repo.snapshot("a")).toEqual(before);
 });
+
+it("recomputes free-text ambiguity server-side, rejects unconfirmed batches atomically and preserves source context", async () => {
+  const before = context.repo.snapshot("a"),
+    s = {
+      ...source,
+      text: "Atlas:\n- New synthetic follow-up\n- Coordinate Meridian",
+    };
+  const candidates = intakeCandidates(s, before.projects);
+  const rows = candidates.map((c) => ({
+    sourceRow: c.sourceRow,
+    sourcePart: c.sourcePart,
+    contextRows: c.contextRows,
+    targetProjectId: c.targetProjectId,
+    targetProjectVersion: c.targetProjectVersion,
+    project: c.project,
+    task: c.task,
+    duplicateConfirmed: false,
+    matchConfirmed: false,
+  }));
+  rows[1]!.targetProjectId = before.projects[1]!.id;
+  rows[1]!.targetProjectVersion = before.projects[1]!.version;
+  const input = { source: s, rows, confirmed: true };
+  const rejected = await request("POST", "/api/intakes", input);
+  expect(rejected.statusCode).toBe(400);
+  expect(rejected.json().message).toContain("Confirm the target");
+  expect(context.repo.snapshot("a")).toEqual(before);
+  rows[1]!.matchConfirmed = true;
+  const key = randomUUID(),
+    result = await request("POST", "/api/intakes", input, key);
+  expect(result.statusCode).toBe(200);
+  const batch = result.json();
+  expect(batch.tasks).toHaveLength(2);
+  expect(batch.projects).toEqual([]);
+  expect((await request("POST", "/api/intakes", input, key)).json().id).toBe(
+    batch.id,
+  );
+  expect(context.repo.snapshot("a").projects).toEqual(before.projects);
+  const change = context.repo
+    .snapshot("a")
+    .activities.find((a) => a.entityId === batch.tasks[1].id)!;
+  expect(change.source).toContain("Row 1: Atlas:");
+  expect(change.source).toContain("Row 3: - Coordinate Meridian");
+  context.repo.putTask("a", {
+    ...batch.tasks[1],
+    title: "Later synthetic edit",
+    version: 2,
+  });
+  expect(
+    (
+      await request("POST", `/api/intakes/${batch.id}/undo`, {
+        confirmed: true,
+      })
+    ).statusCode,
+  ).toBe(400);
+  expect(
+    context.repo.snapshot("a").tasks.find((t) => t.id === batch.tasks[1].id)!
+      .title,
+  ).toBe("Later synthetic edit");
+});

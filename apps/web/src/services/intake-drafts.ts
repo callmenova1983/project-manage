@@ -17,6 +17,21 @@ const candidate = z.object({
   id: z.string().max(100),
   sourceRow: z.number().int().min(1).max(1000),
   sourcePart: z.number().int().min(0).max(199).optional(),
+  contextRows: z.array(z.number().int().min(1).max(1000)).max(20).optional(),
+  matchEvidence: z
+    .array(
+      z.object({
+        projectId: z.string().max(100),
+        kind: z.enum(["name", "alias", "partial", "mention"]),
+        value: z.string().max(20000),
+      }),
+    )
+    .max(1000)
+    .optional(),
+  matchConfirmed: z
+    .boolean()
+    .optional()
+    .transform(() => false),
   sourceText: z.string().max(200000),
   selected: z.boolean(),
   project: projectInput.extend({

@@ -10,6 +10,7 @@ import {
 } from "@phosphor-icons/vue";
 import {
   intakeCandidates,
+  sourceAt,
   intakeFields,
   detectColumns,
   parseDelimited,
@@ -188,6 +189,29 @@ function targetChanged(c: IntakeCandidate) {
   if (p) c.project = projectInput.strip().parse(p);
   c.targetProjectVersion = p?.version ?? null;
   confirmed.value = false;
+  c.matchConfirmed = false;
+}
+function reviewWarnings(c: IntakeCandidate) {
+  const assigned = !!c.targetProjectId && !c.project.intakeInbox;
+  return c.warnings
+    .filter(
+      (w) =>
+        !(
+          assigned &&
+          w === "Unresolved project. Save in Intake inbox and assign it later."
+        ),
+    )
+    .map((w) => {
+      if (assigned && w === "Several projects match. Choose the target.")
+        return "The source references several projects. Review your selected target.";
+      if (
+        assigned &&
+        w ===
+          "Partial project match. Confirm the target or keep it in Intake inbox."
+      )
+        return "The source has a partial name match. Review your selected target.";
+      return w;
+    });
 }
 function duplicate(c: IntakeCandidate) {
   return !!(
@@ -221,6 +245,8 @@ async function apply() {
       rows: selected.value.map((c) => ({
         sourceRow: c.sourceRow,
         sourcePart: c.sourcePart,
+        contextRows: c.contextRows,
+        matchConfirmed: c.matchConfirmed,
         targetProjectId: c.targetProjectId,
         targetProjectVersion: c.targetProjectVersion,
         project: c.project,
@@ -404,7 +430,7 @@ onBeforeUnmount(() => controller?.abort());
       <p class="muted">
         {{
           t(
-            "Use project/client/owner/task labels for best results. Unclear details stay open for review. You can use your keyboard’s dictation.",
+            "Use project headings followed by bullet tasks, or project/client/owner/task labels. Aliases and multiple matches stay visible for review. Relative dates remain unset. This is rule assistance; no model is called.",
           )
         }}
       </p>
@@ -541,6 +567,39 @@ onBeforeUnmount(() => controller?.abort());
         </div>
         <details :open="index === 0 || c.warnings.length > 0">
           <summary>{{ t("Review details") }}</summary>
+          <div v-if="c.matchEvidence?.length" class="intake-matches">
+            <p class="muted">{{ t("Suggested project matches") }}</p>
+            <ul>
+              <li v-for="match in c.matchEvidence" :key="match.projectId">
+                <button
+                  type="button"
+                  :disabled="!c.selected"
+                  @click="
+                    c.targetProjectId = match.projectId;
+                    targetChanged(c);
+                  "
+                >
+                  {{
+                    store.data.projects.find((p) => p.id === match.projectId)
+                      ?.name ?? match.projectId
+                  }}
+                </button>
+                <span
+                  >{{
+                    t(
+                      {
+                        name: "Exact project name",
+                        alias: "Exact alias",
+                        partial: "Partial name",
+                        mention: "Mention in source",
+                      }[match.kind],
+                    )
+                  }}
+                  · {{ match.value }}</span
+                >
+              </li>
+            </ul>
+          </div>
           <div class="intake-fields">
             <label
               >{{ t("Target project")
@@ -659,11 +718,26 @@ onBeforeUnmount(() => controller?.abort());
               )
             }}
           </p>
-          <ul v-if="c.warnings.length" class="intake-warnings">
-            <li v-for="warning in c.warnings" :key="warning">
+          <ul v-if="reviewWarnings(c).length" class="intake-warnings">
+            <li v-for="warning in reviewWarnings(c)" :key="warning">
               {{ t(warning) }}
             </li>
           </ul>
+          <label
+            v-if="
+              c.matches.length > 1 &&
+              c.targetProjectId &&
+              !c.project.intakeInbox &&
+              c.selected
+            "
+            class="checkbox ambiguity-confirm"
+          >
+            <input
+              v-model="c.matchConfirmed"
+              type="checkbox"
+              @change="confirmed = false"
+            />{{ t("I confirm this target despite multiple project matches") }}
+          </label>
           <label v-if="duplicate(c) && c.selected" class="checkbox"
             ><input v-model="c.duplicateConfirmed" type="checkbox" />{{
               t("Allow a new project or task with a matching name")
@@ -675,6 +749,10 @@ onBeforeUnmount(() => controller?.abort());
               {{ source.sheet }} ·
               {{ t("Row {number}", { number: c.sourceRow }) }}
             </summary>
+            <div v-for="row in c.contextRows ?? []" :key="row">
+              <small>{{ t("Context row {number}", { number: row }) }}</small>
+              <pre>{{ sourceAt(source, row) }}</pre>
+            </div>
             <pre>{{ c.sourceText }}</pre>
           </details>
         </details>
@@ -716,7 +794,18 @@ onBeforeUnmount(() => controller?.abort());
           ><button
             class="primary"
             type="submit"
-            :disabled="!confirmed || !selected.length || store.busy"
+            :disabled="
+              !confirmed ||
+              !selected.length ||
+              store.busy ||
+              selected.some(
+                (c) =>
+                  c.matches.length > 1 &&
+                  c.targetProjectId &&
+                  !c.project.intakeInbox &&
+                  !c.matchConfirmed,
+              )
+            "
           >
             {{ store.busy ? t("Saving…") : t("Create confirmed items") }}
           </button>
@@ -797,6 +886,28 @@ onBeforeUnmount(() => controller?.abort());
   </section>
 </template>
 <style scoped>
+.intake-matches ul {
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.intake-matches li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.intake-matches span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.intake-matches button {
+  white-space: normal;
+  text-align: left;
+}
+
 .intake-page {
   max-width: 1200px;
   margin: auto;

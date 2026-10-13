@@ -1,3 +1,10 @@
+import {
+  fieldAliases as aliases,
+  normalizeName,
+  mentionsProject,
+  textFragments,
+} from "./intake-text.js";
+export { normalizeName } from "./intake-text.js";
 import { defaultCatalogs, type Catalogs } from "./admin.js";
 import { z } from "zod";
 import {
@@ -46,6 +53,12 @@ export interface IntakeCandidate {
   id: string;
   sourceRow: number;
   sourcePart?: number;
+  contextRows?: number[];
+  matchEvidence?: {
+    projectId: string;
+    kind: "name" | "alias" | "partial" | "mention";
+    value: string;
+  }[];
   sourceText: string;
   selected: boolean;
   project: ProjectInput;
@@ -54,17 +67,20 @@ export interface IntakeCandidate {
   targetProjectId: string;
   targetProjectVersion: number | null;
   duplicateConfirmed: boolean;
+  matchConfirmed: boolean;
   warnings: string[];
 }
 const rowSchema = z
   .object({
     sourceRow: z.number().int().min(1).max(1000),
     sourcePart: z.number().int().min(0).max(199).optional(),
+    contextRows: z.array(z.number().int().min(1).max(1000)).max(20).optional(),
     targetProjectId: z.string().max(100),
     targetProjectVersion: z.number().int().positive().nullable(),
     project: projectInput,
     task: taskInput.omit({ projectId: true }).nullable(),
     duplicateConfirmed: z.boolean(),
+    matchConfirmed: z.boolean().optional(),
   })
   .strict();
 export const intakeInput = z
@@ -84,26 +100,14 @@ export interface IntakeBatch {
   tasks: Task[];
   state: "applied" | "undone";
   undoneAt?: string;
-  entries: { sourceRow: number; projectId: string; taskId: string | null }[];
+  entries: {
+    sourceRow: number;
+    sourcePart?: number;
+    contextRows?: number[];
+    projectId: string;
+    taskId: string | null;
+  }[];
 }
-export function normalizeName(value: string) {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .toLocaleLowerCase()
-    .replace(/\s+/g, " ");
-}
-const aliases: Record<Exclude<IntakeField, "ignore">, string[]> = {
-  project: ["project", "project name", "name", "项目", "项目名称"],
-  client: ["client", "customer", "客户", "客户名称"],
-  owner: ["owner", "project owner", "负责人", "项目负责人"],
-  stage: ["stage", "phase", "阶段", "项目阶段"],
-  task: ["task", "todo", "task title", "任务", "待办", "事项"],
-  assignee: ["assignee", "task owner", "执行人", "任务负责人"],
-  dueDate: ["due", "due date", "deadline", "截止", "截止日期", "日期"],
-  status: ["status", "task status", "状态", "任务状态"],
-  description: ["description", "notes", "描述", "备注"],
-};
 export function detectColumns(row: string[]): IntakeField[] {
   return row.map(
     (cell) =>
@@ -215,64 +219,47 @@ export function intakeCandidates(
     mapping ?? (source.rows ? detectColumns(rows[0] ?? []) : undefined);
   const first = source.rows && header ? 1 : 0;
   const result: IntakeCandidate[] = [];
-  const fragments = rows.flatMap((cells, index) => {
-    if (index < first || !cells.some((c) => c.trim())) return [];
-    if (source.rows) return [{ cells, index, part: 0 }];
-    // Split only explicit project/task labels or plain semicolon-separated notes.
-    // Keep the original row untouched for provenance; no semantic model is used.
-    const line = cells[0]!;
-    const blocks = line.split(/[;；]\s*(?=(?:project|项目|项目名称)\s*[:：])/i);
-    const pieces = blocks
-      .flatMap((block) => {
-        const tasks = block.split(
-          /[;；]\s*(?=(?:task|任务|待办|事项)\s*[:：])/i,
-        );
-        if (tasks.length > 1) {
-          const first = tasks.shift()!;
-          if (/^(?:task|任务|待办|事项)\s*[:：]/i.test(first.trim()))
-            return [first, ...tasks];
-          return tasks.map((task) => `${first}; ${task}`);
-        }
-        if (!/(?:^|[;；])\s*[^;；:：]+[:：]/.test(block))
-          return block.split(/[;；]/);
-        return [block];
-      })
-      .filter((piece) => piece.trim());
-    return pieces.map((piece, part) => ({ cells: [piece], index, part }));
-  });
-  for (const { cells, index, part } of fragments) {
-    const fields: Partial<Record<IntakeField, string>> = {};
+  const fragments = source.rows
+    ? rows.flatMap((cells, index) =>
+        index < first || !cells.some((c) => c.trim())
+          ? []
+          : [
+              {
+                cells,
+                index,
+                part: 0,
+                contextRows: [],
+                warnings: [],
+                fields: null,
+                text: cells.join(" "),
+              },
+            ],
+      )
+    : textFragments(source.text, projects).map((fragment) => ({
+        ...fragment,
+        cells: [fragment.text],
+      }));
+  for (const {
+    cells,
+    index,
+    part,
+    contextRows,
+    warnings: fragmentWarnings,
+    fields: parsed,
+    text,
+  } of fragments) {
+    const fields: Partial<Record<IntakeField, string>> = { ...parsed };
     if (columns)
       columns.forEach((key, i) => {
         if (key !== "ignore") fields[key] = cells[i]?.trim() ?? "";
       });
-    else {
-      const line = cells[0]!;
-      const keys = Object.values(aliases)
-        .flat()
-        .sort((a, b) => b.length - a.length)
-        .join("|");
-      const found = [
-        ...line.matchAll(
-          new RegExp(
-            `(?:^|[;；，,]\\s*)(${keys})\\s*[:：]\\s*([^;；，,]*)`,
-            "gi",
-          ),
-        ),
-      ];
-      for (const m of found) {
-        const key = detectColumns([m[1]!])[0]!;
-        fields[key] = m[2]!.trim();
-      }
-      if (!found.length) {
-        const matches = projects.filter((p) =>
-          [p.name, ...p.aliases].some((n) =>
-            normalizeName(line).includes(normalizeName(n)),
-          ),
-        );
-        fields.project = matches.length === 1 ? matches[0]!.name : "";
-        fields.task = line.trim().slice(0, 240);
-      }
+    const inferredProject = !columns && !fields.project;
+    const mentionText = fields.task ?? "";
+    if (!columns && !fields.project) {
+      const mentioned = projects.filter(
+        (p) => !p.intakeInbox && mentionsProject(mentionText, p),
+      );
+      if (mentioned.length === 1) fields.project = mentioned[0]!.name;
     }
     const name = fields.project ?? "",
       client = fields.client ?? "";
@@ -292,22 +279,57 @@ export function intakeCandidates(
             ),
           )
         : [];
-    const mentioned = !name
-      ? projects.filter((p) =>
-          [p.name, ...p.aliases].some((n) =>
-            normalizeName(cells[0]!).includes(normalizeName(n)),
-          ),
+    const mentioned = !source.rows
+      ? projects.filter(
+          (p) =>
+            !p.intakeInbox &&
+            mentionsProject(mentionText, p) &&
+            !(
+              client &&
+              [p.name, ...p.aliases].some(
+                (n) => normalizeName(n) === normalizeName(name),
+              ) &&
+              normalizeName(p.client) !== normalizeName(client)
+            ),
         )
       : [];
-    const hints = matches.length
+    const primary = matches.length
       ? matches
       : partialMatches.length
         ? partialMatches
         : mentioned;
+    const hints = [
+      ...new Map([...primary, ...mentioned].map((p) => [p.id, p])).values(),
+    ];
+    const evidence = hints.map((p) => {
+      const exact = [p.name, ...p.aliases].find(
+        (n) => normalizeName(n) === normalizeName(name),
+      );
+      return {
+        projectId: p.id,
+        kind: inferredProject
+          ? "mention"
+          : exact
+            ? normalizeName(exact) === normalizeName(p.name)
+              ? "name"
+              : "alias"
+            : partialMatches.includes(p)
+              ? "partial"
+              : "mention",
+        value: inferredProject
+          ? (mentionsProject(mentionText, p) ?? name)
+          : (exact ?? mentionsProject(mentionText, p) ?? name),
+      } as NonNullable<IntakeCandidate["matchEvidence"]>[number];
+    });
     const needsInbox =
       !name || hints.length > 1 || (!exactMatch && hints.length > 0);
     const inbox = projects.find((p) => p.intakeInbox === true);
-    const target = exactMatch ? matches[0] : needsInbox ? inbox : undefined;
+    const target =
+      exactMatch && hints.length === 1
+        ? matches[0]
+        : needsInbox
+          ? inbox
+          : undefined;
     if (needsInbox && !fields.task)
       fields.task = cells[0]!.trim().slice(0, 240);
     const stage =
@@ -319,7 +341,20 @@ export function intakeCandidates(
         )?.id,
       status = statusMap[normalizeName(fields.status ?? "")];
     const date = fields.dueDate?.trim() ?? "";
-    const warnings: string[] = [];
+    const warnings: string[] = [...fragmentWarnings];
+    if (fields.task && fields.task.length > 240)
+      warnings.push(
+        "Task title was shortened. The full original text is retained in the source.",
+      );
+    if (
+      !fields.dueDate &&
+      /\b(?:tomorrow|next (?:week|monday|tuesday|wednesday|thursday|friday))\b|明天|后天|下周|本周[一二三四五六日天]|周[一二三四五六日天]/i.test(
+        text,
+      )
+    )
+      warnings.push(
+        "Relative dates stay unset. Choose a date after reviewing the source.",
+      );
     if (fields.stage && !stage)
       warnings.push("Unrecognized stage. Choose a stage.");
     if (fields.status && !status)
@@ -342,6 +377,8 @@ export function intakeCandidates(
       id: `row-${index + 1}-${part}`,
       sourceRow: index + 1,
       sourcePart: part,
+      contextRows,
+      matchEvidence: evidence,
       sourceText: sourceAt(source, index + 1),
       selected: true,
       project: {
@@ -362,7 +399,7 @@ export function intakeCandidates(
       },
       task: fields.task
         ? {
-            title: fields.task,
+            title: fields.task.slice(0, 240),
             description: needsInbox ? (fields.description ?? "") : "",
             parentId: null,
             status: status ?? "todo",
@@ -376,6 +413,7 @@ export function intakeCandidates(
       targetProjectId: target?.id ?? "",
       targetProjectVersion: target?.version ?? null,
       duplicateConfirmed: false,
+      matchConfirmed: false,
       warnings,
     });
   }
@@ -426,8 +464,17 @@ export function planIntake(
   const entries: IntakeBatch["entries"] = [];
   const names = new Map<string, Project>();
   const seenRows = new Set<string>();
+  const derived = !input.source.rows
+    ? new Map(
+        intakeCandidates(input.source, snapshot.projects).map((c) => [
+          `${c.sourceRow}:${c.sourcePart ?? 0}`,
+          c,
+        ]),
+      )
+    : null;
   for (const row of input.rows) {
     sourceAt(input.source, row.sourceRow);
+    for (const line of row.contextRows ?? []) sourceAt(input.source, line);
     const rowKey = `${row.sourceRow}:${row.sourcePart ?? 0}`;
     if (seenRows.has(rowKey)) throw new DomainError("Duplicate source row");
     seenRows.add(rowKey);
@@ -440,6 +487,16 @@ export function planIntake(
       if (target.version !== row.targetProjectVersion)
         throw new DomainError(
           "Target project changed. Review the intake again.",
+        );
+      const original = derived?.get(rowKey);
+      if (
+        original &&
+        original.matches.length > 1 &&
+        !target.intakeInbox &&
+        !row.matchConfirmed
+      )
+        throw new DomainError(
+          "Confirm the target for this ambiguous source before creating items.",
         );
       project = target;
       if (!row.task)
@@ -503,6 +560,8 @@ export function planIntake(
     }
     entries.push({
       sourceRow: row.sourceRow,
+      sourcePart: row.sourcePart,
+      contextRows: derived?.get(rowKey)?.contextRows ?? row.contextRows,
       projectId: project.id,
       taskId: row.task ? tasks.at(-1)!.id : null,
     });
@@ -529,7 +588,11 @@ export function intakeProvenance(batch: IntakeBatch, entityId: string) {
   return (
     `Rule-assisted intake · ${batch.source.name || "Pasted text"}${batch.source.sheet ? ` · ${batch.source.sheet}` : ""}\n` +
     rows
-      .map((e) => `Row ${e.sourceRow}: ${sourceAt(batch.source, e.sourceRow)}`)
+      .map((e) =>
+        [...new Set([...(e.contextRows ?? []), e.sourceRow])]
+          .map((row) => `Row ${row}: ${sourceAt(batch.source, row)}`)
+          .join("\n"),
+      )
       .join("\n")
   );
 }

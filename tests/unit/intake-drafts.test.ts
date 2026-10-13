@@ -20,6 +20,11 @@ function fixture(): IntakeDraft {
   candidates[0]!.task!.title = "  尚未完成的编辑  ";
   candidates[0]!.project.name = "";
   candidates[0]!.duplicateConfirmed = true;
+  candidates[0]!.matchConfirmed = true;
+  candidates[0]!.contextRows = [2];
+  candidates[0]!.matchEvidence = [
+    { projectId: "synthetic", kind: "alias", value: "Synthetic alias" },
+  ];
   return {
     version: 1,
     savedAt: 100000,
@@ -58,6 +63,11 @@ describe("temporary intake drafts", () => {
       task: { title: "  尚未完成的编辑  " },
       targetProjectVersion: 7,
       duplicateConfirmed: false,
+      matchConfirmed: false,
+      contextRows: [2],
+      matchEvidence: [
+        { projectId: "synthetic", kind: "alias", value: "Synthetic alias" },
+      ],
     });
     expect(storage.getItem("a")).not.toContain('"confirmed":');
   });

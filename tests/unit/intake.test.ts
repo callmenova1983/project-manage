@@ -322,3 +322,84 @@ it("saves a name-only project and retains ambiguous project-only notes as action
   expect(c.project.intakeInbox).toBe(true);
   expect(c.task!.title).toContain(p.name);
 });
+
+it("requires a second ambiguity confirmation and retains section provenance without overwriting projects", () => {
+  const s = { ...source, text: "Atlas:\n- Coordinate Meridian" },
+    parsed = input(s),
+    row = parsed.rows[0]!;
+  const p = seed.projects[0]!;
+  row.targetProjectId = p.id;
+  row.targetProjectVersion = p.version;
+  expect(() => planIntake(parsed, seed, "Synthetic", id)).toThrow(
+    "Confirm the target",
+  );
+  row.matchConfirmed = true;
+  const batch = planIntake(parsed, seed, "Synthetic", id);
+  expect(batch.projects).toEqual([]);
+  expect(batch.tasks).toHaveLength(1);
+  expect(batch.tasks[0]!.projectId).toBe(p.id);
+  expect(batch.entries[0]!.contextRows).toEqual([1]);
+  const proof = intakeProvenance(batch, batch.tasks[0]!.id);
+  expect(proof).toContain("Row 1: Atlas:");
+  expect(proof).toContain("Row 2: - Coordinate Meridian");
+  expect(() =>
+    verifyIntakeUndo(batch, {
+      ...seed,
+      tasks: [...seed.tasks, ...batch.tasks],
+    }),
+  ).not.toThrow();
+  expect(seed.projects[0]).toEqual(p);
+});
+it("rejects nonexistent provenance rows and too many section context lines", () => {
+  const parsed = input({ ...source, text: "Project: New\n- Review" });
+  parsed.rows[0]!.contextRows = [999];
+  expect(() => planIntake(parsed, seed, "Synthetic", id)).toThrow(
+    "Source row is missing",
+  );
+  expect(() =>
+    intakeCandidates(
+      {
+        ...source,
+        text: "Project: New\n" + "Owner: Same\n".repeat(21) + "- Review",
+      },
+      [],
+    ),
+  ).toThrow("Too many context lines");
+});
+it("handles an unlabeled task followed by explicit assignee metadata without dropping its title", () => {
+  const c = intakeCandidates(
+    { ...source, text: "Project: New\n- Review the copy; Assignee: Robin" },
+    [],
+  )[0]!;
+  expect(c.task?.title).toBe("Review the copy");
+  expect(c.task?.assignee).toBe("Robin");
+  expect(c.contextRows).toEqual([1]);
+});
+
+it("preserves commas and unlabeled task continuations, while exposing conflicting section metadata", () => {
+  const c = intakeCandidates(
+    {
+      ...source,
+      text: "Project: New; Client: Acme, Inc; Task: Review copy, layout; then send the brief",
+    },
+    [],
+  )[0]!;
+  expect(
+    intakeCandidates(
+      { ...source, text: "Please review Atlas" },
+      seed.projects,
+    )[0]!.matchEvidence,
+  ).toEqual([
+    { projectId: seed.projects[0]!.id, kind: "mention", value: "Atlas" },
+  ]);
+  expect(c.project.client).toBe("Acme, Inc");
+  expect(c.task?.title).toBe("Review copy, layout; then send the brief");
+  const conflict = intakeCandidates(
+    { ...source, text: "Project: New\nOwner: Robin; Owner: Taylor\n- Review" },
+    [],
+  )[0]!;
+  expect(conflict.project.owner).toBe("Unassigned");
+  expect(conflict.warnings).toContain(
+    "Conflicting labels. Review the source and fill the missing fields.",
+  );
+});

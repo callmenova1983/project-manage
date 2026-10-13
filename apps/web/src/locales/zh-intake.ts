@@ -1,4 +1,31 @@
 export const intakeZh: Record<string, string> = {
+  "The source references several projects. Review your selected target.":
+    "原文提及多个项目，请核对所选目标。",
+  "The source has a partial name match. Review your selected target.":
+    "原文仅有部分名称匹配，请核对所选目标。",
+  "Use project headings followed by bullet tasks, or project/client/owner/task labels. Aliases and multiple matches stay visible for review. Relative dates remain unset. This is rule assistance; no model is called.":
+    "可按项目标题分段列出事项，或使用项目/客户/负责人/任务标签。别名及多个候选会显示供审阅。相对日期保持未设置。这是规则辅助，不会调用模型。",
+  "Suggested project matches": "候选项目与匹配依据",
+  "Exact project name": "项目名称完全匹配",
+  "Exact alias": "别名完全匹配",
+  "Partial name": "名称部分匹配",
+  "Mention in source": "原文提及",
+  "I confirm this target despite multiple project matches":
+    "原文匹配多个项目，我再次确认选择此目标项目",
+  "Context row {number}": "上下文第 {number} 行",
+  "Conflicting labels. Review the source and fill the missing fields.":
+    "同一字段的标签内容冲突。请查看原文并补全待定字段。",
+  "Conflicting section details. Review the original lines and fill the missing fields.":
+    "本段信息存在冲突。请核对原文各行并补全待定字段。",
+  "Too many context lines. Split the section before reviewing.":
+    "上下文行数过多，请拆分段落后再审阅。",
+  "Task title was shortened. The full original text is retained in the source.":
+    "任务标题已截短，完整文字保留在原文中。",
+  "Relative dates stay unset. Choose a date after reviewing the source.":
+    "相对日期暂不填写，请核对原文后选择具体日期。",
+  "Confirm the target for this ambiguous source before creating items.":
+    "原文有多个项目候选，请再次确认目标项目后创建。",
+
   "Leave intake? Your unsubmitted draft will stay in this tab.":
     "离开录入页面？尚未提交的草稿会留在当前标签页中。",
   "Workspace connection interrupted": "工作区连接中断",

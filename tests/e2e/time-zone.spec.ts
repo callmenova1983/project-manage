@@ -1,3 +1,4 @@
+import { scenarioLogin } from "./scenario-login";
 import { test, expect } from "@playwright/test";
 import { readFileSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -14,11 +15,11 @@ for (const width of [1536, 390]) {
     page.on("console", (m) => {
       if (m.type() === "error") errors.push(m.text());
     });
-    const login = await page.request.post("/api/auth/login", {
-      data: JSON.parse(readFileSync("data/e2e-admin-login.json", "utf8")),
-    });
-    expect(login.ok()).toBe(true);
-    const { actor, csrf } = await login.json();
+    test.setTimeout(90000);
+    const { actor, csrf } = await scenarioLogin(
+      page,
+      "data/e2e-admin-login.json",
+    );
     const repo = new Repository("data/e2e.sqlite"),
       prefix = `tz-${randomUUID()}`;
     const original = repo.settings(actor.workspaceId);
@@ -141,7 +142,7 @@ for (const width of [1536, 390]) {
       expect(errors).toEqual([]);
     } finally {
       const current = repo.settings(actor.workspaceId);
-      await page.request.put("/api/admin/workspace-settings", {
+      const reset = await page.request.put("/api/admin/workspace-settings", {
         headers: { "x-csrf-token": csrf, "idempotency-key": randomUUID() },
         data: {
           timeZone: original.timeZone,
@@ -149,6 +150,10 @@ for (const width of [1536, 390]) {
           confirmed: true,
         },
       });
+      expect(
+        reset.ok(),
+        `Timezone cleanup returned HTTP ${reset.status()}`,
+      ).toBe(true);
       repo.db
         .prepare("DELETE FROM activities WHERE workspace_id=? AND id LIKE ?")
         .run(actor.workspaceId, prefix + "%");
@@ -159,9 +164,8 @@ for (const width of [1536, 390]) {
 test("members can read timezone but cannot edit the shared setting", async ({
   page,
 }) => {
-  await page.request.post("/api/auth/login", {
-    data: JSON.parse(readFileSync("data/e2e-login.json", "utf8")),
-  });
+  test.setTimeout(90000);
+  await scenarioLogin(page, "data/e2e-login.json");
   await page.goto("/settings");
   await expect(
     page.getByText("Current time zone: UTC", { exact: true }),
