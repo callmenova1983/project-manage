@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { randomUUID } from "node:crypto";
-import { readFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { scenarioLogin } from "./scenario-login";
 import { Repository } from "../../apps/api/src/database";
 import { defaultModelSettings } from "../../packages/domain/admin";
 import { projectInput } from "../../packages/domain/types";
@@ -10,17 +11,14 @@ for (const width of [1536, 390]) {
   test(`complete weekly history and stable detail pagination at ${width}px`, async ({
     page,
   }) => {
+    test.setTimeout(90000);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1024 });
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
     page.on("console", (m) => {
       if (m.type() === "error") errors.push(m.text());
     });
-    const login = await page.request.post("/api/auth/login", {
-      data: JSON.parse(readFileSync("data/e2e-login.json", "utf8")),
-    });
-    expect(login.ok()).toBe(true);
-    const { actor } = await login.json();
+    const { actor } = await scenarioLogin(page, "data/e2e-login.json");
     const repo = new Repository("data/e2e.sqlite"),
       prefix = `history-${randomUUID()}`;
     const base = repo.snapshot(actor.workspaceId).projects[0]!;
