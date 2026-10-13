@@ -395,6 +395,12 @@ function search() {
         ><button @click="store.refresh()">{{ t("Retry") }}</button>
       </div>
       <TaskFeedback />
+      <div v-if="store.preferenceError" role="alert" class="global-error">
+        <span>{{ t(store.preferenceError) }}</span
+        ><button @click="store.preferenceError = ''">
+          {{ t("Dismiss preference notice") }}
+        </button>
+      </div>
       <main id="main-content" tabindex="-1"><RouterView /></main>
       <footer class="app-footer">
         <span>{{

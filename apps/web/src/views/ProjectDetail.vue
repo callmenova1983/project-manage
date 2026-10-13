@@ -12,6 +12,7 @@ import {
 import { useWorkspace } from "../stores/workspace";
 import { statistics } from "../../../../packages/domain/types";
 import ProjectEditor from "../components/ProjectEditor.vue";
+import ProjectFollow from "../components/ProjectFollow.vue";
 import TaskList from "../components/TaskList.vue";
 import PasteTasks from "../components/PasteTasks.vue";
 import StatusBadge from "../components/StatusBadge.vue";
@@ -64,9 +65,14 @@ function activityLabel(action: string) {
           {{ t(project.discipline) }}
         </p>
       </div>
-      <button :disabled="editing" @click="editing = true">
-        <PhPencilSimple :size="16" />{{ t("Edit project") }}
-      </button>
+      <div class="heading-actions">
+        <ProjectFollow :id="project.id" :name="project.name" /><button
+          :disabled="editing"
+          @click="editing = true"
+        >
+          <PhPencilSimple :size="16" />{{ t("Edit project") }}
+        </button>
+      </div>
     </div>
     <p v-if="project?.participantIds?.length" class="muted">
       {{ t("Project participants") }}:

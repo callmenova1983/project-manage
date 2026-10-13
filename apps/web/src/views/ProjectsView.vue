@@ -16,7 +16,7 @@ import {
   PhArrowUpRight,
   PhFunnel,
   PhNotePencil,
-  PhSquaresFour,
+  PhStar,
   PhCaretUp,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
@@ -32,6 +32,7 @@ import { stageLabels } from "../locales/en";
 import { confirmDiscard } from "../composables/unsaved";
 import StatusBadge from "../components/StatusBadge.vue";
 import ProjectEditor from "../components/ProjectEditor.vue";
+import ProjectFollow from "../components/ProjectFollow.vue";
 import TaskList from "../components/TaskList.vue";
 import InlineNotes from "../components/InlineNotes.vue";
 import PasteTasks from "../components/PasteTasks.vue";
@@ -43,6 +44,7 @@ import NextWork from "../components/NextWork.vue";
 const store = useWorkspace();
 const {
   query,
+  followedOnly,
   stage,
   owner,
   discipline,
@@ -137,6 +139,7 @@ const projects = computed(() =>
         (!owner.value ||
           ownerKey(p) === owner.value ||
           (!p.ownerId && p.owner === owner.value)) &&
+        (!followedOnly.value || store.following.has(p.id)) &&
         (!discipline.value || p.discipline === discipline.value) &&
         (!category.value || p.categoryIds?.includes(category.value)),
     )
@@ -150,6 +153,7 @@ const filtered = computed(
   () =>
     !!(
       query.value ||
+      followedOnly.value ||
       stage.value ||
       owner.value ||
       discipline.value ||
@@ -158,6 +162,7 @@ const filtered = computed(
 );
 function clear() {
   query.value = "";
+  followedOnly.value = false;
   stage.value = "";
   owner.value = "";
   discipline.value = "";
@@ -344,6 +349,21 @@ function edit(id: string) {
           /><kbd>/</kbd></label
         >
         <div class="filter-controls">
+          <button
+            class="following-filter"
+            :aria-pressed="followedOnly"
+            @click="followedOnly = !followedOnly"
+          >
+            <PhStar :size="16" :weight="followedOnly ? 'fill' : 'regular'" />{{
+              t("Following")
+            }}
+            {{
+              formatNumber(
+                store.data.projects.filter((p) => store.following.has(p.id))
+                  .length,
+              )
+            }}
+          </button>
           <PhFunnel :size="16" class="muted" /><select
             v-model="stage"
             :aria-label="t('Filter by stage')"
@@ -387,6 +407,13 @@ function edit(id: string) {
           </button>
         </div>
       </div>
+      <p v-if="followedOnly" class="muted following-hint">
+        {{
+          t(
+            "Following is a personal filter saved for this account in this browser. Everyone can still view and edit all projects.",
+          )
+        }}
+      </p>
       <div v-if="!projects.length" class="empty">
         <PhMagnifyingGlass :size="32" />
         <h2>
@@ -453,9 +480,7 @@ function edit(id: string) {
                   :size="15"
                 /><PhCaretRight v-else :size="15" />
               </button>
-              <div class="project-monogram" :class="project.stage">
-                <PhSquaresFour :size="18" weight="duotone" />
-              </div>
+              <ProjectFollow :id="project.id" :name="project.name" />
               <div class="project-name">
                 <RouterLink :to="`/projects/${project.id}`">{{
                   project.name

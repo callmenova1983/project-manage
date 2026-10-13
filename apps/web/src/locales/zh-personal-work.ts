@@ -1,4 +1,14 @@
 export const personalWorkZh: Record<string, string> = {
+  Following: "关注",
+  "Follow {name}": "关注 {name}",
+  "Unfollow {name}": "取消关注 {name}",
+  "Following is a personal filter saved for this account in this browser. Everyone can still view and edit all projects.":
+    "关注仅是当前浏览器中此账号的个人筛选，全员仍可查看和编辑所有项目。",
+  "Following preferences are unavailable in this browser. You can still view every project.":
+    "当前浏览器无法读取关注偏好，仍可查看全部项目。",
+  "Could not save following preferences in this browser. Try again; your selection is unchanged.":
+    "无法在当前浏览器保存关注偏好，选择未改变，请重试。",
+  "Dismiss preference notice": "关闭偏好提示",
   "Saved column mappings": "已保存列映射",
   "Only column names and field choices are kept for your account in this browser. Source rows are never saved in a template.":
     "仅在当前浏览器按账号保存列名与字段选择。模板不保存原始数据行。",
