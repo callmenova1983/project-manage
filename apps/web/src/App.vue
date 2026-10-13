@@ -401,7 +401,13 @@ function search() {
           {{ t("Dismiss preference notice") }}
         </button>
       </div>
-      <main id="main-content" tabindex="-1"><RouterView /></main>
+      <main id="main-content" tabindex="-1">
+        <RouterView
+          :key="
+            JSON.stringify([store.mode, store.user.workspaceId, store.user.id])
+          "
+        />
+      </main>
       <footer class="app-footer">
         <span>{{
           t(

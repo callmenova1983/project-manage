@@ -1,4 +1,27 @@
 export const personalWorkZh: Record<string, string> = {
+  "You are signed out, but this browser could not clear your editor drafts. Clear this site's browser data to remove them.":
+    "已退出登录，但当前浏览器未能清除编辑草稿。可在浏览器中清除此站点的数据以移除草稿。",
+  "Unsubmitted editor draft": "尚未提交的编辑草稿",
+  "Kept for this account and item in this tab for up to 24 hours. Nothing is restored until you choose it and the latest version is checked.":
+    "草稿按账号和事项保留在当前标签页，最长 24 小时。主动选择并核验最新版本后才会恢复。",
+  "View saved draft contents": "查看已存草稿内容",
+  "Checking latest version…": "正在核验最新版本…",
+  "Check and restore draft": "核验并恢复草稿",
+  "Editor draft storage is unavailable. Keep this editor open and copy your changes; they may not survive a refresh.":
+    "编辑草稿存储不可用，请保持编辑器打开并复制修改；刷新后可能无法恢复。",
+  "Unsubmitted edits kept in this tab for 24 hours. Reopen this editor after refreshing to recover them.":
+    "未提交修改已在当前标签页暂存 24 小时。刷新后重新打开此编辑器可恢复。",
+  "Leave this editor? Unsubmitted drafts stay in this tab for recovery.":
+    "离开此编辑器？未提交草稿将保留在当前标签页供恢复。",
+  "Could not check the latest version. Keep the draft and retry.":
+    "无法核验最新版本，请保留草稿并重试。",
+  "The item changed or is no longer available. This older draft stays read-only; copy anything you need, then discard it and edit the latest version.":
+    "事项已变化或不再可用。旧草稿保持只读；可复制所需内容，然后丢弃草稿并编辑最新版本。",
+  "A save was attempted for this new item. Check the workspace for its result before starting again. This draft stays read-only to avoid duplicate creation.":
+    "此新建事项曾尝试保存，请先核对工作区中的结果。草稿保持只读，避免重复创建。",
+  "The item was saved, but this browser could not remove its old draft. Do not create it again; check the workspace first.":
+    "事项已保存，但浏览器未能删除旧草稿。请先核对工作区，不要重复创建。",
+
   Following: "关注",
   "Follow {name}": "关注 {name}",
   "Unfollow {name}": "取消关注 {name}",

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { readFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { scenarioLogin } from "./scenario-login";
 import { randomUUID } from "node:crypto";
 import { createSeed } from "../../packages/domain/seed";
 import { projectInput } from "../../packages/domain/types";
@@ -7,6 +8,7 @@ import { projectInput } from "../../packages/domain/types";
 test("independent members resume shared data and preserve dirty edits on mobile", async ({
   browser,
 }) => {
+  test.setTimeout(90000);
   const first = await browser.newContext({
     viewport: { width: 1536, height: 1024 },
   });
@@ -26,20 +28,11 @@ test("independent members resume shared data and preserve dirty edits on mobile"
     });
   }
   try {
-    const credentials = JSON.parse(readFileSync("data/e2e-login.json", "utf8"));
-    const otherCredentials = JSON.parse(
-      readFileSync("data/e2e-admin-login.json", "utf8"),
-    );
-    const login = await first.request.post("/api/auth/login", {
-      data: credentials,
-    });
-    expect(login.ok()).toBe(true);
-    const a = await login.json();
-    const other = await second.request.post("/api/auth/login", {
-      data: otherCredentials,
-    });
-    expect(other.ok()).toBe(true);
-    expect((await other.json()).actor.id).not.toBe(a.actor.id);
+    const desktop = await first.newPage(),
+      mobile = await second.newPage();
+    const a = await scenarioLogin(desktop, "data/e2e-login.json"),
+      b = await scenarioLogin(mobile, "data/e2e-admin-login.json");
+    expect(b.actor.id).not.toBe(a.actor.id);
     const name = `Synthetic shared entry ${randomUUID().slice(0, 8)}`;
     const created = await first.request.post("/api/projects", {
       headers: { "x-csrf-token": a.csrf, "idempotency-key": randomUUID() },
@@ -54,8 +47,6 @@ test("independent members resume shared data and preserve dirty edits on mobile"
     });
     expect(created.status()).toBe(200);
     const project = await created.json();
-    const desktop = await first.newPage(),
-      mobile = await second.newPage();
     observe(desktop);
     observe(mobile);
     for (const page of [desktop, mobile]) {

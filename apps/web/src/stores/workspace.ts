@@ -4,6 +4,10 @@ import { defineStore } from "pinia";
 import { ref, computed, nextTick, watch } from "vue";
 import { accountStorageKey } from "../services/account-storage";
 import { readFollowing, writeFollowing } from "../services/project-following";
+import {
+  clearAccountEditorDrafts,
+  editorDraftPrefix,
+} from "../services/editor-drafts";
 import { clearIntakeDraft, intakeDraftKey } from "../services/intake-drafts";
 import { initialProjectNavigation } from "../composables/project-navigation";
 import { api, ApiError } from "../services/api";
@@ -151,19 +155,21 @@ export const useWorkspace = defineStore("workspace", () => {
     try {
       const snapshot = await api.snapshot();
       if (generation !== sessionGeneration || request !== snapshotRequest)
-        return;
+        return false;
       data.value = snapshot;
       setCatalogs(snapshot.catalogs);
       workspaceTimeZone.value = snapshot.settings?.timeZone ?? "UTC";
       lastSynced.value = new Date();
       error.value = "";
+      return true;
     } catch (e) {
       if (generation !== sessionGeneration || request !== snapshotRequest)
-        return;
+        return false;
       if (e instanceof ApiError && e.status === 401) {
         clearWorkspace();
         sessionState.value = "signed_out";
       } else error.value = (e as Error).message;
+      return false;
     } finally {
       if (generation === sessionGeneration && request === snapshotRequest)
         loading.value = false;
@@ -198,12 +204,16 @@ export const useWorkspace = defineStore("workspace", () => {
   }
   async function logout() {
     const draftKey = user.value && intakeDraftKey(api.mode, user.value);
+    const editorPrefix = user.value && editorDraftPrefix(api.mode, user.value);
     await api.logout();
     clearWorkspace();
     sessionState.value = "signed_out";
     // Let the editor flush during unmount before removing this account's draft.
     await nextTick();
     if (draftKey) clearIntakeDraft(draftKey);
+    if (editorPrefix && !clearAccountEditorDrafts(editorPrefix))
+      error.value =
+        "You are signed out, but this browser could not clear your editor drafts. Clear this site's browser data to remove them.";
   }
   async function operation<T>(
     fn: () => Promise<T>,

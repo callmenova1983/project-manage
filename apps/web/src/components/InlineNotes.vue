@@ -10,13 +10,36 @@ import { useWorkspace } from "../stores/workspace";
 import { useUnsaved } from "../composables/unsaved";
 import { api, ApiError } from "../services/api";
 import SaveError from "./SaveError.vue";
+import EditorDraftNotice from "./EditorDraftNotice.vue";
+import { useEditorDraft } from "../composables/editor-draft";
+import { notesEditorDraft } from "../services/editor-drafts";
 const props = defineProps<{ project: Project }>();
 const store = useWorkspace();
 const original = ref(props.project),
   draft = ref(props.project.notes),
   error = ref<Error | ApiError | null>(null);
 const dirty = computed(() => draft.value !== original.value.notes);
-const discard = useUnsaved(dirty);
+const persisted = useEditorDraft({
+  kind: "notes",
+  projectId: props.project.id,
+  entityId: props.project.id,
+  schema: notesEditorDraft,
+  value: draft,
+  dirty,
+  baseVersion: () => original.value.version,
+  currentVersion: () =>
+    store.data.projects.find((p) => p.id === props.project.id)?.version,
+  restore(value) {
+    original.value = store.data.projects.find(
+      (p) => p.id === props.project.id,
+    )!;
+    draft.value = value;
+    resetReview();
+  },
+});
+const discard = useUnsaved(dirty, () =>
+  t("Leave this editor? Unsubmitted drafts stay in this tab for recovery."),
+);
 watch(
   () => props.project,
   (p) => {
@@ -57,11 +80,19 @@ function resetReview() {
   overwrite.value = false;
 }
 function cancel() {
-  if (discard()) {
+  if (discard() && persisted.discard()) {
     draft.value = original.value.notes;
     error.value = null;
     resetReview();
   }
+}
+function discardSavedDraft() {
+  if (!persisted.discard()) return;
+  original.value =
+    store.data.projects.find((p) => p.id === props.project.id) ?? props.project;
+  draft.value = original.value.notes;
+  error.value = null;
+  resetReview();
 }
 function reload() {
   const current = (error.value as ApiError).current as Project;
@@ -69,10 +100,12 @@ function reload() {
   draft.value = current.notes;
   error.value = null;
   resetReview();
+  persisted.discard();
 }
 async function save() {
   error.value = null;
   try {
+    if (!persisted.beforeSave()) return;
     const p = await store.saveProject(
       { ...projectInput.strip().parse(original.value), notes: draft.value },
       original.value,
@@ -80,6 +113,7 @@ async function save() {
     original.value = p;
     draft.value = p.notes;
     resetReview();
+    persisted.complete(true);
   } catch (e) {
     error.value = e as Error;
   }
@@ -121,6 +155,11 @@ async function applyDate(line: number) {
       >
     </div>
     <SaveError :error="error" @reload="reload" />
+    <EditorDraftNotice
+      v-bind="persisted.notice.value"
+      @restore="persisted.restore"
+      @discard="discardSavedDraft"
+    />
     <div
       v-for="(rows, index) in noteTables"
       :key="index"
@@ -156,6 +195,7 @@ async function applyDate(line: number) {
     <form @submit.prevent="save">
       <textarea
         v-model="draft"
+        :disabled="persisted.pending.value || store.busy"
         :aria-label="t('Original notes for {name}', { name: project.name })"
         rows="5"
         maxlength="20000"
@@ -165,7 +205,10 @@ async function applyDate(line: number) {
       <div v-if="dirty" class="form-actions">
         <button type="button" :disabled="store.busy" @click="cancel">
           {{ t("Cancel notes") }}</button
-        ><button class="primary" :disabled="store.busy">
+        ><button
+          class="primary"
+          :disabled="store.busy || persisted.pending.value"
+        >
           {{ t("Save notes") }}
         </button>
       </div>
@@ -173,7 +216,7 @@ async function applyDate(line: number) {
     <div v-for="c in candidates" :key="c.sourceLine" class="date-candidate">
       <button
         class="text-button amber"
-        :disabled="dirty"
+        :disabled="dirty || persisted.pending.value"
         @click="
           review = review === c.sourceLine ? null : c.sourceLine;
           dueDate = c.proposedDate;
