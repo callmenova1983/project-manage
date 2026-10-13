@@ -182,12 +182,12 @@ export function statistics(
   date = new Date(),
   timeZone = "UTC",
 ) {
+  const day = scope === "today" ? dayKey(date, timeZone) : "";
+  const week = scope === "week" ? weekKey(date, timeZone) : "";
   const leaves = leafTasks(tasks).filter(
     (t) =>
       scope === "all" ||
-      (scope === "today"
-        ? t.workDates.includes(dayKey(date, timeZone))
-        : t.workWeek === weekKey(date, timeZone)),
+      (scope === "today" ? t.workDates.includes(day) : t.workWeek === week),
   );
   return {
     total: leaves.length,

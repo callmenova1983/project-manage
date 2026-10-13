@@ -26,6 +26,7 @@ import {
   statistics,
   leafTasks,
   type Project,
+  type Task,
 } from "../../../../packages/domain/types";
 import { stageLabels } from "../locales/en";
 import { confirmDiscard } from "../composables/unsaved";
@@ -152,19 +153,36 @@ function clear() {
   discipline.value = "";
   category.value = "";
 }
-function tasks(id: string) {
-  return store.data.tasks.filter((t) => t.projectId === id);
-}
-function scopedTasks(id: string) {
-  return leafTasks(tasks(id)).filter((t) =>
-    scope.value === "week"
-      ? t.workWeek === currentWeek()
-      : t.workDates.includes(currentDay()),
+const tasksByProject = computed(() => {
+  const grouped = new Map<string, Task[]>();
+  for (const task of store.data.tasks) {
+    const group = grouped.get(task.projectId);
+    if (group) group.push(task);
+    else grouped.set(task.projectId, [task]);
+  }
+  return grouped;
+});
+const scopedByProject = computed(() => {
+  // Snapshot refresh invalidates this map, so local-day/week boundaries refresh too.
+  const groups = tasksByProject.value,
+    day = currentDay(),
+    week = currentWeek();
+  return new Map(
+    [...groups].map(([id, tasks]) => {
+      const scoped = leafTasks(tasks).filter((task) =>
+        scope.value === "week"
+          ? task.workWeek === week
+          : task.workDates.includes(day),
+      );
+      return [id, { tasks: scoped, summary: statistics(scoped) }];
+    }),
   );
-}
-function summary(id: string) {
-  return statistics(tasks(id), scope.value, new Date(), store.timeZone);
-}
+});
+const emptySummary = statistics([]);
+const tasks = (id: string) => tasksByProject.value.get(id) ?? [];
+const scopedTasks = (id: string) => scopedByProject.value.get(id)?.tasks ?? [];
+const summary = (id: string) =>
+  scopedByProject.value.get(id)?.summary ?? emptySummary;
 function reportTime(p: Project) {
   return p.reportedAt
     ? formatDate(p.reportedAt, {

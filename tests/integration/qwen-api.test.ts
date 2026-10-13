@@ -339,3 +339,101 @@ it("records failed provider status without source data, generated text or fabric
   });
   expect(result.body).not.toContain("should never be logged");
 });
+
+it("retains reported usage for truncated output while recording failure and exactly one paid attempt", async () => {
+  ctx.repo.db
+    .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
+    .run();
+  mock.mockResolvedValue(
+    Response.json({
+      model: QWEN_MODEL,
+      usage: { prompt_tokens: 140, completion_tokens: 2048 },
+      choices: [
+        {
+          finish_reason: "length",
+          message: { content: "Incomplete synthetic output" },
+        },
+      ],
+    }),
+  );
+  const key = randomUUID();
+  expect((await propose(key)).json().code).toBe("AI_INVALID_OUTPUT");
+  expect((await propose(key)).json().code).toBe("AI_INVALID_OUTPUT");
+  expect(mock).toHaveBeenCalledTimes(1);
+  const logs = (await request("GET", "/api/admin/model/logs")).json();
+  expect(logs).toHaveLength(1);
+  expect(logs[0]).toMatchObject({
+    status: "failed",
+    errorCode: "AI_INVALID_OUTPUT",
+    attempts: 1,
+    inputTokens: 140,
+    outputTokens: 2048,
+    cost: null,
+  });
+  expect((await request("GET", "/api/admin/model")).json()).toMatchObject({
+    runtimeEnabled: true,
+    remainingAttempts: 2,
+  });
+  expect(JSON.stringify(logs)).not.toContain("Incomplete synthetic output");
+});
+
+it("counts failed attempts toward exhaustion without inventing a provider log for a blocked request", async () => {
+  ctx.repo.db
+    .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
+    .run();
+  mock.mockImplementation(async () => Response.json({}, { status: 503 }));
+  for (let i = 0; i < 3; i++)
+    expect((await propose()).json().code).toBe("AI_PROVIDER");
+  expect((await propose()).json().code).toBe("AI_BUDGET");
+  expect(mock).toHaveBeenCalledTimes(3);
+  expect((await request("GET", "/api/admin/model")).json()).toMatchObject({
+    credentialAvailable: true,
+    runtimeEnabled: false,
+    remainingAttempts: 0,
+  });
+  expect((await request("GET", "/api/ai/capabilities")).json()).toMatchObject({
+    enabled: false,
+    remainingAttempts: 0,
+  });
+  const logs = (await request("GET", "/api/admin/model/logs")).json();
+  expect(logs).toHaveLength(3);
+  expect(
+    logs.every(
+      (log: {
+        status: string;
+        attempts: number;
+        inputTokens: null;
+        cost: null;
+      }) =>
+        log.status === "failed" &&
+        log.attempts === 1 &&
+        log.inputTokens === null &&
+        log.cost === null,
+    ),
+  ).toBe(true);
+});
+
+it("reports an expired allowance consistently without sending a provider request", async () => {
+  ctx.repo.db
+    .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
+    .run();
+  await ctx.app.close();
+  ctx = await buildApp({
+    databasePath: join(dir, "db.sqlite"),
+    origin,
+    qwen: { ...config, expiresAt: Date.now() - 1000 },
+    aiFetch: mock,
+  });
+  expect((await request("GET", "/api/admin/model")).json()).toMatchObject({
+    credentialAvailable: true,
+    runtimeEnabled: false,
+    remainingAttempts: 3,
+  });
+  expect((await request("GET", "/api/ai/capabilities")).json()).toMatchObject({
+    enabled: false,
+    remainingAttempts: 3,
+  });
+  expect((await propose()).json().code).toBe("AI_BUDGET");
+  expect(mock).not.toHaveBeenCalled();
+  expect((await request("GET", "/api/admin/model/logs")).json()).toEqual([]);
+});
