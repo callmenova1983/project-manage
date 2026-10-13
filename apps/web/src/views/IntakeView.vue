@@ -1,6 +1,18 @@
 <script setup lang="ts">
 import { activeStages, catalogs } from "../composables/catalogs";
-import { computed, ref, onMounted, onBeforeUnmount, nextTick } from "vue";
+import {
+  computed,
+  ref,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+  watch,
+} from "vue";
+import MappingTemplates from "../components/MappingTemplates.vue";
+import {
+  groupIntakeCandidates,
+  needsIntakeDecision,
+} from "../composables/intake-review";
 import {
   PhUploadSimple,
   PhSparkle,
@@ -78,6 +90,39 @@ const draft = useIntakeDraft(intakeDraftKey(store.mode, store.user!), {
   dirty,
 });
 const selected = computed(() => candidates.value.filter((c) => c.selected));
+const reviewMode = ref("all");
+const groups = ref<ReturnType<typeof groupIntakeCandidates>>([]);
+watch(candidates, (rows) => {
+  groups.value = groupIntakeCandidates(rows);
+  reviewMode.value = "all";
+});
+const reviewGroups = computed(() =>
+  groups.value
+    .map((group) => ({
+      ...group,
+      rows: group.rows.filter(
+        (c) =>
+          reviewMode.value === "all" || needsIntakeDecision(c, duplicate(c)),
+      ),
+    }))
+    .filter((group) => group.rows.length),
+);
+const decisionCount = computed(
+  () =>
+    candidates.value.filter((c) => needsIntakeDecision(c, duplicate(c))).length,
+);
+watch(reviewGroups, async () => {
+  const focused = document.activeElement;
+  await nextTick();
+  if (
+    reviewMode.value === "decisions" &&
+    focused instanceof HTMLElement &&
+    !focused.isConnected
+  )
+    document
+      .querySelector<HTMLSelectElement>(".review-options select")
+      ?.focus();
+});
 async function restoreDraft() {
   draft.restore();
   await nextTick();
@@ -265,6 +310,7 @@ async function apply() {
     draft.flush();
     await loadHistory();
   } catch (e) {
+    reviewMode.value = "all";
     error.value = (e as Error).message.startsWith("[")
       ? t("Check required project and task fields")
       : (e as Error).message;
@@ -507,8 +553,18 @@ onBeforeUnmount(() => controller?.abort());
                 "Only mapped columns become fields. All source cells remain visible in review. XLSX formulas are not executed; stored values are used.",
               )
             }}
-          </p></template
-        >
+          </p>
+          <MappingTemplates
+            :headers="source.rows[0] ?? []"
+            :mapping="mapping"
+            :has-header="hasHeader"
+            @reuse="
+              (fields, header) => {
+                mapping = fields;
+                hasHeader = header;
+              }
+            "
+        /></template>
         <pre v-else class="intake-original">{{ source.text }}</pre>
       </template>
       <div class="form-actions">
@@ -547,216 +603,258 @@ onBeforeUnmount(() => controller?.abort());
           {{ t("Back to source") }}
         </button>
       </div>
-      <article
-        v-for="(c, index) in candidates"
-        :key="c.id"
-        class="panel intake-candidate"
-        :class="{ excluded: !c.selected }"
+      <div class="review-options">
+        <label
+          >{{ t("Review view")
+          }}<select v-model="reviewMode" :aria-label="t('Review view')">
+            <option value="all">
+              {{ t("All rows, grouped by source project") }}
+            </option>
+            <option value="decisions">
+              {{ t("Needs decisions ({count})", { count: decisionCount }) }}
+            </option>
+          </select></label
+        >
+        <p class="muted">
+          {{
+            t(
+              "Filtering changes this view only. All selected rows are included; ambiguity and duplicate confirmations still apply.",
+            )
+          }}
+        </p>
+      </div>
+      <p v-if="!reviewGroups.length" role="status">
+        {{
+          t(
+            "No rows need a decision. Review all rows before creating the selected items.",
+          )
+        }}
+      </p>
+      <section
+        v-for="group in reviewGroups"
+        :key="group.id"
+        class="intake-project-group"
+        :aria-label="t('Source project: {name}', { name: group.name })"
       >
-        <div class="section-heading">
-          <label class="checkbox"
-            ><input
-              v-model="c.selected"
-              type="checkbox"
-              @change="confirmed = false"
-            />{{ t("Row {number}", { number: c.sourceRow }) }} ·
-            {{ c.project.name || t("Unnamed project") }}</label
-          ><span class="muted">{{
-            c.task ? t("Project + task") : t("Project only")
-          }}</span>
-        </div>
-        <details :open="index === 0 || c.warnings.length > 0">
-          <summary>{{ t("Review details") }}</summary>
-          <div v-if="c.matchEvidence?.length" class="intake-matches">
-            <p class="muted">{{ t("Suggested project matches") }}</p>
-            <ul>
-              <li v-for="match in c.matchEvidence" :key="match.projectId">
-                <button
-                  type="button"
-                  :disabled="!c.selected"
-                  @click="
-                    c.targetProjectId = match.projectId;
-                    targetChanged(c);
-                  "
-                >
-                  {{
-                    store.data.projects.find((p) => p.id === match.projectId)
-                      ?.name ?? match.projectId
-                  }}
-                </button>
-                <span
-                  >{{
-                    t(
-                      {
-                        name: "Exact project name",
-                        alias: "Exact alias",
-                        partial: "Partial name",
-                        mention: "Mention in source",
-                      }[match.kind],
-                    )
-                  }}
-                  · {{ match.value }}</span
-                >
-              </li>
-            </ul>
+        <h3>
+          {{ t("Source project: {name}", { name: group.name }) }}
+          <span class="muted"
+            >· {{ t("{count} rows", { count: group.rows.length }) }}</span
+          >
+        </h3>
+        <article
+          v-for="(c, index) in group.rows"
+          :key="c.id"
+          class="panel intake-candidate"
+          :class="{ excluded: !c.selected }"
+        >
+          <div class="section-heading">
+            <label class="checkbox"
+              ><input
+                v-model="c.selected"
+                type="checkbox"
+                @change="confirmed = false"
+              />{{ t("Row {number}", { number: c.sourceRow }) }} ·
+              {{ c.project.name || t("Unnamed project") }}</label
+            ><span class="muted">{{
+              c.task ? t("Project + task") : t("Project only")
+            }}</span>
           </div>
-          <div class="intake-fields">
-            <label
-              >{{ t("Target project")
-              }}<select
-                v-model="c.targetProjectId"
-                :disabled="!c.selected"
-                @change="targetChanged(c)"
-              >
-                <option value="">
-                  {{
-                    t(
-                      c.project.intakeInbox
-                        ? "Save in Intake inbox"
-                        : "Create a new project",
-                    )
-                  }}
-                </option>
-                <option
-                  v-for="p in store.data.projects"
-                  :key="p.id"
-                  :value="p.id"
-                >
-                  {{ p.name }} · {{ p.client }}
-                </option>
-              </select></label
-            >
-            <label
-              >{{ t("Project name")
-              }}<input
-                v-model="c.project.name"
-                :disabled="!c.selected || !!c.targetProjectId"
-                required
-                maxlength="120"
-            /></label>
-            <label
-              >{{ t("Client")
-              }}<input
-                v-model="c.project.client"
-                :disabled="!c.selected || !!c.targetProjectId"
-                maxlength="120"
-            /></label>
-            <label
-              >{{ t("Project owner")
-              }}<input
-                v-model="c.project.owner"
-                :disabled="!c.selected || !!c.targetProjectId"
-                maxlength="80"
-            /></label>
-            <label
-              >{{ t("Stage")
-              }}<select
-                v-model="c.project.stage"
-                :disabled="!c.selected || !!c.targetProjectId"
-              >
-                <option value="unclassified">
-                  {{ stageLabels.unclassified }}
-                </option>
-                <option
-                  v-for="stage in activeStages"
-                  :key="stage.id"
-                  :value="stage.id"
-                >
-                  {{ stageLabels[stage.id] }}
-                </option>
-              </select></label
-            >
-            <label
-              >{{ t("Description")
-              }}<input
-                v-model="c.project.description"
-                :disabled="!c.selected || !!c.targetProjectId"
-                maxlength="4000"
-            /></label>
-            <template v-if="c.task"
-              ><label
-                >{{ t("Task title")
-                }}<input
-                  v-model="c.task.title"
-                  :disabled="!c.selected"
-                  required
-                  maxlength="240" /></label
-              ><label
-                >{{ t("Assignee")
-                }}<input
-                  v-model="c.task.assignee"
-                  :disabled="!c.selected"
-                  maxlength="80" /></label
-              ><label
-                >{{ t("Due date")
-                }}<input
-                  :value="c.task.dueDate ?? ''"
-                  type="date"
-                  :disabled="!c.selected"
-                  @input="
-                    c.task.dueDate =
-                      ($event.target as HTMLInputElement).value || null
-                  " /></label
-              ><label
-                >{{ t("Task status")
-                }}<select v-model="c.task.status" :disabled="!c.selected">
-                  <option
-                    v-for="status in statuses"
-                    :key="status"
-                    :value="status"
+          <details :open="index === 0 || c.warnings.length > 0">
+            <summary>{{ t("Review details") }}</summary>
+            <div v-if="c.matchEvidence?.length" class="intake-matches">
+              <p class="muted">{{ t("Suggested project matches") }}</p>
+              <ul>
+                <li v-for="match in c.matchEvidence" :key="match.projectId">
+                  <button
+                    type="button"
+                    :disabled="!c.selected"
+                    @click="
+                      c.targetProjectId = match.projectId;
+                      targetChanged(c);
+                    "
                   >
-                    {{ statusLabels[status] }}
+                    {{
+                      store.data.projects.find((p) => p.id === match.projectId)
+                        ?.name ?? match.projectId
+                    }}
+                  </button>
+                  <span
+                    >{{
+                      t(
+                        {
+                          name: "Exact project name",
+                          alias: "Exact alias",
+                          partial: "Partial name",
+                          mention: "Mention in source",
+                        }[match.kind],
+                      )
+                    }}
+                    · {{ match.value }}</span
+                  >
+                </li>
+              </ul>
+            </div>
+            <div class="intake-fields">
+              <label
+                >{{ t("Target project")
+                }}<select
+                  v-model="c.targetProjectId"
+                  :disabled="!c.selected"
+                  @change="targetChanged(c)"
+                >
+                  <option value="">
+                    {{
+                      t(
+                        c.project.intakeInbox
+                          ? "Save in Intake inbox"
+                          : "Create a new project",
+                      )
+                    }}
+                  </option>
+                  <option
+                    v-for="p in store.data.projects"
+                    :key="p.id"
+                    :value="p.id"
+                  >
+                    {{ p.name }} · {{ p.client }}
                   </option>
                 </select></label
-              ></template
-            >
-          </div>
-          <p v-if="c.task" class="muted">
-            {{
-              t(
-                "New tasks start without a work-week assignment. A due date does not assign weekly work.",
-              )
-            }}
-          </p>
-          <ul v-if="reviewWarnings(c).length" class="intake-warnings">
-            <li v-for="warning in reviewWarnings(c)" :key="warning">
-              {{ t(warning) }}
-            </li>
-          </ul>
-          <label
-            v-if="
-              c.matches.length > 1 &&
-              c.targetProjectId &&
-              !c.project.intakeInbox &&
-              c.selected
-            "
-            class="checkbox ambiguity-confirm"
-          >
-            <input
-              v-model="c.matchConfirmed"
-              type="checkbox"
-              @change="confirmed = false"
-            />{{ t("I confirm this target despite multiple project matches") }}
-          </label>
-          <label v-if="duplicate(c) && c.selected" class="checkbox"
-            ><input v-model="c.duplicateConfirmed" type="checkbox" />{{
-              t("Allow a new project or task with a matching name")
-            }}</label
-          >
-          <details class="intake-source-proof">
-            <summary>
-              {{ t("Original source") }} · {{ source.name }}
-              {{ source.sheet }} ·
-              {{ t("Row {number}", { number: c.sourceRow }) }}
-            </summary>
-            <div v-for="row in c.contextRows ?? []" :key="row">
-              <small>{{ t("Context row {number}", { number: row }) }}</small>
-              <pre>{{ sourceAt(source, row) }}</pre>
+              >
+              <label
+                >{{ t("Project name")
+                }}<input
+                  v-model="c.project.name"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  required
+                  maxlength="120"
+              /></label>
+              <label
+                >{{ t("Client")
+                }}<input
+                  v-model="c.project.client"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  maxlength="120"
+              /></label>
+              <label
+                >{{ t("Project owner")
+                }}<input
+                  v-model="c.project.owner"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  maxlength="80"
+              /></label>
+              <label
+                >{{ t("Stage")
+                }}<select
+                  v-model="c.project.stage"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                >
+                  <option value="unclassified">
+                    {{ stageLabels.unclassified }}
+                  </option>
+                  <option
+                    v-for="stage in activeStages"
+                    :key="stage.id"
+                    :value="stage.id"
+                  >
+                    {{ stageLabels[stage.id] }}
+                  </option>
+                </select></label
+              >
+              <label
+                >{{ t("Description")
+                }}<input
+                  v-model="c.project.description"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  maxlength="4000"
+              /></label>
+              <template v-if="c.task"
+                ><label
+                  >{{ t("Task title")
+                  }}<input
+                    v-model="c.task.title"
+                    :disabled="!c.selected"
+                    required
+                    maxlength="240" /></label
+                ><label
+                  >{{ t("Assignee")
+                  }}<input
+                    v-model="c.task.assignee"
+                    :disabled="!c.selected"
+                    maxlength="80" /></label
+                ><label
+                  >{{ t("Due date")
+                  }}<input
+                    :value="c.task.dueDate ?? ''"
+                    type="date"
+                    :disabled="!c.selected"
+                    @input="
+                      c.task.dueDate =
+                        ($event.target as HTMLInputElement).value || null
+                    " /></label
+                ><label
+                  >{{ t("Task status")
+                  }}<select v-model="c.task.status" :disabled="!c.selected">
+                    <option
+                      v-for="status in statuses"
+                      :key="status"
+                      :value="status"
+                    >
+                      {{ statusLabels[status] }}
+                    </option>
+                  </select></label
+                ></template
+              >
             </div>
-            <pre>{{ c.sourceText }}</pre>
+            <p v-if="c.task" class="muted">
+              {{
+                t(
+                  "New tasks start without a work-week assignment. A due date does not assign weekly work.",
+                )
+              }}
+            </p>
+            <ul v-if="reviewWarnings(c).length" class="intake-warnings">
+              <li v-for="warning in reviewWarnings(c)" :key="warning">
+                {{ t(warning) }}
+              </li>
+            </ul>
+            <label
+              v-if="
+                c.matches.length > 1 &&
+                c.targetProjectId &&
+                !c.project.intakeInbox &&
+                c.selected
+              "
+              class="checkbox ambiguity-confirm"
+            >
+              <input
+                v-model="c.matchConfirmed"
+                type="checkbox"
+                @change="confirmed = false"
+              />{{
+                t("I confirm this target despite multiple project matches")
+              }}
+            </label>
+            <label v-if="duplicate(c) && c.selected" class="checkbox"
+              ><input v-model="c.duplicateConfirmed" type="checkbox" />{{
+                t("Allow a new project or task with a matching name")
+              }}</label
+            >
+            <details class="intake-source-proof">
+              <summary>
+                {{ t("Original source") }} · {{ source.name }}
+                {{ source.sheet }} ·
+                {{ t("Row {number}", { number: c.sourceRow }) }}
+              </summary>
+              <div v-for="row in c.contextRows ?? []" :key="row">
+                <small>{{ t("Context row {number}", { number: row }) }}</small>
+                <pre>{{ sourceAt(source, row) }}</pre>
+              </div>
+              <pre>{{ c.sourceText }}</pre>
+            </details>
           </details>
-        </details>
-      </article>
+        </article>
+      </section>
       <div class="panel intake-confirm">
         <h2>{{ t("Ready to create") }}</h2>
         <p class="muted">
@@ -886,6 +984,12 @@ onBeforeUnmount(() => controller?.abort());
   </section>
 </template>
 <style scoped>
+.intake-project-group h3 {
+  overflow-wrap: anywhere;
+}
+.review-options select {
+  max-width: 100%;
+}
 .intake-matches ul {
   padding: 0;
   list-style: none;

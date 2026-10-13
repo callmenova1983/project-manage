@@ -1,4 +1,5 @@
 import { timeZoneZh } from "./zh-time-zone";
+import { personalWorkZh } from "./zh-personal-work";
 import { workspaceTimeZone } from "../composables/calendar";
 import { ref, watch } from "vue";
 import { tasksZh } from "./zh-tasks";
@@ -40,6 +41,7 @@ watch(
 );
 const chinese: Record<string, string> = {
   ...commonZh,
+  ...personalWorkZh,
   ...timeZoneZh,
   ...editorsZh,
   ...activityZh,
