@@ -4,6 +4,14 @@ import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createSeed } from "../../../packages/domain/seed.js";
 import {
+  projectMembers,
+  taskMember,
+} from "../../../packages/domain/members.js";
+import {
+  queryActivities,
+  type ActivityQuery,
+} from "../../../packages/domain/activity-query.js";
+import {
   catalogsInput,
   defaultCatalogs,
   type Catalogs,
@@ -15,6 +23,7 @@ import {
   type Task,
   type Snapshot,
   type Activity,
+  type Member,
 } from "../../../packages/domain/types.js";
 export class HttpError extends Error {
   constructor(
@@ -100,6 +109,7 @@ export class Repository {
     return {
       schemaVersion: 2,
       catalogs: this.catalogs(workspaceId),
+      members: this.members(workspaceId),
       revision: Number(row.revision),
       projects: this.read<Project>("projects", workspaceId),
       tasks: this.read<Task>("tasks", workspaceId),
@@ -113,6 +123,47 @@ export class Repository {
     return row
       ? catalogsInput.parse(JSON.parse(String(row.data)))
       : structuredClone(defaultCatalogs);
+  }
+  members(workspaceId: string): Member[] {
+    return this.db
+      .prepare(
+        "SELECT id,name,email,status FROM users WHERE workspace_id=? ORDER BY name,id",
+      )
+      .all(workspaceId) as unknown as Member[];
+  }
+  activityPage(workspaceId: string, query: ActivityQuery) {
+    const through =
+      query.cursor?.through ??
+      Number(
+        this.db
+          .prepare(
+            "SELECT COALESCE(MAX(rowid),0) AS n FROM activities WHERE workspace_id=?",
+          )
+          .get(workspaceId)!.n,
+      );
+    const asOf = query.cursor?.asOf ?? new Date().toISOString();
+    const start = query.weekStart
+      ? query.weekStart + "T00:00:00Z"
+      : "0001-01-01T00:00:00Z";
+    const end = query.weekStart
+      ? new Date(Date.parse(start) + 7 * 86400000).toISOString()
+      : "9999-12-31T23:59:59.999Z";
+    const rows = this.db
+      .prepare(
+        "SELECT data FROM activities WHERE workspace_id=? AND rowid<=? AND julianday(created_at)>=julianday(?) AND julianday(created_at)<julianday(?) AND julianday(created_at)<=julianday(?) ORDER BY julianday(created_at) DESC,id ASC",
+      )
+      .iterate(workspaceId, through, start, end, asOf);
+    function* events() {
+      for (const row of rows) yield JSON.parse(String(row.data)) as Activity;
+    }
+    return queryActivities(events(), query, through);
+  }
+  activity(workspaceId: string, id: string): Activity {
+    const row = this.db
+      .prepare("SELECT data FROM activities WHERE workspace_id=? AND id=?")
+      .get(workspaceId, id);
+    if (!row) throw new HttpError(404, "History record not found");
+    return JSON.parse(String(row.data));
   }
   read<T>(table: "projects" | "tasks" | "activities", ws: string): T[] {
     return this.db
@@ -137,14 +188,36 @@ export class Repository {
         current,
       );
   }
-  putProject(ws: string, p: Project) {
+  putProject(ws: string, p: Project, retained?: Project) {
+    const previous = this.db
+      .prepare("SELECT data FROM projects WHERE workspace_id=? AND id=?")
+      .get(ws, p.id);
+    Object.assign(
+      p,
+      projectMembers(
+        p,
+        this.members(ws),
+        retained ?? (previous ? JSON.parse(String(previous.data)) : undefined),
+      ),
+    );
     this.db
       .prepare(
         "INSERT INTO projects(id,workspace_id,version,data) VALUES(?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET version=excluded.version,data=excluded.data",
       )
       .run(p.id, ws, p.version, JSON.stringify(p));
   }
-  putTask(ws: string, t: Task) {
+  putTask(ws: string, t: Task, retained?: Task) {
+    const previous = this.db
+      .prepare("SELECT data FROM tasks WHERE workspace_id=? AND id=?")
+      .get(ws, t.id);
+    Object.assign(
+      t,
+      taskMember(
+        t,
+        this.members(ws),
+        retained ?? (previous ? JSON.parse(String(previous.data)) : undefined),
+      ),
+    );
     this.db
       .prepare(
         "INSERT INTO tasks(id,workspace_id,project_id,version,data) VALUES(?,?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET version=excluded.version,data=excluded.data,project_id=excluded.project_id",
@@ -178,6 +251,7 @@ export class Repository {
       kind,
       action,
       actor: actor.name,
+      actorId: actor.id,
       createdAt: new Date().toISOString(),
       source,
       before,

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { memberName } from "../../../../packages/domain/members";
 import {
   stageIds as stages,
   catalogs,
@@ -92,19 +93,40 @@ const scopeDate = computed(() => {
   return `${format(start)}–${format(end)}, ${end.getUTCFullYear()} · UTC`;
 });
 const scopeStats = computed(() => statistics(store.data.tasks, scope.value));
+const ownerKey = (p: Project) =>
+  JSON.stringify(p.ownerId ? ["member", p.ownerId] : ["text", p.owner]);
+const ownerName = (p: Project) =>
+  memberName(p.ownerId, p.owner, store.data.members ?? []);
 const owners = computed(() =>
-  [...new Set(store.data.projects.map((p) => p.owner))].sort(),
+  [
+    ...new Map(
+      store.data.projects.map((p) => {
+        const member = store.data.members?.find((m) => m.id === p.ownerId);
+        return [
+          ownerKey(p),
+          {
+            id: ownerKey(p),
+            label: member
+              ? `${member.name} · ${member.email}${member.status !== "active" ? ` · ${t(member.status)}` : ""}`
+              : p.owner,
+          },
+        ];
+      }),
+    ).values(),
+  ].sort((a, b) => a.label.localeCompare(b.label)),
 );
 const projects = computed(() =>
   store.data.projects
     .filter(
       (p) =>
         (!query.value ||
-          `${p.name} ${p.client} ${p.latestUpdate} ${p.owner}`
+          `${p.name} ${p.client} ${p.latestUpdate} ${ownerName(p)}`
             .toLowerCase()
             .includes(query.value.toLowerCase())) &&
         (!stage.value || p.stage === stage.value) &&
-        (!owner.value || p.owner === owner.value) &&
+        (!owner.value ||
+          ownerKey(p) === owner.value ||
+          (!p.ownerId && p.owner === owner.value)) &&
         (!discipline.value || p.discipline === discipline.value) &&
         (!category.value || p.categoryIds?.includes(category.value)),
     )
@@ -279,7 +301,9 @@ function edit(id: string) {
       <WeeklyChanges
         :activities="store.data.activities"
         :projects="portfolioProjects"
-        :projectIds="projects.map((project) => project.id)"
+        :projectIds="
+          filtered ? projects.map((project) => project.id) : undefined
+        "
       /><NextWork
         :tasks="store.data.tasks"
         :projects="projects"
@@ -309,7 +333,9 @@ function edit(id: string) {
             </option></select
           ><select v-model="owner" :aria-label="t('Filter by owner')">
             <option value="">{{ t("All owners") }}</option>
-            <option v-for="o in owners" :key="o">{{ o }}</option></select
+            <option v-for="o in owners" :key="o.id" :value="o.id">
+              {{ o.label }}
+            </option></select
           ><select
             v-model="discipline"
             :aria-label="t('Filter by responsibility')"

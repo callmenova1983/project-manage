@@ -82,7 +82,9 @@ test("search combines stage, owner and responsibility; empty state resets", asyn
 }) => {
   await page.getByLabel("Search projects").fill("Atlas");
   await page.getByLabel("Filter by stage").selectOption("implementation");
-  await page.getByLabel("Filter by owner").selectOption("Alex Morgan");
+  await page
+    .getByLabel("Filter by owner")
+    .selectOption({ label: "Alex Morgan" });
   await page.getByLabel("Filter by responsibility").selectOption("Sales");
   await expect(page.locator(".project-record")).toHaveCount(1);
   await page.getByLabel("Filter by stage").selectOption("operations");

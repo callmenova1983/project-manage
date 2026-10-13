@@ -37,6 +37,8 @@ export const projectInput = z
       .max(20)
       .optional(),
     owner: z.string().trim().max(80),
+    ownerId: z.string().min(1).max(100).nullable().optional(),
+    participantIds: z.array(z.string().min(1).max(100)).max(50).optional(),
     discipline: z.enum(disciplines),
     latestUpdate: z.string().max(4000),
     notes: z.string().max(20000),
@@ -51,6 +53,7 @@ export const taskInput = z
     description: z.string().max(4000),
     status: z.enum(statuses),
     assignee: z.string().trim().max(80),
+    assigneeId: z.string().min(1).max(100).nullable().optional(),
     dueDate: dateSchema.nullable(),
     workDates: z.array(dateSchema).max(31),
     workWeek: dateSchema.nullable(),
@@ -88,6 +91,7 @@ export interface Activity {
   kind: "project" | "task" | "import" | "proposal";
   action: string;
   actor: string;
+  actorId?: string;
   createdAt: string;
   source: string;
   before: Project | Task | null;
@@ -96,10 +100,17 @@ export interface Activity {
 export interface Snapshot {
   schemaVersion: 1 | 2;
   catalogs?: Catalogs;
+  members?: Member[];
   revision: number;
   projects: Project[];
   tasks: Task[];
   activities: Activity[];
+}
+export interface Member {
+  id: string;
+  name: string;
+  email: string;
+  status: "active" | "disabled" | "pending";
 }
 export const snapshotImport = z.object({
   schemaVersion: z.union([z.literal(1), z.literal(2)]),

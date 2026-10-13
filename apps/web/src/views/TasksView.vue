@@ -36,12 +36,24 @@ const filters = computed(() => readTaskFilters(route.query));
 const creating = ref(false),
   creatingProject = ref(""),
   savedOutsideFilters = ref(false);
-const tasks = computed(() => filterTaskWork(store.data.tasks, filters.value));
+const tasks = computed(() =>
+  filterTaskWork(
+    store.data.tasks,
+    filters.value,
+    new Date(),
+    store.data.members,
+  ),
+);
 const scopeCounts = computed(() =>
   Object.fromEntries(
     taskScopes.map((scope) => [
       scope,
-      filterTaskWork(store.data.tasks, { ...filters.value, scope }).length,
+      filterTaskWork(
+        store.data.tasks,
+        { ...filters.value, scope },
+        new Date(),
+        store.data.members,
+      ).length,
     ]),
   ),
 );
@@ -49,7 +61,12 @@ const focusCounts = computed(() =>
   Object.fromEntries(
     taskFocuses.map((focus) => [
       focus,
-      filterTaskWork(store.data.tasks, { ...filters.value, focus }).length,
+      filterTaskWork(
+        store.data.tasks,
+        { ...filters.value, focus },
+        new Date(),
+        store.data.members,
+      ).length,
     ]),
   ),
 );

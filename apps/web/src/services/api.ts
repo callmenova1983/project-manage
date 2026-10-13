@@ -8,6 +8,7 @@ import type {
 } from "../../../../packages/domain/admin";
 import type {
   NoteDateInput,
+  Activity,
   Actor,
   Project,
   ProjectInput,
@@ -17,6 +18,10 @@ import type {
   Proposal,
   AiCapabilities,
 } from "../../../../packages/domain/types";
+import type {
+  ActivityQuery,
+  ActivityPage,
+} from "../../../../packages/domain/activity-query";
 import {
   ApiError,
   type WorkspaceApi,
@@ -104,6 +109,12 @@ export class HttpApi implements WorkspaceApi {
   }
   snapshot() {
     return this.call<Snapshot>("/workspace");
+  }
+  activityPage(query: ActivityQuery) {
+    return this.call<ActivityPage>("/activity/query", "POST", query);
+  }
+  activity(id: string) {
+    return this.call<Activity>(`/activities/${encodeURIComponent(id)}`);
   }
   saveProject(data: ProjectInput, id?: string, version?: number) {
     return this.call<Project>(

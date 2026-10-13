@@ -1,5 +1,13 @@
 # Executed verification
 
+## Complete weekly history and stable member links (2026-10-13)
+
+[Implementation, semantics, migration/rollback and six final screenshots](history-members.md). **226 unit/API cases across 26 files passed**, including 11 new cases for complete database ranges, tied timestamps and insertion cutoffs, UTC offsets/week boundaries, workspace isolation, stable IDs, duplicate names, rename/disable, legacy clients, atomic imports, local persistence and v5 backup/upgrade/index rollback. Lint, formatting, Vue/API typecheck, build and diff checks passed. Compiled-runtime smoke and local proxy replay passed with **zero unexpected browser errors**, retaining the prior local-HTTP/simulated-proxy boundaries.
+
+The first full 75-case local browser run passed 74; an existing fault-injection test failed to intercept the development entry module after Vite added a cache query parameter, so the application loaded normally instead of displaying the intentional failure state. The test now matches the exact URL pathname and asserts the abort occurred. All **seven history/member and entry-recovery cases passed together** after correction, including desktop/390px, repeated pagination, old links, search/empty results, duplicate member selection, rename/disable retention, cancel/reload, zero demo API requests and axe scans of the member editor. The final complete suite is verified again by the exact-commit CI linked in draft PR #1; these pre-commit checkpoints do not substitute for that result.
+
+Desktop and narrow screenshots were actually opened, including 620 historical changes that are absent from the latest-500 snapshot, complete totals with paged details, and retained disabled-member assignments. Only synthetic data and `example.test` addresses appear. Migration 006 adds an index only; JSON member fields are optional and legacy names are not auto-linked. No real database, credentials, user access, deployment or live AI was changed. UTC remains the explicit fixed timezone; real device, live production, scale/soak and source-reference pixel acceptance remain unverified. Earlier sections below are historical checkpoints.
+
 ## Entry delivery and shared-data recovery (2026-10-13)
 
 Latest increment: [implementation, diagnostic commands, backup/restore runbook and limits](runtime-entry-recovery.md). **215 unit/API tests across 24 files and the complete 71-case Chromium E2E suite passed locally**; the browser run used one worker, no retries and took 6.5 minutes. Lint, Vue/API typecheck, formatting, build and diff checks passed. This increment adds 14 unit/API cases and three browser cases. After tightening the backup public-directory guard, its two integration cases and the compiled build/runtime smoke passed again.

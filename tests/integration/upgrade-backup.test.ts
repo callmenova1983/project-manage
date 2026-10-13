@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Repository } from "../../apps/api/src/database";
 import { createSeed } from "../../packages/domain/seed";
+import { backupDatabase } from "../../apps/api/src/backup";
 
 it("upgrades a synthetic v3 database without changing users/projects and restores a consistent pre-upgrade backup", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pm-upgrade-")),
@@ -61,7 +62,7 @@ it("upgrades a synthetic v3 database without changing users/projects and restore
         .prepare("SELECT version FROM migrations ORDER BY version")
         .all()
         .map((r) => r.version),
-    ).toEqual([1, 2, 3, 4, 5]);
+    ).toEqual([1, 2, 3, 4, 5, 6]);
     expect(upgraded.db.prepare("SELECT * FROM users").get()).toMatchObject({
       ...originalUser,
       role: "member",
@@ -89,6 +90,66 @@ it("upgrades a synthetic v3 database without changing users/projects and restore
     expect(restored.prepare("PRAGMA integrity_check").get()).toEqual({
       integrity_check: "ok",
     });
+    restored.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("adds the v6 history index without rewriting v5 business data and restores the pre-upgrade snapshot", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pm-v6-upgrade-")),
+    path = join(dir, "db.sqlite"),
+    saved = join(dir, "v5.sqlite");
+  try {
+    const initial = new Repository(path);
+    initial.seed("synthetic");
+    initial.db.exec(
+      "DROP INDEX activity_workspace_instant; DELETE FROM migrations WHERE version=6;",
+    );
+    const before = initial.snapshot("synthetic");
+    await backupDatabase(path, saved);
+    initial.close();
+    const upgraded = new Repository(path);
+    expect(upgraded.snapshot("synthetic")).toEqual(before);
+    expect(
+      upgraded.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE name='activity_workspace_instant'",
+        )
+        .get(),
+    ).toBeTruthy();
+    const plan = upgraded.db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT data FROM activities WHERE workspace_id=? AND julianday(created_at)>=julianday(?) ORDER BY julianday(created_at) DESC,id",
+      )
+      .all("synthetic", "2020-01-01");
+    expect(JSON.stringify(plan)).toContain("activity_workspace_instant");
+    upgraded.db.exec(
+      "BEGIN; DROP INDEX activity_workspace_instant; DELETE FROM migrations WHERE version=6; COMMIT;",
+    );
+    expect(upgraded.snapshot("synthetic")).toEqual(before);
+    upgraded.close();
+    const reapplied = new Repository(path);
+    expect(reapplied.snapshot("synthetic")).toEqual(before);
+    reapplied.close();
+    const restored = new DatabaseSync(saved, { readOnly: true });
+    expect(
+      restored.prepare("SELECT MAX(version) AS version FROM migrations").get()!
+        .version,
+    ).toBe(5);
+    expect(
+      restored
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE name='activity_workspace_instant'",
+        )
+        .get(),
+    ).toBeUndefined();
+    expect(
+      restored.prepare("SELECT COUNT(*) AS n FROM projects").get()!.n,
+    ).toBe(before.projects.length);
+    expect(
+      restored.prepare("PRAGMA integrity_check").get()!.integrity_check,
+    ).toBe("ok");
     restored.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });

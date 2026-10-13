@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { memberName } from "../../../../packages/domain/members";
 import { catalogLabel } from "../composables/catalogs";
 import { t, formatDate, formatNumber } from "../locales";
 import { computed, ref } from "vue";
@@ -67,6 +68,16 @@ function activityLabel(action: string) {
         <PhPencilSimple :size="16" />{{ t("Edit project") }}
       </button>
     </div>
+    <p v-if="project?.participantIds?.length" class="muted">
+      {{ t("Project participants") }}:
+      {{
+        project.participantIds
+          .map((id) =>
+            memberName(id, t("Member unavailable"), store.data.members ?? []),
+          )
+          .join(", ")
+      }}
+    </p>
     <ProjectEditor
       v-if="editing"
       :project="project"
@@ -76,7 +87,15 @@ function activityLabel(action: string) {
       ><div class="detail-meta">
         <StatusBadge :stage="project.stage" /><span class="muted"
           >{{ t("Owner") }}
-          <strong>{{ t(project.owner || "Unassigned") }}</strong></span
+          <strong>{{
+            t(
+              memberName(
+                project.ownerId,
+                project.owner,
+                store.data.members ?? [],
+              ),
+            )
+          }}</strong></span
         ><span class="muted">{{
           t("{done} of {total} tasks completed", {
             done: formatNumber(counts.done),

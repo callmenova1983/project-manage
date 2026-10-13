@@ -12,6 +12,7 @@ import { useWorkspace } from "../stores/workspace";
 import { useUnsaved } from "../composables/unsaved";
 import { stageLabels } from "../locales/en";
 import SaveError from "./SaveError.vue";
+import MemberAssignment from "./MemberAssignment.vue";
 import { ApiError } from "../services/api";
 const props = defineProps<{ project?: Project }>();
 const emit = defineEmits<{ close: []; saved: [Project] }>();
@@ -33,6 +34,12 @@ const draft = ref<ProjectInput>(
   props.project ? projectInput.strip().parse(props.project) : empty,
 );
 draft.value.categoryIds ??= [];
+draft.value.participantIds ??= [];
+const participantOptions = computed(() =>
+  (store.data.members ?? []).filter(
+    (m) => m.status === "active" || draft.value.participantIds?.includes(m.id),
+  ),
+);
 const stages = computed(() =>
   catalogs.value.stages
     .filter((s) => !s.archived || s.id === original.value?.stage)
@@ -75,6 +82,7 @@ function reload() {
   const current = (error.value as ApiError).current as Project;
   original.value = current;
   draft.value = projectInput.strip().parse(current);
+  draft.value.participantIds ??= [];
   aliases.value = current.aliases.join(", ");
   baseline = JSON.stringify(draft.value);
   error.value = null;
@@ -110,9 +118,13 @@ function reload() {
             {{ stageLabels[s] }}
           </option>
         </select></label
-      ><label
-        >{{ t("Owner") }}<input v-model="draft.owner" maxlength="80" /></label
-      ><label
+      >
+      <MemberAssignment
+        label="Owner"
+        v-model="draft.owner"
+        v-model:memberId="draft.ownerId"
+      />
+      <label
         >{{ t("Responsibility")
         }}<select v-model="draft.discipline">
           <option v-for="d in disciplines" :key="d" :value="d">
@@ -125,6 +137,22 @@ function reload() {
           v-model="aliases"
           :placeholder="t('Alternative names for matching')"
       /></label>
+      <fieldset v-if="participantOptions.length" class="full category-options">
+        <legend>{{ t("Project participants") }}</legend>
+        <label v-for="member in participantOptions" :key="member.id"
+          ><input
+            v-model="draft.participantIds"
+            type="checkbox"
+            :value="member.id"
+          />{{ member.name }} · {{ member.email
+          }}<small v-if="member.status !== 'active'">{{
+            t(member.status)
+          }}</small></label
+        >
+        <small>{{
+          t("Participants describe the team; everyone can still view and edit.")
+        }}</small>
+      </fieldset>
       <fieldset v-if="categories.length" class="full category-options">
         <legend>{{ t("Business categories") }}</legend>
         <label v-for="category in categories" :key="category.id"

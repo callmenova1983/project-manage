@@ -23,6 +23,7 @@ import {
   type Suggestion,
 } from "../../../packages/domain/types.js";
 import { Repository, HttpError } from "./database.js";
+import { activityQueryInput } from "../../../packages/domain/activity-query.js";
 import {
   validateAppOrigin,
   allowedMutationOrigin,
@@ -346,6 +347,17 @@ export async function buildApp(options: {
     "/api/activities",
     (req) => repo.snapshot(actor(req).workspaceId).activities,
   );
+  app.post("/api/activity/query", (req) => {
+    const query = activityQueryInput.parse(req.body);
+    try {
+      return repo.activityPage(actor(req).workspaceId, query);
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message);
+    }
+  });
+  app.get("/api/activities/:id", (req) =>
+    repo.activity(actor(req).workspaceId, (req.params as { id: string }).id),
+  );
   app.post("/api/projects", (req) =>
     mutate(req, (a) => {
       const data = projectInput.parse(req.body);
@@ -588,25 +600,33 @@ export async function buildApp(options: {
         .prepare("DELETE FROM projects WHERE workspace_id=?")
         .run(a.workspaceId);
       for (const p of input.projects)
-        repo.putProject(a.workspaceId, {
-          ...p,
-          version:
-            Math.max(
-              p.version,
-              current.projects.find((x) => x.id === p.id)?.version ?? 0,
-            ) + 1,
-          updatedAt: new Date().toISOString(),
-        });
+        repo.putProject(
+          a.workspaceId,
+          {
+            ...p,
+            version:
+              Math.max(
+                p.version,
+                current.projects.find((x) => x.id === p.id)?.version ?? 0,
+              ) + 1,
+            updatedAt: new Date().toISOString(),
+          },
+          current.projects.find((x) => x.id === p.id),
+        );
       for (const t of input.tasks)
-        repo.putTask(a.workspaceId, {
-          ...t,
-          version:
-            Math.max(
-              t.version,
-              current.tasks.find((x) => x.id === t.id)?.version ?? 0,
-            ) + 1,
-          updatedAt: new Date().toISOString(),
-        });
+        repo.putTask(
+          a.workspaceId,
+          {
+            ...t,
+            version:
+              Math.max(
+                t.version,
+                current.tasks.find((x) => x.id === t.id)?.version ?? 0,
+              ) + 1,
+            updatedAt: new Date().toISOString(),
+          },
+          current.tasks.find((x) => x.id === t.id),
+        );
       repo.record(
         a,
         "import",

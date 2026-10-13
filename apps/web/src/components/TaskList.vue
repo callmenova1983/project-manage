@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { memberName } from "../../../../packages/domain/members";
 import { t, formatDate, formatNumber } from "../locales";
 import { computed, ref } from "vue";
 import {
@@ -136,7 +137,15 @@ function close() {
         </div>
         <StatusBadge v-if="!parents.has(task.id)" :status="task.status" /><span
           class="task-assignee muted"
-          >{{ t(task.assignee || "Unassigned") }}</span
+          >{{
+            t(
+              memberName(
+                task.assigneeId,
+                task.assignee,
+                store.data.members ?? [],
+              ),
+            )
+          }}</span
         ><span class="task-date muted">{{
           task.dueDate
             ? formatDate(task.dueDate, { month: "short", day: "numeric" })

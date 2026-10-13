@@ -1,3 +1,5 @@
+import { memberName } from "../../../../packages/domain/members";
+import type { Member } from "../../../../packages/domain/types";
 import {
   dayKey,
   weekKey,
@@ -46,6 +48,7 @@ export function filterTaskWork(
   tasks: Task[],
   filters: TaskFilters,
   now = new Date(),
+  members: readonly Member[] = [],
 ): Task[] {
   const query = filters.query.trim().toLocaleLowerCase();
   return leafTasks(tasks).filter(
@@ -61,6 +64,8 @@ export function filterTaskWork(
           ? task.status === "done"
           : task.status !== "done")) &&
       (!query ||
-        `${task.title} ${task.assignee}`.toLocaleLowerCase().includes(query)),
+        `${task.title} ${memberName(task.assigneeId, task.assignee, members)}`
+          .toLocaleLowerCase()
+          .includes(query)),
   );
 }

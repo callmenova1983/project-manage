@@ -175,12 +175,18 @@ test("failed entry module keeps a native reload link that recovers the login pag
         message.text().includes("status of 401"));
     if (message.type() === "error" && !expected) errors.push(message.text());
   });
-  await page.route("**/src/main.ts", (route) => route.abort("failed"));
+  const entryModule = (url: URL) => url.pathname === "/src/main.ts";
+  let blocked = 0;
+  await page.route(entryModule, (route) => {
+    blocked++;
+    return route.abort("failed");
+  });
   await page.goto("/projects");
   await expect(
     page.getByRole("heading", { name: "Opening Project Manage" }),
   ).toBeVisible();
-  await page.unroute("**/src/main.ts");
+  expect(blocked).toBeGreaterThan(0);
+  await page.unroute(entryModule);
   await page.getByRole("link", { name: "Reload page / 重新加载" }).click();
   await expect(
     page.getByRole("heading", { name: "Welcome back", exact: true }),

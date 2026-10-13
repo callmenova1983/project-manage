@@ -8,6 +8,7 @@ import type {
 } from "../../../../packages/domain/admin";
 import type {
   NoteDateInput,
+  Activity,
   Actor,
   Project,
   ProjectInput,
@@ -18,6 +19,10 @@ import type {
   Suggestion,
   AiCapabilities,
 } from "../../../../packages/domain/types";
+import type {
+  ActivityQuery,
+  ActivityPage,
+} from "../../../../packages/domain/activity-query";
 import type {
   IntakeInput,
   IntakeBatch,
@@ -48,6 +53,8 @@ export interface WorkspaceApi {
   login(email: string, password: string): Promise<{ actor: Actor }>;
   logout(): Promise<void>;
   snapshot(): Promise<Snapshot>;
+  activityPage(query: ActivityQuery): Promise<ActivityPage>;
+  activity(id: string): Promise<Activity>;
   saveProject(
     data: ProjectInput,
     id?: string,

@@ -16,6 +16,14 @@ import {
 } from "../../../../packages/domain/admin";
 import { createSeed } from "../../../../packages/domain/seed";
 import {
+  projectMembers,
+  taskMember,
+} from "../../../../packages/domain/members";
+import {
+  queryActivities,
+  compareActivities,
+} from "../../../../packages/domain/activity-query";
+import {
   intakeInput,
   planIntake,
   verifyIntakeUndo,
@@ -124,6 +132,7 @@ export function createLocalApi(): WorkspaceApi {
       kind,
       action: action ?? (before ? "Updated " + kind : "Created " + kind),
       actor: actor.name,
+      actorId: actor.id,
       createdAt: new Date().toISOString(),
       source,
       before,
@@ -151,7 +160,7 @@ export function createLocalApi(): WorkspaceApi {
         old,
       );
     const p: Project = {
-      ...data,
+      ...projectMembers(data, administration().users, old),
       reportedAt:
         data.latestUpdate === old?.latestUpdate
           ? old.reportedAt
@@ -208,7 +217,7 @@ export function createLocalApi(): WorkspaceApi {
     )
       throw new ApiError("Only standalone tasks can change project assignment");
     const t: Task = {
-      ...data,
+      ...taskMember(data, administration().users, old),
       id: id ?? crypto.randomUUID(),
       version: (old?.version ?? 0) + 1,
       updatedAt: new Date().toISOString(),
@@ -318,7 +327,30 @@ export function createLocalApi(): WorkspaceApi {
     },
     async logout() {},
     async snapshot() {
-      return read();
+      const snapshot = read();
+      return {
+        ...snapshot,
+        members: administration().users.map(({ id, name, email, status }) => ({
+          id,
+          name,
+          email,
+          status,
+        })),
+      };
+    },
+    async activityPage(query) {
+      read();
+      const through = query.cursor?.through ?? state.activities.length;
+      const events = through
+        ? state.activities.slice(-through).sort(compareActivities)
+        : [];
+      return queryActivities(events, query, through);
+    },
+    async activity(id) {
+      read();
+      const event = state.activities.find((a) => a.id === id);
+      if (!event) throw new ApiError("History record not found", 404);
+      return structuredClone(event);
     },
     saveProject,
     saveTask,
@@ -364,7 +396,7 @@ export function createLocalApi(): WorkspaceApi {
     async addTasks(tasks) {
       read();
       const result = tasks.map((data) => ({
-        ...taskInput.parse(data),
+        ...taskMember(taskInput.parse(data), administration().users),
         id: crypto.randomUUID(),
         version: 1,
         updatedAt: new Date().toISOString(),
@@ -383,6 +415,20 @@ export function createLocalApi(): WorkspaceApi {
       if (state.revision !== revision)
         throw new ApiError("Workspace changed. Review again.", 409);
       const parsed = snapshotImport.parse(data);
+      parsed.projects = parsed.projects.map((p) =>
+        projectMembers(
+          p,
+          administration().users,
+          state.projects.find((old) => old.id === p.id),
+        ),
+      );
+      parsed.tasks = parsed.tasks.map((t) =>
+        taskMember(
+          t,
+          administration().users,
+          state.tasks.find((old) => old.id === t.id),
+        ),
+      );
       validateGraph(parsed.projects, parsed.tasks);
       const catalogs = importCatalogs(
         parsed,
@@ -623,6 +669,10 @@ export function createLocalApi(): WorkspaceApi {
       );
       for (const project of batch.projects)
         checkProjectCatalog(project, state.catalogs ?? defaultCatalogs);
+      for (const p of batch.projects)
+        Object.assign(p, projectMembers(p, administration().users));
+      for (const t of batch.tasks)
+        Object.assign(t, taskMember(t, administration().users));
       state.projects.push(...batch.projects);
       state.tasks.push(...batch.tasks);
       validateGraph(state.projects, state.tasks);

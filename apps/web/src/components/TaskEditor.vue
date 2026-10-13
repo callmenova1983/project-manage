@@ -13,6 +13,7 @@ import { useWorkspace } from "../stores/workspace";
 import { statusLabels } from "../locales/en";
 import { useUnsaved } from "../composables/unsaved";
 import SaveError from "./SaveError.vue";
+import MemberAssignment from "./MemberAssignment.vue";
 import { ApiError } from "../services/api";
 const props = defineProps<{
   task?: Task;
@@ -133,10 +134,13 @@ function reload() {
         ><small v-if="isParent">{{
           t("Parent completion is calculated from subtasks.")
         }}</small></label
-      ><label
-        >{{ t("Assignee")
-        }}<input v-model="draft.assignee" maxlength="80" /></label
-      ><label
+      >
+      <MemberAssignment
+        label="Assignee"
+        v-model="draft.assignee"
+        v-model:memberId="draft.assigneeId"
+      />
+      <label
         >{{ t("Due date") }}<input v-model="draft.dueDate" type="date"
       /></label>
       <div class="planning">
