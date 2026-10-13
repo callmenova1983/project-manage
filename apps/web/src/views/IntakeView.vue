@@ -3,7 +3,7 @@ import { activeStages, catalogs } from "../composables/catalogs";
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from "vue";
 import {
   PhUploadSimple,
-  PhSparkle,
+  PhX,
   PhArrowRight,
   PhCheckCircle,
   PhArrowCounterClockwise,
@@ -14,6 +14,7 @@ import {
   detectColumns,
   parseDelimited,
   intakeInput,
+  planIntake,
   normalizeName,
   type IntakeCandidate,
   type IntakeSource,
@@ -29,6 +30,9 @@ import { readIntakeFile } from "../services/intake-files";
 import { useUnsaved } from "../composables/unsaved";
 import { useIntakeDraft } from "../composables/intake-draft";
 import { intakeDraftKey } from "../services/intake-drafts";
+const props = defineProps<{ embedded?: boolean }>();
+const emit = defineEmits<{ close: [] }>();
+const panel = ref<HTMLElement | null>(null);
 const store = useWorkspace();
 const step = ref<"source" | "review" | "done">("source"),
   text = ref(""),
@@ -140,7 +144,7 @@ function useExample() {
   text.value = example;
   error.value = "";
 }
-function preview() {
+async function preview() {
   error.value = "";
   try {
     if (
@@ -179,6 +183,14 @@ function preview() {
       throw new Error("No candidates found. Add text or choose another sheet.");
     confirmed.value = false;
     step.value = "review";
+    const problems = candidates.value.some(
+      (c) => issueWarnings(c).length || duplicate(c),
+    );
+    if (problems) {
+      error.value = t("Fix the details below before creating");
+      return;
+    }
+    await apply();
   } catch (e) {
     error.value = (e as Error).message;
   }
@@ -212,6 +224,11 @@ function duplicate(c: IntakeCandidate) {
       ))
   );
 }
+function issueWarnings(c: IntakeCandidate) {
+  return c.warnings.filter(
+    (warning) => warning !== "Rule-assisted draft. Review the project details.",
+  );
+}
 async function apply() {
   if (store.busy) return;
   error.value = "";
@@ -227,8 +244,9 @@ async function apply() {
         task: c.task,
         duplicateConfirmed: c.duplicateConfirmed,
       })),
-      confirmed: confirmed.value,
+      confirmed: true,
     });
+    planIntake(input, store.data, store.user!.name, () => crypto.randomUUID());
     result.value = await store.operation(
       () => api.applyIntake(input),
       "Intake created",
@@ -239,6 +257,7 @@ async function apply() {
     draft.flush();
     await loadHistory();
   } catch (e) {
+    step.value = "review";
     error.value = (e as Error).message.startsWith("[")
       ? t("Check required project and task fields")
       : (e as Error).message;
@@ -273,41 +292,46 @@ function startAgain() {
   error.value = "";
   draft.flush();
 }
-onMounted(loadHistory);
+function closePanel() {
+  if (store.busy || reading.value) return;
+  draft.flush();
+  if (dirty.value && draft.status.value !== "saved" && !askDiscard()) return;
+  emit("close");
+}
+onMounted(async () => {
+  void loadHistory();
+  if (props.embedded) {
+    await nextTick();
+    panel.value?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+  }
+});
 onBeforeUnmount(() => controller?.abort());
 </script>
 <template>
-  <section class="page intake-page">
-    <div class="page-heading">
-      <div>
-        <h1>{{ t("Quick intake") }}</h1>
-        <p class="muted">
-          {{ t("Turn notes and spreadsheets into projects and tasks.") }}
-        </p>
+  <section
+    ref="panel"
+    class="intake-page"
+    :class="{ 'intake-embedded': embedded }"
+    :aria-label="t('Quick intake')"
+  >
+    <div class="intake-heading">
+      <div class="intake-heading-title">
+        <h2>{{ t("Quick intake") }}</h2>
+        <span class="muted">{{ t("Paste text or upload a file") }}</span>
       </div>
-      <RouterLink class="button" to="/projects">{{ t("Projects") }}</RouterLink>
-    </div>
-    <div class="intake-steps" :aria-label="t('Intake steps')">
-      <span :class="{ active: step === 'source' }"
-        >1 · {{ t("Add source") }}</span
-      ><PhArrowRight :size="15" /><span :class="{ active: step === 'review' }"
-        >2 · {{ t("Review candidates") }}</span
-      ><PhArrowRight :size="15" /><span :class="{ active: step === 'done' }"
-        >3 · {{ t("Created") }}</span
+      <button
+        v-if="embedded"
+        type="button"
+        class="icon-button"
+        :aria-label="t('Close quick intake')"
+        :disabled="store.busy || reading"
+        @click="closePanel"
       >
-    </div>
-    <div class="intake-method">
-      <PhSparkle :size="18" />
-      <div>
-        <strong>{{ t("Rule-assisted · no AI connection") }}</strong>
-        <p>
-          {{
-            t(
-              "Files are read in your browser. Nothing is created until you confirm.",
-            )
-          }}
-        </p>
-      </div>
+        <PhX :size="18" />
+      </button>
+      <RouterLink v-else class="button" to="/projects">{{
+        t("Projects")
+      }}</RouterLink>
     </div>
     <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
     <section
@@ -367,11 +391,7 @@ onBeforeUnmount(() => controller?.abort());
       }}
     </p>
     <p v-else-if="draft.status.value === 'saved'" class="muted" role="status">
-      {{
-        t(
-          "Unsubmitted draft kept in this tab · up to 24 hours · review before saving to the workspace.",
-        )
-      }}
+      {{ t("Draft saved") }}
     </p>
     <p v-else-if="draft.status.value === 'expired'" class="muted" role="status">
       {{ t("The previous temporary draft expired after 24 hours.") }}
@@ -382,17 +402,11 @@ onBeforeUnmount(() => controller?.abort());
       @dragover.prevent
       @drop.prevent="drop"
     >
-      <div class="section-heading">
-        <h2>{{ t("Paste anything to get started") }}</h2>
-        <button class="text-button" @click="useExample">
-          {{ t("Try a sample") }}
-        </button>
-      </div>
-      <label v-if="!sources.length"
-        >{{ t("Notes or pasted table")
-        }}<textarea
+      <label v-if="!sources.length" class="intake-text-label">
+        <span class="sr-only">{{ t("Notes or pasted table") }}</span>
+        <textarea
           v-model="text"
-          rows="8"
+          rows="4"
           maxlength="200000"
           :placeholder="
             t(
@@ -401,29 +415,52 @@ onBeforeUnmount(() => controller?.abort());
           "
         />
       </label>
-      <p class="muted">
-        {{
-          t(
-            "Use project/client/owner/task labels for best results. Unclear details stay open for review. You can use your keyboard’s dictation.",
-          )
-        }}
-      </p>
-      <label class="intake-drop"
-        ><PhUploadSimple :size="24" /><span>{{
-          t("Drop a file here or choose a file")
-        }}</span
-        ><input
-          type="file"
-          accept=".txt,.csv,.tsv,.xlsx"
-          :disabled="reading"
-          @change="
-            loadFile(($event.target as HTMLInputElement).files?.[0]);
-            ($event.target as HTMLInputElement).value = '';
-          "
-        /><small>{{
-          t("TXT, CSV, TSV, XLSX · 2 MB · 200 rows per sheet")
-        }}</small></label
-      >
+      <div class="intake-source-toolbar">
+        <div class="intake-source-tools">
+          <label class="intake-upload button">
+            <PhUploadSimple :size="17" /><span>{{ t("Upload file") }}</span>
+            <input
+              type="file"
+              :aria-label="t('Upload file')"
+              accept=".txt,.csv,.tsv,.xlsx"
+              :disabled="reading"
+              @change="
+                loadFile(($event.target as HTMLInputElement).files?.[0]);
+                ($event.target as HTMLInputElement).value = '';
+              "
+            />
+          </label>
+          <button type="button" class="text-button" @click="useExample">
+            {{ t("Try a sample") }}
+          </button>
+          <span class="intake-file-hint muted"
+            >{{ t("Or drop a file") }} · TXT / CSV / XLSX</span
+          >
+        </div>
+        <button
+          v-if="!sources.length"
+          class="primary"
+          :disabled="store.busy || reading || !text.trim()"
+          @click="preview"
+        >
+          {{ t("Create items") }}<PhArrowRight :size="16" />
+        </button>
+      </div>
+      <details class="intake-help">
+        <summary>{{ t("Intake help") }}</summary>
+        <p>
+          {{
+            t(
+              "Use project/client/owner/task labels for best results. Unclear details stay open for review. You can use your keyboard’s dictation.",
+            )
+          }}
+        </p>
+        <p>{{ t("TXT, CSV, TSV, XLSX · 2 MB · 200 rows per sheet") }}</p>
+        <p>
+          {{ t("Rule-assisted · no AI connection") }} ·
+          {{ t("Files are read in your browser. Click Create to save.") }}
+        </p>
+      </details>
       <div v-if="reading" role="status">
         {{ t("Reading file…") }}
         <button class="text-button" @click="controller?.abort()">
@@ -485,13 +522,13 @@ onBeforeUnmount(() => controller?.abort());
         >
         <pre v-else class="intake-original">{{ source.text }}</pre>
       </template>
-      <div class="form-actions">
+      <div v-if="sources.length" class="form-actions">
         <button
           class="primary"
-          :disabled="reading || (!text.trim() && !sources.length)"
+          :disabled="store.busy || reading || (!text.trim() && !sources.length)"
           @click="preview"
         >
-          {{ t("Review candidates") }}<PhArrowRight :size="16" />
+          {{ t("Create items") }}<PhArrowRight :size="16" />
         </button>
       </div>
     </div>
@@ -501,14 +538,7 @@ onBeforeUnmount(() => controller?.abort());
     >
       <div class="intake-review-header">
         <div>
-          <h2>{{ t("{count} candidates", { count: candidates.length }) }}</h2>
-          <p class="muted">
-            {{
-              t(
-                "Keep the rows you want. Existing project details will not be overwritten.",
-              )
-            }}
-          </p>
+          <h2>{{ t("Check these details") }}</h2>
         </div>
         <button
           type="button"
@@ -522,7 +552,7 @@ onBeforeUnmount(() => controller?.abort());
         </button>
       </div>
       <article
-        v-for="(c, index) in candidates"
+        v-for="c in candidates"
         :key="c.id"
         class="panel intake-candidate"
         :class="{ excluded: !c.selected }"
@@ -539,7 +569,7 @@ onBeforeUnmount(() => controller?.abort());
             c.task ? t("Project + task") : t("Project only")
           }}</span>
         </div>
-        <details :open="index === 0 || c.warnings.length > 0">
+        <details open>
           <summary>{{ t("Review details") }}</summary>
           <div class="intake-fields">
             <label
@@ -652,15 +682,8 @@ onBeforeUnmount(() => controller?.abort());
               ></template
             >
           </div>
-          <p v-if="c.task" class="muted">
-            {{
-              t(
-                "New tasks start without a work-week assignment. A due date does not assign weekly work.",
-              )
-            }}
-          </p>
-          <ul v-if="c.warnings.length" class="intake-warnings">
-            <li v-for="warning in c.warnings" :key="warning">
+          <ul v-if="issueWarnings(c).length" class="intake-warnings">
+            <li v-for="warning in issueWarnings(c)" :key="warning">
               {{ t(warning) }}
             </li>
           </ul>
@@ -680,14 +703,6 @@ onBeforeUnmount(() => controller?.abort());
         </details>
       </article>
       <div class="panel intake-confirm">
-        <h2>{{ t("Ready to create") }}</h2>
-        <p class="muted">
-          {{
-            t(
-              "Missing details do not block saving. Unresolved work stays in Intake inbox; owners, dates and stages can be completed later. Review warnings once before confirming.",
-            )
-          }}
-        </p>
         <p>
           {{
             t("{projects} new projects · {tasks} new tasks", {
@@ -696,15 +711,6 @@ onBeforeUnmount(() => controller?.abort());
             })
           }}
         </p>
-        <label class="checkbox"
-          ><input
-            v-model="confirmed"
-            type="checkbox"
-            :disabled="!selected.length"
-          />{{
-            t("I reviewed the selected rows and their target projects")
-          }}</label
-        >
         <div class="form-actions">
           <button
             type="button"
@@ -716,9 +722,9 @@ onBeforeUnmount(() => controller?.abort());
           ><button
             class="primary"
             type="submit"
-            :disabled="!confirmed || !selected.length || store.busy"
+            :disabled="!selected.length || store.busy"
           >
-            {{ store.busy ? t("Saving…") : t("Create confirmed items") }}
+            {{ store.busy ? t("Saving…") : t("Create items") }}
           </button>
         </div>
       </div>
@@ -743,7 +749,9 @@ onBeforeUnmount(() => controller?.abort());
         }}
       </p>
       <div class="form-actions">
-        <RouterLink class="button" to="/projects">{{
+        <button v-if="embedded" class="button" @click="closePanel">
+          {{ t("View projects") }}</button
+        ><RouterLink v-else class="button" to="/projects">{{
           t("View projects")
         }}</RouterLink
         ><button class="primary" @click="startAgain">
@@ -751,8 +759,8 @@ onBeforeUnmount(() => controller?.abort());
         </button>
       </div>
     </div>
-    <section v-if="history.length" class="intake-history">
-      <h2>{{ t("Recent intakes") }}</h2>
+    <details v-if="history.length" class="intake-history">
+      <summary>{{ t("Recent intakes") }} · {{ history.length }}</summary>
       <article v-for="batch in history" :key="batch.id" class="panel">
         <div class="section-heading">
           <div>
@@ -793,35 +801,14 @@ onBeforeUnmount(() => controller?.abort());
           </button>
         </div>
       </article>
-    </section>
+    </details>
   </section>
 </template>
 <style scoped>
 .intake-page {
   max-width: 1200px;
   margin: auto;
-}
-.intake-steps {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin: 20px 0;
-  color: var(--muted);
-  font-size: 13px;
-}
-.intake-steps .active {
-  color: var(--accent);
-  font-weight: 600;
-}
-.intake-method {
-  display: flex;
-  gap: 10px;
-  padding: 15px 0;
-  color: var(--text-secondary);
-}
-.intake-method p {
-  font-size: 12px;
-  margin: 4px 0 0;
+  padding: 20px;
 }
 .intake-source,
 .intake-candidate,
@@ -833,32 +820,14 @@ onBeforeUnmount(() => controller?.abort());
 .intake-source textarea {
   width: 100%;
   resize: vertical;
-  min-height: 150px;
+  min-height: 110px;
+  max-height: 300px;
 }
 .intake-source .muted,
 .intake-candidate .muted,
 .intake-history .muted {
   font-size: 12px;
   line-height: 1.6;
-}
-.intake-drop {
-  border: 1px dashed var(--border-strong);
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 18px;
-  margin: 18px 0;
-  flex-wrap: wrap;
-}
-.intake-drop input {
-  max-width: 100%;
-  flex: 1;
-  min-width: 190px;
-}
-.intake-drop small {
-  width: 100%;
-  color: var(--muted);
 }
 .intake-mapping,
 .intake-fields {
@@ -957,9 +926,6 @@ onBeforeUnmount(() => controller?.abort());
   width: auto;
   flex-shrink: 0;
 }
-.intake-steps span {
-  white-space: nowrap;
-}
 @media (max-width: 760px) {
   .intake-fields,
   .intake-mapping {
@@ -967,10 +933,6 @@ onBeforeUnmount(() => controller?.abort());
   }
   .intake-page {
     padding: 16px 12px;
-  }
-  .intake-steps {
-    gap: 6px;
-    font-size: 11px;
   }
   .intake-source,
   .intake-candidate,
@@ -992,6 +954,128 @@ onBeforeUnmount(() => controller?.abort());
   }
   .intake-candidate .section-heading > span {
     font-size: 11px;
+  }
+}
+
+.intake-embedded {
+  max-width: none;
+  margin: 0 0 20px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.intake-heading,
+.intake-heading-title,
+.intake-source-toolbar,
+.intake-source-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.intake-heading,
+.intake-source-toolbar {
+  justify-content: space-between;
+}
+.intake-heading {
+  margin-bottom: 14px;
+}
+.intake-heading h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.intake-heading-title > span {
+  font-size: 12px;
+}
+.intake-source {
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+}
+.intake-source textarea {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+.intake-text-label {
+  display: block;
+}
+.intake-source-toolbar {
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.intake-source-tools {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.intake-upload {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+}
+.intake-upload input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.intake-upload:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.intake-file-hint {
+  font-size: 11px;
+}
+.intake-help {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.intake-help summary,
+.intake-history > summary {
+  cursor: pointer;
+}
+.intake-history {
+  margin-top: 16px;
+  font-size: 13px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 760px) {
+  .intake-heading-title {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .intake-source-toolbar {
+    gap: 12px;
+  }
+  .intake-source-toolbar > .primary {
+    margin-left: auto;
+  }
+  .intake-file-hint {
+    display: none;
+  }
+  .intake-embedded .intake-source {
+    padding: 0;
   }
 }
 </style>

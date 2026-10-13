@@ -1,3 +1,4 @@
+import { assignLoginName } from "./login-name.js";
 import {
   scrypt,
   randomBytes,
@@ -27,7 +28,13 @@ export function hashToken(token: string) {
 }
 export async function createUser(
   repo: Repository,
-  input: { email: string; name: string; password: string; workspaceId: string },
+  input: {
+    email: string;
+    name: string;
+    password: string;
+    workspaceId: string;
+    username?: string;
+  },
 ) {
   if (input.password.length < 14)
     throw new Error("Password must contain at least 14 characters");
@@ -35,7 +42,7 @@ export async function createUser(
   const hash = await passwordHash(input.password);
   repo.db
     .prepare(
-      "INSERT INTO users(id,workspace_id,email,name,password_hash) VALUES(?,?,?,?,?)",
+      "INSERT INTO users(id,workspace_id,email,name,password_hash,username) VALUES(?,?,?,?,?,?)",
     )
     .run(
       randomUUID(),
@@ -43,6 +50,7 @@ export async function createUser(
       input.email.toLowerCase(),
       input.name,
       hash,
+      assignLoginName(repo.db, input.name, input.username),
     );
 }
 export function sessionActor(

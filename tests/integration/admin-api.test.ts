@@ -419,3 +419,115 @@ it("rejects an expired activation without enabling the account", async () => {
       .status,
   ).toBe("pending");
 });
+
+describe("channel catalog and project records", () => {
+  it("defaults new projects to company, preserves full names and short names, and persists channel assignments", async () => {
+    const original = context.repo.snapshot("team").projects[0]!;
+    const created = await request("POST", "/api/projects", {
+      ...projectInput.strip().parse(original),
+      name: "渠道测试项目完整名称",
+      shortName: "渠道测试",
+    });
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({
+      channelId: "company",
+      name: "渠道测试项目完整名称",
+      shortName: "渠道测试",
+    });
+    const p = created.json();
+    const updated = await request("PUT", `/api/projects/${p.id}`, {
+      ...projectInput.strip().parse(p),
+      channelId: "boyu",
+      version: p.version,
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(
+      context.repo
+        .snapshot("team")
+        .projects.find((p) => p.id === updated.json().id),
+    ).toMatchObject({ channelId: "boyu", shortName: "渠道测试" });
+    const catalog = (await request("GET", "/api/catalogs")).json();
+    catalog.channels.find((c: { id: string }) => c.id === "boyu").archived =
+      true;
+    expect(
+      (await request("PUT", "/api/admin/catalogs", catalog)).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await request("POST", "/api/projects", {
+          ...projectInput.strip().parse(original),
+          channelId: "boyu",
+        })
+      ).statusCode,
+    ).toBe(400);
+    const existing = updated.json();
+    expect(
+      (
+        await request("PUT", `/api/projects/${existing.id}`, {
+          ...projectInput.strip().parse(existing),
+          version: existing.version,
+          description: "停用后仍可维护历史项目",
+        })
+      ).statusCode,
+    ).toBe(200);
+  });
+  it("denies member channel writes and rejects default-channel deactivation", async () => {
+    const catalog = (await request("GET", "/api/catalogs")).json();
+    catalog.channels.find((c: { id: string }) => c.id === "company").archived =
+      true;
+    expect(
+      (await request("PUT", "/api/admin/catalogs", catalog)).statusCode,
+    ).toBe(400);
+    ({ cookie, csrf } = await login("member@example.test"));
+    expect(
+      (await request("PUT", "/api/admin/catalogs", defaultCatalogs)).statusCode,
+    ).toBe(403);
+  });
+});
+
+it("persists editable channel company profiles and multiple contacts without changing the default identity", async () => {
+  const catalog = (await request("GET", "/api/catalogs")).json();
+  const channel = catalog.channels.find(
+    (c: { id: string }) => c.id === "company",
+  );
+  Object.assign(channel, {
+    name: "测试公司完整名称",
+    shortName: "测试公司",
+    address: "测试地址",
+    phone: "010-12345678",
+    website: "https://example.test",
+    creditCode: "SYNTHETIC",
+    notes: "合作资料",
+    contacts: [
+      {
+        id: "first",
+        name: "测试联系人甲",
+        phone: "10001",
+        position: "商务",
+        email: "first@example.test",
+        primary: true,
+      },
+      {
+        id: "second",
+        name: "测试联系人乙",
+        phone: "10002",
+        position: "技术",
+        wechat: "synthetic",
+        primary: false,
+      },
+    ],
+  });
+  const saved = await request("PUT", "/api/admin/catalogs", catalog);
+  expect(saved.statusCode).toBe(200);
+  const reloaded = (await request("GET", "/api/catalogs"))
+    .json()
+    .channels.find((c: { id: string }) => c.id === "company");
+  expect(reloaded).toEqual(channel);
+  const old = context.repo.snapshot("team").projects[0]!;
+  const project = await request(
+    "POST",
+    "/api/projects",
+    projectInput.strip().parse(old),
+  );
+  expect(project.json().channelId).toBe("company");
+});

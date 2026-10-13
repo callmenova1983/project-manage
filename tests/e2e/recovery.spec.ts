@@ -1,8 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
-const source = "项目：合成恢复项目；任务：记录尚未提交的事项";
-const confirmLabel = "I reviewed the selected rows and their target projects";
+const source =
+  "项目：合成恢复项目；任务：记录尚未提交的事项；截止日期：tomorrow";
 const errors: string[] = [];
 const expectedFaults = new Set<string>();
 test.beforeEach(({ page }) => {
@@ -23,9 +23,7 @@ test.beforeEach(({ page }) => {
 test.afterEach(() => expect(errors).toEqual([]));
 async function fillReview(page: Page) {
   await page.getByLabel("Notes or pasted table", { exact: true }).fill(source);
-  await page
-    .getByRole("button", { name: "Review candidates", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Create items", exact: true }).click();
   await page
     .getByLabel("Task title", { exact: true })
     .fill("合成审阅后修改，尚未提交");
@@ -45,7 +43,6 @@ for (const width of [1536, 390])
     });
     await page.goto("/demo/intake");
     await fillReview(page);
-    await page.getByLabel(confirmLabel).check();
     await reloadDirty(page);
     await expect(
       page.getByRole("heading", {
@@ -65,18 +62,16 @@ for (const width of [1536, 390])
     await expect(page.getByLabel("Task title", { exact: true })).toHaveValue(
       "合成审阅后修改，尚未提交",
     );
-    await expect(page.getByLabel(confirmLabel)).not.toBeChecked();
     await expect(
-      page.getByRole("button", { name: "Create confirmed items", exact: true }),
-    ).toBeDisabled();
+      page.getByRole("button", { name: "Create items", exact: true }),
+    ).toBeEnabled();
     expect(await page.locator(".intake-history article").count()).toBe(0);
     await page.screenshot({
       path: `artifacts/m1-recovery/review-${width}.png`,
       fullPage: true,
     });
-    await page.getByLabel(confirmLabel).check();
     await page
-      .getByRole("button", { name: "Create confirmed items", exact: true })
+      .getByRole("button", { name: "Create items", exact: true })
       .click();
     await expect(
       page.getByRole("heading", { name: "Created and recorded" }),
@@ -100,8 +95,8 @@ test("route return preserves source; explicit cancel and recovery discard remove
   await fillReview(page);
   page.once("dialog", (d) => d.accept());
   await page
-    .locator(".page-heading")
-    .getByRole("link", { name: "Projects", exact: true })
+    .getByRole("link", { name: "All tasks", exact: true })
+    .first()
     .click();
   await page.goBack();
   await page
@@ -136,9 +131,9 @@ test("XLSX selected sheet, original cells, mapping and edits survive refresh", a
   await page
     .locator('input[type="file"]')
     .setInputFiles("tests/fixtures/intake.xlsx");
-  await page
-    .getByRole("button", { name: "Review candidates", exact: true })
-    .click();
+  await expect(page.getByText("intake.xlsx", { exact: true })).toBeVisible();
+  await page.locator(".intake-mapping select").first().selectOption("dueDate");
+  await page.getByRole("button", { name: "Create items", exact: true }).click();
   const title = page.getByLabel("Task title", { exact: true }).first();
   const original = await title.inputValue();
   await title.fill(original + " 已审阅");
@@ -149,7 +144,6 @@ test("XLSX selected sheet, original cells, mapping and edits survive refresh", a
   await expect(
     page.getByLabel("Task title", { exact: true }).first(),
   ).toHaveValue(original + " 已审阅");
-  await expect(page.getByLabel(confirmLabel)).not.toBeChecked();
 });
 test("HTML service failure offers retry before sign-in, demo boundary stays clear", async ({
   page,
@@ -205,9 +199,11 @@ test("unavailable storage explains recovery limits without blocking editing", as
   });
   await page.goto("/demo/intake");
   await fillReview(page);
-  await expect(page.getByRole("alert")).toContainText(
-    "Temporary draft storage is unavailable or full",
-  );
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Temporary draft storage is unavailable or full" }),
+  ).toBeVisible();
   await expect(page.getByLabel("Task title", { exact: true })).toHaveValue(
     "合成审阅后修改，尚未提交",
   );
@@ -234,10 +230,7 @@ test("a failed formal save preserves edits; retry creates once and logout remove
         })
       : route.continue(),
   );
-  await page.getByLabel(confirmLabel).check();
-  await page
-    .getByRole("button", { name: "Create confirmed items", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Create items", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText(
     "Synthetic save unavailable",
   );
@@ -249,10 +242,7 @@ test("a failed formal save preserves edits; retry creates once and logout remove
     "合成审阅后修改，尚未提交",
   );
   fail = false;
-  await page.getByLabel(confirmLabel).check();
-  await page
-    .getByRole("button", { name: "Create confirmed items", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Create items", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Created and recorded" }),
   ).toBeVisible();
@@ -267,7 +257,7 @@ test("a failed formal save preserves edits; retry creates once and logout remove
     .getByLabel("Notes or pasted table", { exact: true })
     .fill("项目：下一份合成草稿");
   await expect(
-    page.getByRole("status").filter({ hasText: "Unsubmitted draft kept" }),
+    page.getByRole("status").filter({ hasText: "Draft saved" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Toggle sidebar" }).click();
   page.once("dialog", (d) => d.accept());
@@ -303,7 +293,9 @@ test("expired session retains a draft for its owner without offering it to anoth
     .click();
   await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
   await page.unroute("**/api/workspace");
-  await page.getByLabel("Email", { exact: true }).fill(admin.email);
+  await page
+    .getByLabel("Login name or email", { exact: true })
+    .fill(admin.email);
   await page.getByLabel("Password", { exact: true }).fill(admin.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
@@ -315,7 +307,9 @@ test("expired session retains a draft for its owner without offering it to anoth
   await page.getByRole("button", { name: "Toggle sidebar" }).click();
   page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  await page.getByLabel("Email", { exact: true }).fill(member.email);
+  await page
+    .getByLabel("Login name or email", { exact: true })
+    .fill(member.email);
   await page.getByLabel("Password", { exact: true }).fill(member.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page
@@ -324,5 +318,4 @@ test("expired session retains a draft for its owner without offering it to anoth
   await expect(page.getByLabel("Task title", { exact: true })).toHaveValue(
     "合成审阅后修改，尚未提交",
   );
-  await expect(page.getByLabel(confirmLabel)).not.toBeChecked();
 });

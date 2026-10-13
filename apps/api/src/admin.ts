@@ -1,3 +1,4 @@
+import { assignLoginName, LoginNameConflict } from "./login-name.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -6,6 +7,7 @@ import {
   adminUserUpdate,
   catalogsInput,
   modelSettingsInput,
+  modelCredentialInput,
   defaultModelSettings,
   defaultCatalogs,
   checkCatalogs,
@@ -18,11 +20,25 @@ import {
 } from "../../../packages/domain/admin.js";
 import type { Actor } from "../../../packages/domain/types.js";
 import type { QwenConfig } from "./ai/config.js";
+import type { QwenCredentialStore } from "./ai/credentials.js";
 import { Repository, HttpError } from "./database.js";
 import { hashToken, passwordHash } from "./auth.js";
 import type { Mutate } from "./intake.js";
+function username(
+  repo: Repository,
+  name: string,
+  requested?: string,
+  id?: string,
+) {
+  try {
+    return assignLoginName(repo.db, name, requested, id);
+  } catch (e) {
+    if (e instanceof LoginNameConflict) throw new HttpError(409, e.message);
+    throw e;
+  }
+}
 const userColumns =
-  "id,name,email,role,status,version,requires_activation AS activationRequired";
+  "id,name,email,username,role,status,version,requires_activation AS activationRequired";
 export function adminActor(repo: Repository, a: Actor) {
   if (
     !repo.db
@@ -147,12 +163,20 @@ export function registerAdminRoutes(
   actor: (r: FastifyRequest) => Actor,
   mutate: Mutate,
   base?: QwenConfig,
+  starterPassword?: string,
+  credentials?: QwenCredentialStore,
 ) {
+  const runtime = (ws: string) => base ?? credentials?.read(ws);
+  const state = (ws: string) => ({
+    ...modelAdminState(repo, ws, runtime(ws)),
+    credentialEditable: !base && !!credentials,
+  });
   const requireAdmin = (req: FastifyRequest) => adminActor(repo, actor(req));
   const serializeUser = (row: Record<string, unknown>): ManagedUser => ({
     id: String(row.id),
     name: String(row.name),
     email: String(row.email),
+    username: String(row.username ?? ""),
     role: row.role as ManagedUser["role"],
     status: row.status as ManagedUser["status"],
     version: Number(row.version),
@@ -173,10 +197,29 @@ export function registerAdminRoutes(
       .all(requireAdmin(req).workspaceId)
       .map(serializeUser),
   );
+  app.get("/api/admin/account-defaults", (req) => {
+    requireAdmin(req);
+    return {
+      starterPasswordConfigured:
+        !!starterPassword && starterPassword.length >= 8,
+    };
+  });
   app.post("/api/admin/users", async (req) => {
     requireAdmin(req);
     const input = adminUserInput.parse(req.body);
-    const password = await passwordHash(randomBytes(48).toString("hex"));
+    if (
+      input.useStarterPassword &&
+      (!starterPassword || starterPassword.length < 8)
+    )
+      throw new HttpError(
+        503,
+        "The initial password is not configured on the server.",
+      );
+    const password = await passwordHash(
+      input.useStarterPassword
+        ? starterPassword!
+        : randomBytes(48).toString("hex"),
+    );
     return mutate(req, (a) => {
       adminActor(repo, a);
       if (repo.db.prepare("SELECT 1 FROM users WHERE email=?").get(input.email))
@@ -184,10 +227,27 @@ export function registerAdminRoutes(
       const id = randomUUID();
       repo.db
         .prepare(
-          "INSERT INTO users(id,workspace_id,email,name,password_hash,role,status,requires_activation) VALUES(?,?,?,?,?,?,'pending',1)",
+          "INSERT INTO users(id,workspace_id,email,name,password_hash,role,status,requires_activation,username) VALUES(?,?,?,?,?,?,?,?,?)",
         )
-        .run(id, a.workspaceId, input.email, input.name, password, input.role);
-      adminAudit(repo, a, "Created pending user", id);
+        .run(
+          id,
+          a.workspaceId,
+          input.email,
+          input.name,
+          password,
+          input.role,
+          input.useStarterPassword ? "active" : "pending",
+          input.useStarterPassword ? 0 : 1,
+          username(repo, input.name, input.username),
+        );
+      adminAudit(
+        repo,
+        a,
+        input.useStarterPassword
+          ? "Created user with configured initial password"
+          : "Created pending user",
+        id,
+      );
       return user(a.workspaceId, id);
     });
   });
@@ -230,20 +290,22 @@ export function registerAdminRoutes(
         throw new HttpError(409, "This email is already in use");
       repo.db
         .prepare(
-          "UPDATE users SET name=?,email=?,role=?,status=?,version=version+1 WHERE id=? AND workspace_id=?",
+          "UPDATE users SET name=?,email=?,role=?,status=?,username=?,version=version+1 WHERE id=? AND workspace_id=?",
         )
         .run(
           input.name,
           input.email,
           input.role,
           input.status,
+          username(repo, input.name, input.username || old.username, id),
           id,
           a.workspaceId,
         );
       if (
         input.status !== "active" ||
         input.role !== old.role ||
-        input.email !== old.email
+        input.email !== old.email ||
+        (input.username && input.username !== old.username)
       )
         repo.db.prepare("DELETE FROM sessions WHERE user_id=?").run(id);
       if (input.status === "disabled")
@@ -344,12 +406,62 @@ export function registerAdminRoutes(
       return next;
     }),
   );
-  app.get("/api/admin/model", (req) =>
-    modelAdminState(repo, requireAdmin(req).workspaceId, base),
+  app.get("/api/admin/model", (req) => state(requireAdmin(req).workspaceId));
+  app.put("/api/admin/model/credential", (req) =>
+    mutate(req, (a) => {
+      adminActor(repo, a);
+      if (base || !credentials)
+        throw new HttpError(
+          403,
+          "This credential is managed by the server operator",
+        );
+      const input = modelCredentialInput.parse(req.body);
+      const old = readModelSettings(
+        repo,
+        a.workspaceId,
+        runtime(a.workspaceId),
+      );
+      if (input.version !== old.version)
+        throw new HttpError(
+          409,
+          "Model settings changed. Reload before saving.",
+        );
+      let saved: QwenConfig;
+      try {
+        saved = credentials.save(a.workspaceId, input);
+      } catch (e) {
+        if (
+          e instanceof Error &&
+          e.message.startsWith("Invalid or missing server AI configuration:")
+        )
+          throw new HttpError(400, e.message);
+        throw e;
+      }
+      const next: ModelSettings = {
+        ...old,
+        version: old.version + 1,
+        enabled: false,
+        region: saved.region,
+        secretRef: "server-default",
+      };
+      repo.db
+        .prepare(
+          "INSERT INTO model_settings(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
+        )
+        .run(a.workspaceId, JSON.stringify(next));
+      adminAudit(
+        repo,
+        a,
+        "Saved workspace model credential; calls remain disabled",
+        a.workspaceId,
+      );
+      return state(a.workspaceId);
+    }),
   );
   app.put("/api/admin/model", (req) =>
     mutate(req, (a) => {
       adminActor(repo, a);
+      const base = runtime(a.workspaceId);
       const next = modelSettingsInput.parse(req.body),
         old = readModelSettings(repo, a.workspaceId, base);
       if (next.version !== old.version)
@@ -380,7 +492,7 @@ export function registerAdminRoutes(
         )
         .run(a.workspaceId, JSON.stringify(next));
       adminAudit(repo, a, "Updated model settings", a.workspaceId);
-      return modelAdminState(repo, a.workspaceId, base);
+      return state(a.workspaceId);
     }),
   );
   app.get("/api/admin/model/logs", (req) =>

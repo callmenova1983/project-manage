@@ -1,6 +1,43 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { createLocalApi } from "../../apps/web/src/services/local";
 import { projectInput, statistics } from "../../packages/domain/types";
+it("keeps local merge task trees, editors and order across reload without network calls", async () => {
+  const api = createLocalApi(),
+    initial = await api.snapshot(),
+    source = initial.projects[0]!,
+    target = initial.projects[1]!;
+  await api.renameProject(source.id, "Edited name", source.version, "Short");
+  const s = await api.snapshot();
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const merged = await api.mergeProjects({
+    targetId: target.id,
+    sourceIds: [source.id],
+    name: "Merged",
+    revision: s.revision,
+    confirmed: true,
+  });
+  const after = await createLocalApi().snapshot();
+  expect(after.projects).toHaveLength(19);
+  expect(after.tasks).toHaveLength(initial.tasks.length);
+  expect(after.tasks.filter((t) => t.projectId === source.id)).toHaveLength(0);
+  expect(
+    after.projectMembers!.filter((m) => m.projectId === merged.id),
+  ).toHaveLength(1);
+  const ids = [...after.projectOrder!].reverse();
+  await api.saveProjectOrder({ projectIds: ids, revision: after.revision });
+  expect((await createLocalApi().snapshot()).projectOrder).toEqual(ids);
+  await expect(
+    api.mergeProjects({
+      targetId: merged.id,
+      sourceIds: [initial.projects[2]!.id],
+      name: "Stale",
+      revision: s.revision,
+      confirmed: true,
+    }),
+  ).rejects.toMatchObject({ status: 409 });
+  expect(fetch).not.toHaveBeenCalled();
+});
 const saved = new Map<string, string>();
 beforeEach(() => {
   saved.clear();

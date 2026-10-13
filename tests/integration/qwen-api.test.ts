@@ -339,3 +339,147 @@ it("records failed provider status without source data, generated text or fabric
   });
   expect(result.body).not.toContain("should never be logged");
 });
+
+describe("saved-task background review", () => {
+  async function savedTask() {
+    const project = ctx.repo.snapshot("test").projects[0]!;
+    const response = await request("POST", "/api/tasks", {
+      projectId: project.id,
+      parentId: null,
+      title: "对方还没收到钱，下次沟通，估计十月底",
+      description: "",
+      status: "todo",
+      assignee: "",
+      dueDate: null,
+      workDates: [],
+      workWeek: null,
+    });
+    expect(response.statusCode).toBe(200);
+    return response.json();
+  }
+  function reviewReply() {
+    return Response.json({
+      model: QWEN_MODEL,
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            content: JSON.stringify({
+              questions: [
+                {
+                  question: "十月底指预计到账还是沟通提醒09:00？",
+                  quote: "估计十月底",
+                  choices: [
+                    {
+                      label: "预计到账",
+                      field: "estimatedDate",
+                      value: "2026-10-31",
+                    },
+                    {
+                      label: "沟通提醒09:00",
+                      field: "reminderAt",
+                      value: "2026-10-31T09:00:00+08:00",
+                    },
+                  ],
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    });
+  }
+  it("analyzes saved text without mutation, caches duplicate calls and preserves independent time fields", async () => {
+    const task = await savedTask();
+    mock.mockImplementation(async () => reviewReply());
+    const key = randomUUID();
+    const result = await request(
+      "POST",
+      `/api/tasks/${task.id}/review`,
+      { version: task.version },
+      key,
+    );
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toMatchObject({
+      taskId: task.id,
+      version: task.version,
+    });
+    expect(
+      ctx.repo.snapshot("test").tasks.find((t) => t.id === task.id),
+    ).toEqual(task);
+    expect(
+      (
+        await request(
+          "POST",
+          `/api/tasks/${task.id}/review`,
+          { version: task.version },
+          key,
+        )
+      ).json(),
+    ).toEqual(result.json());
+    expect(mock).toHaveBeenCalledTimes(1);
+    const update = await ctx.app.inject({
+      method: "PUT",
+      url: `/api/tasks/${task.id}`,
+      headers: {
+        cookie,
+        origin,
+        "x-csrf-token": csrf,
+        "idempotency-key": randomUUID(),
+      },
+      payload: {
+        ...Object.fromEntries(
+          Object.entries(task).filter(
+            ([key]) => !["id", "updatedAt"].includes(key),
+          ),
+        ),
+        estimatedDate: "2026-10-31",
+        reminderAt: "2026-10-29T09:00:00+08:00",
+      },
+    });
+    expect(update.statusCode).toBe(200);
+    expect(update.json()).toMatchObject({
+      dueDate: null,
+      estimatedDate: "2026-10-31",
+      reminderAt: "2026-10-29T09:00:00+08:00",
+    });
+  });
+  it("keeps original text when AI fails and rejects stale versions before calling the provider", async () => {
+    const task = await savedTask();
+    mock.mockRejectedValue(new Error("offline"));
+    expect(
+      (
+        await request("POST", `/api/tasks/${task.id}/review`, {
+          version: task.version,
+        })
+      ).statusCode,
+    ).toBe(504);
+    expect(
+      ctx.repo.snapshot("test").tasks.find((t) => t.id === task.id),
+    ).toEqual(task);
+    mock.mockClear();
+    expect(
+      (
+        await request("POST", `/api/tasks/${task.id}/review`, {
+          version: task.version + 1,
+        })
+      ).statusCode,
+    ).toBe(409);
+    expect(mock).not.toHaveBeenCalled();
+  });
+  it("discards results when the task is edited during provider processing", async () => {
+    const task = await savedTask();
+    mock.mockImplementation(async () => {
+      ctx.repo.putTask("test", { ...task, title: "更新后的原文", version: 2 });
+      return reviewReply();
+    });
+    const result = await request("POST", `/api/tasks/${task.id}/review`, {
+      version: task.version,
+    });
+    expect(result.statusCode).toBe(409);
+    expect(result.json().code).toBe("AI_STALE");
+    expect(
+      ctx.repo.snapshot("test").tasks.find((t) => t.id === task.id)?.title,
+    ).toBe("更新后的原文");
+  });
+});

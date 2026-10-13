@@ -1,3 +1,14 @@
+import { exportProgress, importProgress } from "./progress-export.js";
+import { registerProgressMaterials } from "./progress-materials.js";
+import {
+  taskFieldCopyInput,
+  planTaskFieldCopy,
+  TaskFieldCopyConflict,
+} from "../../../packages/domain/task-field-copy.js";
+import {
+  progressInput,
+  progressHistory,
+} from "../../../packages/domain/progress.js";
 import Fastify, { type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
@@ -24,6 +35,12 @@ import {
 } from "../../../packages/domain/types.js";
 import { Repository, HttpError } from "./database.js";
 import {
+  projectRenameInput,
+  projectMergeInput,
+  planProjectMerge,
+  ProjectMergeConflict,
+} from "../../../packages/domain/project-merge.js";
+import {
   validateAppOrigin,
   allowedMutationOrigin,
   isLoopback,
@@ -39,6 +56,13 @@ import {
   importCatalogs,
 } from "../../../packages/domain/admin.js";
 import type { QwenConfig } from "./ai/config.js";
+import { QwenCredentialStore } from "./ai/credentials.js";
+import { registerDirectoryRoutes } from "./directory.js";
+import { WecomError, type WecomConfig } from "./wecom.js";
+import {
+  checkProjectOrder,
+  projectOrderInput,
+} from "../../../packages/domain/project-order.js";
 import {
   hashToken,
   sessionActor,
@@ -59,6 +83,7 @@ const suggestionInput = z
   })
   .strict();
 export async function buildApp(options: {
+  starterPassword?: string;
   databasePath: string;
   origin: string;
   production?: boolean;
@@ -67,9 +92,12 @@ export async function buildApp(options: {
   aiFetch?: typeof fetch;
   originDiagnostics?: boolean;
   codespacesOriginRewrite?: CodespacesOriginRewrite;
+  wecom?: WecomConfig;
+  wecomFetch?: typeof fetch;
 }) {
   const allowedOrigin = validateAppOrigin(options.origin, !!options.production);
   const repo = new Repository(options.databasePath);
+  const credentials = new QwenCredentialStore(repo, options.databasePath);
   const app = Fastify({
     logger: false,
     bodyLimit: 2 * 1024 * 1024,
@@ -142,6 +170,10 @@ export async function buildApp(options: {
       throw new HttpError(403, "Invalid request token");
   });
   app.setErrorHandler((err, req, reply) => {
+    if (err instanceof WecomError)
+      return reply
+        .status(502)
+        .send({ message: err.message, code: "WECOM_SYNC_FAILED" });
     if (err instanceof AiError)
       return reply
         .status(err.statusCode)
@@ -170,7 +202,11 @@ export async function buildApp(options: {
   app.addHook("onClose", async () => repo.close());
   const actor = (r: FastifyRequest) => identity.get(r)!.actor;
   registerAiRoutes(app, repo, actor, options.qwen, options.aiFetch, (a) =>
-    workspaceQwen(repo, a.workspaceId, options.qwen),
+    workspaceQwen(
+      repo,
+      a.workspaceId,
+      options.qwen ?? credentials.read(a.workspaceId),
+    ),
   );
   function mutate<T>(req: FastifyRequest, fn: (a: Actor) => T): T {
     const a = actor(req);
@@ -205,7 +241,23 @@ export async function buildApp(options: {
     });
   }
   registerIntakeRoutes(app, repo, actor, mutate);
-  registerAdminRoutes(app, repo, actor, mutate, options.qwen);
+  registerAdminRoutes(
+    app,
+    repo,
+    actor,
+    mutate,
+    options.qwen,
+    options.starterPassword,
+    credentials,
+  );
+  registerDirectoryRoutes(
+    app,
+    repo,
+    actor,
+    mutate,
+    options.wecom,
+    options.wecomFetch,
+  );
   app.get("/api/health", () => ({ status: "ok" }));
   app.post(
     "/api/auth/login",
@@ -213,13 +265,15 @@ export async function buildApp(options: {
     async (req, reply) => {
       const input = z
         .object({
-          email: z.string().email().max(200),
+          email: z.string().trim().min(1).max(200),
           password: z.string().min(1).max(500),
         })
         .parse(req.body);
       const user = repo.db
-        .prepare("SELECT * FROM users WHERE email=?")
-        .get(input.email.toLowerCase());
+        .prepare(
+          "SELECT * FROM users WHERE email=? OR username=? COLLATE NOCASE",
+        )
+        .get(input.email.toLowerCase(), input.email.toLowerCase());
       const valid = await verifyPassword(
         input.password,
         String(user?.password_hash ?? dummyHash),
@@ -238,14 +292,17 @@ export async function buildApp(options: {
         // password. Do not issue a new session for an obsolete credential.
         const current = repo.db
           .prepare(
-            "SELECT password_hash,status,requires_activation FROM users WHERE id=?",
+            "SELECT password_hash,status,requires_activation,email,username FROM users WHERE id=?",
           )
           .get(String(user.id));
         if (
           !current ||
           current.password_hash !== user.password_hash ||
           current.status !== "active" ||
-          current.requires_activation
+          current.requires_activation ||
+          (String(current.email).toLowerCase() !== input.email.toLowerCase() &&
+            String(current.username ?? "").toLowerCase() !==
+              input.email.toLowerCase())
         )
           throw new HttpError(401, "Email or password is incorrect");
         repo.db
@@ -295,7 +352,7 @@ export async function buildApp(options: {
       .projects.filter(
         (p) =>
           (!q.search ||
-            `${p.name} ${p.client} ${p.latestUpdate}`
+            `${p.name} ${p.shortName ?? ""} ${p.aliases.join(" ")} ${p.client} ${p.latestUpdate}`
               .toLowerCase()
               .includes(q.search.toLowerCase())) &&
           (!q.stage || p.stage === q.stage) &&
@@ -338,6 +395,7 @@ export async function buildApp(options: {
   app.post("/api/projects", (req) =>
     mutate(req, (a) => {
       const data = projectInput.parse(req.body);
+      data.channelId ??= "company";
       try {
         checkProjectCatalog(data, repo.catalogs(a.workspaceId));
       } catch (e) {
@@ -367,6 +425,7 @@ export async function buildApp(options: {
         (req.params as { id: string }).id,
       );
       repo.checkVersion(old, input.version);
+      input.channelId ??= old.channelId ?? "company";
       try {
         checkProjectCatalog(input, repo.catalogs(a.workspaceId), old);
       } catch (e) {
@@ -393,6 +452,179 @@ export async function buildApp(options: {
       repo.putProject(a.workspaceId, p);
       repo.record(a, "project", "Updated project", old, p);
       return p;
+    }),
+  );
+  registerProgressMaterials(app, repo, actor, mutate);
+  app.get("/api/projects/:id/progress", (req) => {
+    const a = actor(req),
+      id = (req.params as { id: string }).id;
+    const project = repo.get<Project>("projects", a.workspaceId, id);
+    const events = repo.db
+      .prepare(
+        "SELECT data FROM activities WHERE workspace_id=? AND json_extract(data,'$.projectId')=? ORDER BY created_at ASC,rowid ASC",
+      )
+      .all(a.workspaceId, id)
+      .map((row) => JSON.parse(String(row.data)));
+    return progressHistory(project, events);
+  });
+  app.post("/api/projects/:id/progress", (req) =>
+    mutate(req, (a) => {
+      const input = progressInput.parse(req.body);
+      const old = repo.get<Project>(
+        "projects",
+        a.workspaceId,
+        (req.params as { id: string }).id,
+      );
+      repo.checkVersion(old, input.version);
+      if (input.mode === "correct" && !old.latestUpdate.trim())
+        throw new HttpError(
+          400,
+          "There is no previous progress entry to correct.",
+        );
+      for (const id of input.originalSource?.materialIds ?? []) {
+        if (
+          !repo.db
+            .prepare(
+              "SELECT 1 FROM progress_materials WHERE id=? AND workspace_id=? AND project_id=?",
+            )
+            .get(id, a.workspaceId, old.id)
+        )
+          throw new HttpError(404, "Source file not found");
+      }
+      const now = new Date().toISOString();
+      const project = {
+        ...old,
+        latestUpdate: input.text,
+        reportedAt: input.mode === "new" ? now : old.reportedAt,
+        reportedBy: input.mode === "new" ? a.name : old.reportedBy,
+        updatedAt: now,
+        version: old.version + 1,
+      };
+      repo.putProject(a.workspaceId, project);
+      repo.record(
+        a,
+        "project",
+        input.mode === "new"
+          ? "Added progress log"
+          : "Corrected latest progress log",
+        old,
+        project,
+        input.mode === "new" ? "Progress log" : "Progress correction",
+        input.originalSource,
+      );
+      return project;
+    }),
+  );
+  app.put("/api/projects/:id/name", (req) =>
+    mutate(req, (a) => {
+      const input = projectRenameInput.parse(req.body);
+      const old = repo.get<Project>(
+        "projects",
+        a.workspaceId,
+        (req.params as { id: string }).id,
+      );
+      repo.checkVersion(old, input.version);
+      const project = {
+        ...old,
+        name: input.name,
+        shortName: input.shortName ?? old.shortName,
+        version: old.version + 1,
+        updatedAt: new Date().toISOString(),
+      };
+      repo.putProject(a.workspaceId, project);
+      repo.record(a, "project", "Renamed project", old, project);
+      return project;
+    }),
+  );
+  app.post("/api/projects/merge", (req) =>
+    mutate(req, (a) => {
+      const input = projectMergeInput.parse(req.body);
+      let plan;
+      try {
+        plan = planProjectMerge(repo.snapshot(a.workspaceId), input);
+      } catch (e) {
+        if (e instanceof ProjectMergeConflict)
+          throw new HttpError(409, e.message);
+        throw e;
+      }
+      repo.putProject(a.workspaceId, plan.project);
+      for (const { before, after } of plan.movedTasks) {
+        repo.putTask(a.workspaceId, after);
+        repo.record(
+          a,
+          "task",
+          "Moved task to merged project",
+          before,
+          after,
+          "Project merge",
+        );
+      }
+      for (const source of plan.sources) {
+        repo.db
+          .prepare(
+            "UPDATE progress_materials SET project_id=? WHERE workspace_id=? AND project_id=?",
+          )
+          .run(plan.project.id, a.workspaceId, source.id);
+        repo.db
+          .prepare(
+            "INSERT INTO project_members(workspace_id,project_id,user_id,joined_at,last_edited_at) SELECT workspace_id,?,user_id,joined_at,last_edited_at FROM project_members WHERE workspace_id=? AND project_id=? ON CONFLICT(workspace_id,project_id,user_id) DO UPDATE SET joined_at=MIN(joined_at,excluded.joined_at),last_edited_at=MAX(last_edited_at,excluded.last_edited_at)",
+          )
+          .run(plan.project.id, a.workspaceId, source.id);
+        repo.db
+          .prepare("DELETE FROM projects WHERE workspace_id=? AND id=?")
+          .run(a.workspaceId, source.id);
+        repo.record(
+          a,
+          "project",
+          "Merged source project",
+          source,
+          null,
+          "Project merge",
+        );
+        // Keep before/after values intact while making full history accessible
+        // from the retained project, including entries outside the 500-item UI.
+        repo.db
+          .prepare(
+            "UPDATE activities SET data=json_set(data,'$.originalProjectId',COALESCE(json_extract(data,'$.originalProjectId'),json_extract(data,'$.projectId')),'$.projectId',?) WHERE workspace_id=? AND json_extract(data,'$.projectId')=?",
+          )
+          .run(plan.project.id, a.workspaceId, source.id);
+      }
+      repo.record(
+        a,
+        "project",
+        "Merged projects",
+        plan.target,
+        plan.project,
+        "Project merge",
+      );
+      repo.validate(a.workspaceId);
+      return plan.project;
+    }),
+  );
+  app.put("/api/project-order", (req) =>
+    mutate(req, (a) => {
+      const input = projectOrderInput.parse(req.body),
+        snapshot = repo.snapshot(a.workspaceId);
+      if (input.revision !== snapshot.revision)
+        throw new HttpError(
+          409,
+          "Workspace changed. Refresh the project order and try again.",
+        );
+      checkProjectOrder(snapshot, input.projectIds);
+      repo.db
+        .prepare(
+          "INSERT INTO workspace_project_order(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
+        )
+        .run(a.workspaceId, JSON.stringify(input.projectIds));
+      repo.record(
+        a,
+        "project",
+        "Reordered projects",
+        null,
+        null,
+        `Project order\nBefore: ${JSON.stringify(snapshot.projectOrder)}\nAfter: ${JSON.stringify(input.projectIds)}`,
+      );
+      return input.projectIds;
     }),
   );
   app.post("/api/projects/:id/note-dates", (req) =>
@@ -482,6 +714,34 @@ export async function buildApp(options: {
       return result;
     }),
   );
+  app.post("/api/tasks/copy-field", (req) =>
+    mutate(req, (a) => {
+      const input = taskFieldCopyInput.parse(req.body);
+      let changes;
+      try {
+        changes = planTaskFieldCopy(repo.snapshot(a.workspaceId).tasks, input);
+      } catch (e) {
+        throw new HttpError(
+          e instanceof TaskFieldCopyConflict ? 409 : 400,
+          (e as Error).message,
+        );
+      }
+      for (const { before, after } of changes) {
+        repo.putTask(a.workspaceId, after);
+        repo.record(
+          a,
+          "task",
+          input.field === "assignee"
+            ? "Copied task assignee"
+            : "Copied task due date",
+          before,
+          after,
+          "Task field copy",
+        );
+      }
+      return changes.map((change) => change.after);
+    }),
+  );
   app.put("/api/tasks/:id", (req) =>
     mutate(req, (a) => {
       const input = taskInput
@@ -538,9 +798,10 @@ export async function buildApp(options: {
       "Content-Disposition",
       'attachment; filename="project-manage-export.json"',
     );
-    return repo.snapshot(actor(req).workspaceId);
+    const ws = actor(req).workspaceId;
+    return { ...repo.snapshot(ws), ...exportProgress(repo, ws) };
   });
-  app.post("/api/import", (req) =>
+  app.post("/api/import", { bodyLimit: 64 * 1024 * 1024 }, (req) =>
     mutate(req, (a) => {
       const input = snapshotImport
         .extend({
@@ -555,6 +816,11 @@ export async function buildApp(options: {
           "Workspace changed. Export and review the current workspace before replacing it.",
         );
       validateGraph(input.projects, input.tasks);
+      if (input.projectOrder)
+        checkProjectOrder(
+          { ...current, projects: input.projects },
+          input.projectOrder,
+        );
       let importedCatalog;
       try {
         importedCatalog = importCatalogs(
@@ -596,6 +862,12 @@ export async function buildApp(options: {
             ) + 1,
           updatedAt: new Date().toISOString(),
         });
+      repo.db
+        .prepare(
+          "INSERT INTO workspace_project_order(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
+        )
+        .run(a.workspaceId, JSON.stringify(input.projectOrder ?? []));
+      importProgress(repo, a.workspaceId, input);
       repo.record(
         a,
         "import",
@@ -615,6 +887,11 @@ export async function buildApp(options: {
         .get(a.workspaceId, (req.params as { id: string }).id);
       if (!row) throw new HttpError(404, "History record not found");
       const event = JSON.parse(String(row.data));
+      if (event.source === "Project merge")
+        throw new HttpError(
+          400,
+          "Project merges cannot be restored as a single record.",
+        );
       if (!event.before || !["task", "project"].includes(event.kind))
         throw new HttpError(400, "This event cannot be restored");
       const old = repo.get<Project | Task>(
@@ -628,6 +905,13 @@ export async function buildApp(options: {
         version: old.version + 1,
         updatedAt: new Date().toISOString(),
       };
+      if (
+        event.kind === "task" &&
+        !repo.db
+          .prepare("SELECT 1 FROM projects WHERE workspace_id=? AND id=?")
+          .get(a.workspaceId, restored.projectId)
+      )
+        restored.projectId = (old as Task).projectId;
       if (event.kind === "task") repo.putTask(a.workspaceId, restored);
       else repo.putProject(a.workspaceId, restored);
       repo.validate(a.workspaceId);

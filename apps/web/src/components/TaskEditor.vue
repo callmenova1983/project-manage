@@ -12,12 +12,14 @@ import {
 import { useWorkspace } from "../stores/workspace";
 import { statusLabels } from "../locales/en";
 import { useUnsaved } from "../composables/unsaved";
+import PersonPicker from "./PersonPicker.vue";
 import SaveError from "./SaveError.vue";
 import { ApiError } from "../services/api";
 const props = defineProps<{
   task?: Task;
   projectId: string;
   parentId?: string;
+  initialTitle?: string;
 }>();
 const emit = defineEmits<{ close: []; saved: [Task] }>();
 const store = useWorkspace();
@@ -28,10 +30,10 @@ const draft = ref<TaskInput>(
     : {
         projectId: props.projectId,
         parentId: props.parentId ?? null,
-        title: "",
+        title: props.initialTitle ?? "",
         description: "",
         status: "todo",
-        assignee: "Unassigned",
+        assignee: "",
         dueDate: null,
         workWeek: weekKey(),
         workDates: [],
@@ -66,6 +68,13 @@ async function save() {
   error.value = null;
   try {
     if (draft.value.dueDate === "") draft.value.dueDate = null;
+    if (draft.value.estimatedDate === "") draft.value.estimatedDate = null;
+    if (draft.value.reminderAt === "") draft.value.reminderAt = null;
+    else if (
+      draft.value.reminderAt &&
+      !/(Z|[+-]\d{2}:\d{2})$/.test(draft.value.reminderAt)
+    )
+      draft.value.reminderAt += ":00+08:00";
     const result = await store.saveTask(
       taskInput.parse(draft.value),
       original.value,
@@ -135,10 +144,34 @@ function reload() {
         }}</small></label
       ><label
         >{{ t("Assignee")
-        }}<input v-model="draft.assignee" maxlength="80" /></label
+        }}<PersonPicker
+          v-model="draft.assignee"
+          :project-id="draft.projectId"
+          :label="t('Assignee')"
+          :disabled="store.busy" /></label
       ><label
         >{{ t("Due date") }}<input v-model="draft.dueDate" type="date"
       /></label>
+      <label
+        >预计时间<input v-model="draft.estimatedDate" type="date" /><small
+          >预估时间，不计入逾期。</small
+        ></label
+      >
+      <label
+        >提醒时间（北京时间）<input
+          :value="
+            draft.reminderAt
+              ? new Date(new Date(draft.reminderAt).getTime() + 8 * 3600000)
+                  .toISOString()
+                  .slice(0, 16)
+              : ''
+          "
+          type="datetime-local"
+          @input="
+            draft.reminderAt = ($event.target as HTMLInputElement).value || null
+          "
+        /><small>跟进时间，与截止日期独立。</small></label
+      >
       <div class="planning">
         <span>{{ t("Work scope") }}</span
         ><label class="check-label"

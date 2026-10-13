@@ -51,6 +51,16 @@ async function restore(a: Activity) {
     error.value = (e as Error).message;
   }
 }
+function canRestore(event: Activity) {
+  return (
+    event.before &&
+    event.source !== "Project merge" &&
+    (event.kind === "project"
+      ? store.data.projects.some((p) => p.id === event.entityId)
+      : event.kind === "task" &&
+        store.data.tasks.some((t) => t.id === event.entityId))
+  );
+}
 
 function activityLabel(action: string) {
   const imported =
@@ -152,7 +162,7 @@ function activityLabel(action: string) {
             </div>
           </div>
           <button
-            v-if="event.before && ['project', 'task'].includes(event.kind)"
+            v-if="canRestore(event)"
             :disabled="store.busy"
             @click="restore(event)"
           >

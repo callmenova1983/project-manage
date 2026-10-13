@@ -1,3 +1,11 @@
+import {
+  channelEntry,
+  channelEntries,
+  defaultChannels,
+  projectChannel,
+  checkChannels,
+} from "./channels.js";
+import { loginNameSchema } from "./login-name-schema.js";
 import { z } from "zod";
 import type { Project, ProjectInput } from "./types.js";
 export const catalogEntry = z
@@ -15,6 +23,7 @@ export const catalogsInput = z
     version: z.number().int().positive(),
     stages: z.array(catalogEntry).min(1).max(30),
     categories: z.array(catalogEntry).max(60),
+    channels: z.array(channelEntry).min(1).max(60).optional(),
   })
   .strict();
 export type CatalogEntry = z.infer<typeof catalogEntry>;
@@ -64,9 +73,12 @@ export const defaultCatalogs: Catalogs = {
     },
   ],
   categories: [],
+  channels: structuredClone(defaultChannels),
 };
 export const adminUserInput = z
   .object({
+    username: loginNameSchema.or(z.literal("")).optional(),
+    useStarterPassword: z.boolean().optional(),
     name: z.string().trim().min(1).max(80),
     email: z
       .string()
@@ -82,6 +94,7 @@ export const adminUserUpdate = adminUserInput.extend({
 });
 export interface ManagedUser {
   id: string;
+  username?: string;
   name: string;
   email: string;
   role: "member" | "admin";
@@ -107,6 +120,23 @@ export const modelSettingsInput = z
   })
   .strict();
 export type ModelSettings = z.infer<typeof modelSettingsInput>;
+export const modelCredentialInput = z
+  .object({
+    version: z.number().int().positive(),
+    apiKey: z.string().min(1).max(1024).regex(/^\S+$/),
+    region: modelSettingsInput.shape.region,
+    baseUrl: z.string().max(300).optional(),
+    maxRequests: z.number().int().min(1).max(1000),
+    expiresAt: z
+      .string()
+      .datetime({ offset: true })
+      .refine(
+        (value) => Date.parse(value) > Date.now(),
+        "Choose a future allowance expiry",
+      ),
+  })
+  .strict();
+export type ModelCredentialInput = z.infer<typeof modelCredentialInput>;
 export const defaultModelSettings: ModelSettings = {
   version: 1,
   enabled: false,
@@ -118,6 +148,7 @@ export const defaultModelSettings: ModelSettings = {
   maxTokens: 2048,
 };
 export interface ModelAdminState {
+  credentialEditable?: boolean;
   settings: ModelSettings;
   credentialAvailable: boolean;
   runtimeEnabled: boolean;
@@ -154,6 +185,7 @@ export function checkCatalogs(
   projects: Project[],
 ) {
   catalogsInput.parse(next);
+  checkChannels(channelEntries(next), channelEntries(old), projects);
   if (next.stages.some((s) => s.id === "unclassified"))
     throw new Error("Unclassified is a reserved pending stage");
   for (const key of ["stages", "categories"] as const) {
@@ -181,6 +213,14 @@ export function checkProjectCatalog(
   old?: Project,
 ) {
   if (
+    !channelEntries(catalogs).some(
+      (c) =>
+        c.id === projectChannel(input) &&
+        (!c.archived || (old && projectChannel(old) === c.id)),
+    )
+  )
+    throw new Error("请选择有效渠道。");
+  if (
     new Set(input.categoryIds ?? []).size !== (input.categoryIds ?? []).length
   )
     throw new Error("Project categories must be unique");
@@ -207,6 +247,8 @@ export function validateCatalogReferences(
   catalogs: Catalogs,
 ) {
   for (const project of projects) {
+    if (!channelEntries(catalogs).some((c) => c.id === projectChannel(project)))
+      throw new Error("项目引用了未知渠道。");
     if (
       project.stage !== "unclassified" &&
       !catalogs.stages.some((s) => s.id === project.stage)
@@ -239,8 +281,13 @@ export function importCatalogs(
     JSON.stringify({
       stages: incoming.stages,
       categories: incoming.categories,
+      channels: channelEntries(incoming),
     }) !==
-      JSON.stringify({ stages: current.stages, categories: current.categories })
+      JSON.stringify({
+        stages: current.stages,
+        categories: current.categories,
+        channels: channelEntries(current),
+      })
   ) {
     if (!isAdmin)
       throw new Error(

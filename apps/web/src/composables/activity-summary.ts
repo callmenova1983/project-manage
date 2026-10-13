@@ -61,7 +61,7 @@ export function isCompletionAction(activity: Activity): boolean {
     before.id === activity.entityId &&
     after.id === activity.entityId &&
     before.projectId === after.projectId &&
-    after.projectId === activity.projectId &&
+    after.projectId === (activity.originalProjectId ?? activity.projectId) &&
     after.version > before.version &&
     before.status !== "done" &&
     after.status === "done"
@@ -84,6 +84,8 @@ const stageLabels: Record<Project["stage"], string> = {
 
 export function describeActivity(activity: Activity): ActivityDescription {
   const { before, after } = activity;
+  if (activity.action === "Reordered projects")
+    return { key: "Project order updated", tone: "project", subject: null };
   const subject = isTask(after)
     ? after.title
     : isTask(before)

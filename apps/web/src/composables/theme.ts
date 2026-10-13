@@ -1,11 +1,16 @@
 import { readonly, ref } from "vue";
 
 export type Theme = "dark" | "light";
+export const ACCENT_STORAGE_KEY = "project-manage-accent";
+export const ACCENTS = ["blue", "teal", "green", "orange"] as const;
+export type Accent = (typeof ACCENTS)[number];
 export const THEME_STORAGE_KEY = "project-manage-theme";
 
 interface ThemeEnvironment {
   storage?: Pick<Storage, "getItem" | "setItem">;
-  root?: Pick<HTMLElement, "setAttribute">;
+  root?: Pick<HTMLElement, "setAttribute"> & {
+    classList?: Pick<DOMTokenList, "toggle">;
+  };
   media?: Pick<
     MediaQueryList,
     "matches" | "addEventListener" | "removeEventListener"
@@ -37,6 +42,26 @@ export function createThemePreference(
   } catch {
     // Use the system preference when storage cannot be read.
   }
+  let savedAccent: string | null = null;
+  try {
+    savedAccent = environment.storage?.getItem(ACCENT_STORAGE_KEY) ?? null;
+  } catch {
+    /* Storage is optional. */
+  }
+  const accent = ref<Accent>(
+    ACCENTS.includes(savedAccent as Accent) ? (savedAccent as Accent) : "blue",
+  );
+  function setAccent(value: Accent) {
+    if (!ACCENTS.includes(value)) return;
+    accent.value = value;
+    environment.root?.setAttribute("data-accent", value);
+    try {
+      environment.storage?.setItem(ACCENT_STORAGE_KEY, value);
+    } catch {
+      /* Still applies for this visit. */
+    }
+  }
+  environment.root?.setAttribute("data-accent", accent.value);
   const preference = ref<Theme | null>(
     saved === "dark" || saved === "light" ? saved : null,
   );
@@ -46,6 +71,7 @@ export function createThemePreference(
   function apply(value: Theme) {
     theme.value = value;
     environment.root?.setAttribute("data-theme", value);
+    environment.root?.classList?.toggle("dark", value === "dark");
   }
   function setTheme(value: Theme) {
     preference.value = value;
@@ -63,6 +89,8 @@ export function createThemePreference(
   environment.media?.addEventListener("change", followSystem);
   return {
     theme: readonly(theme),
+    accent: readonly(accent),
+    setAccent,
     preference: readonly(preference),
     setTheme,
     toggleTheme: () => setTheme(theme.value === "dark" ? "light" : "dark"),

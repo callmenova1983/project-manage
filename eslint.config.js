@@ -9,6 +9,8 @@ export default ts.config(
       "node_modules/**",
       "test-results/**",
       "playwright-report/**",
+      "data/**",
+      "artifacts/**",
     ],
   },
   js.configs.recommended,

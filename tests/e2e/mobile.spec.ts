@@ -114,12 +114,8 @@ for (const width of [375, 390]) {
     test("inline long notes save, cancel, reduced-height scrolling and menu overlay", async ({
       page,
     }) => {
-      await page
-        .getByRole("button", {
-          name: "Expand Atlas Customer Portal",
-          exact: true,
-        })
-        .tap();
+      await page.goto("/projects/project-1#source-records");
+      await page.getByRole("button", { name: "Edit notes", exact: true }).tap();
       const notes = page.getByRole("textbox", {
         name: "Original notes for Atlas Customer Portal",
       });
@@ -129,6 +125,7 @@ for (const width of [375, 390]) {
       await page
         .getByRole("button", { name: "Cancel notes", exact: true })
         .tap();
+      await page.getByRole("button", { name: "Edit notes", exact: true }).tap();
       await expect(notes).toHaveValue(original);
       const long =
         "Synthetic long note ✓\n" +
@@ -150,12 +147,8 @@ for (const width of [375, 390]) {
       await expect(page.getByRole("status")).toContainText("Project updated");
       await noOverflow(page);
       await page.reload();
-      await page
-        .getByRole("button", {
-          name: "Expand Atlas Customer Portal",
-          exact: true,
-        })
-        .tap();
+      await page.goto("/projects/project-1#source-records");
+      await page.getByRole("button", { name: "Edit notes", exact: true }).tap();
       await expect(notes).toHaveValue(long);
       await page.setViewportSize({ width, height: 844 });
       await page.getByRole("button", { name: "Toggle sidebar" }).tap();

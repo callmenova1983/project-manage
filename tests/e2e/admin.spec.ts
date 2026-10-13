@@ -23,6 +23,9 @@ for (const width of [1536, 375])
     await page
       .getByLabel("Email", { exact: true })
       .fill("intake-member@example.test");
+    await page
+      .getByLabel("Use configured initial password", { exact: true })
+      .uncheck();
     await page.getByRole("button", { name: "Save user", exact: true }).click();
     const row = page
       .locator(".admin-user")
@@ -167,7 +170,9 @@ test("ordinary formal member cannot access administration", async ({
 }) => {
   const credentials = JSON.parse(readFileSync("data/e2e-login.json", "utf8"));
   await page.goto("/admin");
-  await page.getByLabel("Email", { exact: true }).fill(credentials.email);
+  await page
+    .getByLabel("Login name or email", { exact: true })
+    .fill(credentials.email);
   await page.getByLabel("Password", { exact: true }).fill(credentials.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
@@ -191,6 +196,9 @@ test("formal admin creates a pending account; recipient activates once and signs
   await page
     .getByLabel("Email", { exact: true })
     .fill("recipient@example.test");
+  await page
+    .getByLabel("Use configured initial password", { exact: true })
+    .uncheck();
   await page.getByRole("button", { name: "Save user", exact: true }).click();
   const row = page
     .locator(".admin-user")
@@ -232,7 +240,9 @@ test("formal admin creates a pending account; recipient activates once and signs
     await p
       .getByRole("button", { name: "Continue to sign in", exact: true })
       .click();
-    await p.getByLabel("Email", { exact: true }).fill("recipient@example.test");
+    await p
+      .getByLabel("Login name or email", { exact: true })
+      .fill("recipient@example.test");
     await p.getByLabel("Password", { exact: true }).fill(password);
     await p.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(

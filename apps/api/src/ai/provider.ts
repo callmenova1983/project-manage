@@ -155,7 +155,27 @@ export async function generateQwen(
     outputTokens: number | null;
   }) => void,
 ): Promise<Suggestion[]> {
-  const body = JSON.stringify(makeRequest(source, projects, config));
+  return generateJson(
+    makeRequest(source, projects, config),
+    config,
+    reserveAttempt,
+    (value) => validateSuggestions(value, source, projects),
+    fetchImpl,
+    reportUsage,
+  );
+}
+export async function generateJson<T>(
+  request: unknown,
+  config: QwenConfig,
+  reserveAttempt: () => void,
+  validate: (value: unknown) => T,
+  fetchImpl: typeof fetch = fetch,
+  reportUsage?: (usage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+  }) => void,
+): Promise<T> {
+  const body = JSON.stringify(request);
   for (let attempt = 0; attempt <= config.retries; attempt++) {
     reserveAttempt();
     const signal = AbortSignal.timeout(config.timeoutMs);
@@ -235,11 +255,7 @@ export async function generateQwen(
         });
       if (result.model && result.model !== config.model)
         throw new Error("Unexpected model");
-      return validateSuggestions(
-        JSON.parse(result.choices[0]!.message.content),
-        source,
-        projects,
-      );
+      return validate(JSON.parse(result.choices[0]!.message.content));
     } catch {
       throw new AiError(
         502,

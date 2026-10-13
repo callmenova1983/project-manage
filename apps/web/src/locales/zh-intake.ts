@@ -45,6 +45,17 @@ export const intakeZh: Record<string, string> = {
   Client: "客户",
   "Original source": "原始内容",
   "Quick intake": "快速录入",
+  "Create items": "创建",
+  "Paste text or upload a file": "粘贴文字或上传表格",
+  "Fix the details below before creating": "有几处信息需要确认，请修改后创建。",
+  "Check these details": "需要确认的信息",
+  "Files are read in your browser. Click Create to save.":
+    "文件在浏览器内读取，点击创建后保存。",
+  "Paste text or upload a file, then review": "粘贴文字或上传表格，审阅后创建",
+  "Close quick intake": "收起快速录入",
+  "Upload file": "上传文件",
+  "Or drop a file": "或拖入文件",
+  "Intake help": "录入说明",
   "Turn notes and spreadsheets into projects and tasks.":
     "把文字和表格整理成项目与任务。",
   "Intake steps": "录入步骤",

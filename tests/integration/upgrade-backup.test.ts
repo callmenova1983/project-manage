@@ -61,9 +61,10 @@ it("upgrades a synthetic v3 database without changing users/projects and restore
         .prepare("SELECT version FROM migrations ORDER BY version")
         .all()
         .map((r) => r.version),
-    ).toEqual([1, 2, 3, 4, 5]);
+    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     expect(upgraded.db.prepare("SELECT * FROM users").get()).toMatchObject({
       ...originalUser,
+      username: "syntheticm",
       role: "member",
       status: "active",
       requires_activation: 0,

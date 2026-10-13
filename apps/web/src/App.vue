@@ -14,6 +14,7 @@ import {
   PhArrowRight,
   PhSpinnerGap,
   PhX,
+  PhUsers,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "./stores/workspace";
 import { embeddedDemo } from "./services/mode";
@@ -33,7 +34,8 @@ const expanded = ref(false),
   signingIn = ref(false);
 const nav = [
   { path: "/projects", label: "Projects", icon: PhSquaresFour },
-  { path: "/tasks", label: "All tasks", icon: PhCheckSquare },
+  { path: "/tasks", label: "Tasks", icon: PhCheckSquare },
+  { path: "/directory", label: "Team", icon: PhUsers },
   { path: "/activity", label: "Activity", icon: PhClockCounterClockwise },
   { path: "/meetings", label: "Meeting notes", icon: PhNotePencil },
   { path: "/intake", label: "Quick intake", icon: PhNotePencil },
@@ -148,7 +150,9 @@ function search() {
   >
     <section class="login-card" aria-labelledby="connection-title">
       <div class="login-preferences"><PreferencesControls /></div>
-      <div class="brand-mark"><PhArrowClockwise :size="30" /></div>
+      <div class="brand-mark">
+        <PhArrowClockwise :size="30" />
+      </div>
       <h1 id="connection-title">{{ t("Workspace connection interrupted") }}</h1>
       <p>
         {{
@@ -190,10 +194,12 @@ function search() {
       </p>
       <h2>{{ t("Welcome back") }}</h2>
       <label
-        >{{ t("Email")
+        >{{ t("Login name or email")
         }}<input
           v-model="email"
-          type="email"
+          type="text"
+          autocapitalize="none"
+          :spellcheck="false"
           autocomplete="username"
           required
           autofocus /></label
@@ -314,7 +320,7 @@ function search() {
         </div>
         <nav class="horizontal-nav" :aria-label="t('Workspace navigation')">
           <RouterLink
-            v-for="item in nav.slice(0, 3)"
+            v-for="item in nav.slice(0, 4)"
             :key="item.path"
             :to="item.path"
             ><component :is="item.icon" :size="16" />{{

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   createThemePreference,
+  ACCENT_STORAGE_KEY,
   THEME_STORAGE_KEY,
 } from "../../apps/web/src/composables/theme";
 
@@ -78,6 +79,21 @@ describe("theme preference", () => {
     expect(controller.preference.value).toBeNull();
     expect(createThemePreference({}).theme.value).toBe("dark");
     controller.dispose();
+  });
+
+  it("defaults to blue and persists accent independently of the light/dark preference", () => {
+    const env = environment("dark");
+    env.values.set(ACCENT_STORAGE_KEY, "purple");
+    const preference = createThemePreference(env);
+    expect(preference.accent.value).toBe("blue");
+    preference.setAccent("teal");
+    preference.setTheme("light");
+    expect(env.values.get(ACCENT_STORAGE_KEY)).toBe("teal");
+    const restored = createThemePreference(env);
+    expect(restored.accent.value).toBe("teal");
+    expect(restored.theme.value).toBe("light");
+    restored.dispose();
+    preference.dispose();
   });
 
   it("remains usable when browser storage is blocked", () => {

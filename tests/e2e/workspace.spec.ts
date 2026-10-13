@@ -479,10 +479,11 @@ test("moving an old task into this week clears old planned days", async ({
 test("inline notes preserve text, cancellation and reviewed dates", async ({
   page,
 }) => {
-  await openFirst(page);
+  await page.goto("/projects/project-1#source-records");
   await expect(
     page.getByRole("region", { name: "Readable original table 1" }),
   ).toContainText("Portal access");
+  await page.getByRole("button", { name: "Edit notes", exact: true }).click();
   const notes = page.getByRole("textbox", {
     name: "Original notes for Atlas Customer Portal",
   });
@@ -490,6 +491,7 @@ test("inline notes preserve text, cancellation and reviewed dates", async ({
   await notes.fill("Unsaved notes");
   page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "Cancel notes", exact: true }).click();
+  await page.getByRole("button", { name: "Edit notes", exact: true }).click();
   await expect(notes).toHaveValue(original);
   const exact =
     "\n  Decision\tOwner\nAtlas access ready\tAlex\nReview next Friday\n  Acceptance follows ✓  ";
@@ -497,7 +499,8 @@ test("inline notes preserve text, cancellation and reviewed dates", async ({
   await page.getByRole("button", { name: "Save notes", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Project updated");
   await page.reload();
-  await openFirst(page);
+  await page.goto("/projects/project-1#source-records");
+  await page.getByRole("button", { name: "Edit notes", exact: true }).click();
   await expect(notes).toHaveValue(exact);
   await page.getByRole("button", { name: /Review date/ }).click();
   await expect(page.locator(".date-review pre")).toContainText(
@@ -614,7 +617,9 @@ test("login, invalid credentials and sign out", async ({ page }) => {
     page.getByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
   const credentials = JSON.parse(readFileSync("data/e2e-login.json", "utf8"));
-  await page.getByLabel("Email", { exact: true }).fill(credentials.email);
+  await page
+    .getByLabel("Login name or email", { exact: true })
+    .fill(credentials.email);
   await page.getByLabel("Password", { exact: true }).fill("invalid-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText(

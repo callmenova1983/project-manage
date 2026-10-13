@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import {
+  channelEntries,
+  projectChannel,
+} from "../../../../packages/domain/channels";
+import {
   stageIds as stages,
   catalogs,
   catalogLabel,
 } from "../composables/catalogs";
-import { computed, ref } from "vue";
+import { computed, ref, watch, nextTick } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import IntakeView from "./IntakeView.vue";
 import {
   PhMagnifyingGlass,
   PhPlus,
@@ -14,9 +20,11 @@ import {
   PhFunnel,
   PhNotePencil,
   PhSquaresFour,
+  PhDotsSixVertical,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
 import {
+  projectInput,
   statuses,
   disciplines,
   statistics,
@@ -29,14 +37,34 @@ import { stageLabels } from "../locales/en";
 import { confirmDiscard } from "../composables/unsaved";
 import StatusBadge from "../components/StatusBadge.vue";
 import ProjectEditor from "../components/ProjectEditor.vue";
+import ClientLabel from "../components/ClientLabel.vue";
+import ProjectQuickActions from "../components/ProjectQuickActions.vue";
+import { api } from "../services/api";
+import { orderedProjectIds } from "../../../../packages/domain/project-order";
+import ScopeWork from "../components/ScopeWork.vue";
 import TaskList from "../components/TaskList.vue";
-import InlineNotes from "../components/InlineNotes.vue";
+import InlineUpdate from "../components/InlineUpdate.vue";
 import PasteTasks from "../components/PasteTasks.vue";
 import { t, formatDate, formatNumber } from "../locales";
 import TaskDistribution from "../components/TaskDistribution.vue";
 import ProjectStages from "../components/ProjectStages.vue";
 import WeeklyChanges from "../components/WeeklyChanges.vue";
 import NextWork from "../components/NextWork.vue";
+const route = useRoute(),
+  router = useRouter();
+const intakeOpen = computed(() => route.query.intake === "1");
+async function toggleIntake() {
+  if (intakeOpen.value) return;
+  if (!confirmDiscard()) return;
+  await router.replace({ query: { ...route.query, intake: "1" } });
+}
+async function closeIntake() {
+  const query = { ...route.query };
+  delete query.intake;
+  await router.replace({ query });
+  await nextTick();
+  document.querySelector<HTMLButtonElement>("[data-intake-toggle]")?.focus();
+}
 const insightsOpen = ref(false);
 const store = useWorkspace();
 const query = ref(""),
@@ -44,11 +72,176 @@ const query = ref(""),
   owner = ref(""),
   discipline = ref(""),
   category = ref(""),
-  sort = ref("updated"),
+  channel = ref(""),
+  sort = ref("manual"),
   expanded = ref(""),
   editing = ref(""),
   creating = ref(false),
   pasting = ref("");
+try {
+  const saved = localStorage.getItem("project-manage-project-sort");
+  if (["manual", "updated", "name"].includes(saved ?? "")) sort.value = saved!;
+} catch {
+  /* Session sorting still works. */
+}
+watch(sort, (value) => {
+  try {
+    localStorage.setItem("project-manage-project-sort", value);
+  } catch {
+    /* Session sorting still works. */
+  }
+});
+const order = computed(() =>
+  orderedProjectIds(store.data.projects, store.data.projectOrder),
+);
+const orderRanks = computed(
+  () => new Map(order.value.map((id, index) => [id, index])),
+);
+const actionRefs = new Map<string, InstanceType<typeof ProjectQuickActions>>();
+const dragSource = ref(""),
+  dropTarget = ref(""),
+  dropZone = ref<"before" | "after" | "merge">("before"),
+  orderError = ref("");
+let dragProject: Project | null = null;
+let dragOrder: string[] = [],
+  dragRevision = 0;
+function dragStart(project: Project, event: DragEvent) {
+  if (store.busy || project.intakeInbox || !confirmDiscard()) {
+    event.preventDefault();
+    return;
+  }
+  dragProject = { ...project, ...projectInput.strip().parse(project) };
+  dragSource.value = project.id;
+  dragOrder = [...order.value];
+  dragRevision = store.data.revision;
+  event.dataTransfer?.setData("application/x-pm-project", project.id);
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    const row = (event.currentTarget as HTMLElement).closest(".project-row");
+    if (row) event.dataTransfer.setDragImage(row, 30, 20);
+  }
+}
+function dragOver(project: Project, event: DragEvent) {
+  if (
+    !dragSource.value ||
+    dragSource.value === project.id ||
+    project.intakeInbox ||
+    store.busy
+  )
+    return;
+  event.preventDefault();
+  const row = (event.currentTarget as HTMLElement).querySelector(
+    ".project-row",
+  )!;
+  const rect = row.getBoundingClientRect(),
+    ratio = (event.clientY - rect.top) / rect.height;
+  dropTarget.value = project.id;
+  dropZone.value = ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "merge";
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+}
+function endDrag() {
+  dragSource.value = "";
+  dragProject = null;
+  dropTarget.value = "";
+}
+function dragLeave(event: DragEvent) {
+  if (
+    !(event.currentTarget as HTMLElement).contains(
+      event.relatedTarget as Node | null,
+    )
+  )
+    dropTarget.value = "";
+}
+async function moveProject(
+  source: string,
+  target: string,
+  after: boolean,
+  ids = [...order.value],
+  revision = store.data.revision,
+) {
+  orderError.value = "";
+  const next = ids.filter((id) => id !== source),
+    index = next.indexOf(target);
+  if (index < 0 || !ids.includes(source)) return;
+  next.splice(index + (after ? 1 : 0), 0, source);
+  try {
+    await store.operation(
+      () => api.saveProjectOrder({ projectIds: next, revision }),
+      t("Project order saved"),
+    );
+    sort.value = "manual";
+  } catch (e) {
+    orderError.value = (e as Error).message;
+  }
+}
+async function drop(project: Project, event: DragEvent) {
+  event.preventDefault();
+  const source = dragSource.value,
+    zone = dropZone.value;
+  if (
+    !source ||
+    source === project.id ||
+    dropTarget.value !== project.id ||
+    event.dataTransfer?.getData("application/x-pm-project") !== source
+  ) {
+    endDrag();
+    return;
+  }
+  endDrag();
+  if (zone === "merge") await actionRefs.get(project.id)?.mergeFrom(source);
+  else
+    await moveProject(
+      source,
+      project.id,
+      zone === "after",
+      dragOrder,
+      dragRevision,
+    );
+}
+async function moveToStage(targetStage: string, event: DragEvent) {
+  event.preventDefault();
+  const source = dragProject;
+  if (
+    !source ||
+    store.busy ||
+    event.dataTransfer?.getData("application/x-pm-project") !== source.id
+  ) {
+    endDrag();
+    return;
+  }
+  const permitted =
+    targetStage === "unclassified" ||
+    catalogs.value.stages.some((s) => s.id === targetStage && !s.archived);
+  endDrag();
+  if (!permitted || targetStage === source.stage) return;
+  orderError.value = "";
+  try {
+    await store.operation(
+      () =>
+        api.saveProject(
+          { ...projectInput.strip().parse(source), stage: targetStage },
+          source.id,
+          source.version,
+        ),
+      t("Moved {name} to {stage}", {
+        name: source.shortName || source.name,
+        stage: catalogLabel("stages", targetStage),
+      }),
+    );
+    if (stage.value === source.stage) stage.value = targetStage;
+  } catch (e) {
+    orderError.value = t(
+      e instanceof Error ? e.message : "Changes could not be saved",
+    );
+  }
+}
+function moveByKey(project: Project, event: KeyboardEvent) {
+  if (!["ArrowUp", "ArrowDown"].includes(event.key) || store.busy) return;
+  event.preventDefault();
+  const index = projects.value.findIndex((p) => p.id === project.id),
+    next = projects.value[index + (event.key === "ArrowUp" ? -1 : 1)];
+  if (next) void moveProject(project.id, next.id, event.key === "ArrowDown");
+}
 const scope = ref<"week" | "today">("week");
 const scopeDate = computed(() => {
   const format = (date: Date) =>
@@ -72,18 +265,21 @@ const projects = computed(() =>
     .filter(
       (p) =>
         (!query.value ||
-          `${p.name} ${p.client} ${p.latestUpdate} ${p.owner}`
+          `${p.name} ${p.shortName ?? ""} ${p.aliases.join(" ")} ${p.client} ${p.latestUpdate} ${p.owner}`
             .toLowerCase()
             .includes(query.value.toLowerCase())) &&
+        (!channel.value || projectChannel(p) === channel.value) &&
         (!stage.value || p.stage === stage.value) &&
         (!owner.value || p.owner === owner.value) &&
         (!discipline.value || p.discipline === discipline.value) &&
         (!category.value || p.categoryIds?.includes(category.value)),
     )
     .sort((a, b) =>
-      sort.value === "name"
-        ? a.name.localeCompare(b.name)
-        : (b.reportedAt ?? "").localeCompare(a.reportedAt ?? ""),
+      sort.value === "manual"
+        ? (orderRanks.value.get(a.id) ?? 0) - (orderRanks.value.get(b.id) ?? 0)
+        : sort.value === "name"
+          ? a.name.localeCompare(b.name)
+          : (b.reportedAt ?? "").localeCompare(a.reportedAt ?? ""),
     ),
 );
 const filtered = computed(
@@ -93,7 +289,8 @@ const filtered = computed(
       stage.value ||
       owner.value ||
       discipline.value ||
-      category.value
+      category.value ||
+      channel.value
     ),
 );
 function clear() {
@@ -102,6 +299,7 @@ function clear() {
   owner.value = "";
   discipline.value = "";
   category.value = "";
+  channel.value = "";
 }
 function tasks(id: string) {
   return store.data.tasks.filter((t) => t.projectId === id);
@@ -166,9 +364,15 @@ function edit(id: string) {
         >
       </div>
       <div class="heading-actions">
-        <RouterLink to="/intake" class="button secondary">{{
-          t("Quick intake")
-        }}</RouterLink>
+        <button
+          class="button secondary"
+          data-intake-toggle
+          :aria-expanded="intakeOpen"
+          aria-controls="project-intake-panel"
+          @click="toggleIntake"
+        >
+          {{ t("Quick intake") }}
+        </button>
         <RouterLink to="/meetings" class="button secondary"
           ><PhNotePencil :size="17" />{{
             t("Review meeting notes")
@@ -178,6 +382,12 @@ function edit(id: string) {
         </button>
       </div>
     </section>
+    <IntakeView
+      v-if="intakeOpen"
+      id="project-intake-panel"
+      embedded
+      @close="closeIntake"
+    />
     <section class="work-scope-bar" :aria-label="t('Workspace overview')">
       <div class="scope-switch" :aria-label="t('Project work scope')">
         <button
@@ -223,7 +433,11 @@ function edit(id: string) {
     </section>
     <ProjectStages
       :projects="portfolioProjects"
+      :tasks="store.data.tasks"
       :selected="stage"
+      :drag-project="store.data.projects.find((p) => p.id === dragSource)"
+      :busy="store.busy"
+      @move="moveToStage"
       @select="stage = $event"
     />
     <p v-if="inbox" class="muted">
@@ -268,10 +482,17 @@ function edit(id: string) {
           /><kbd>/</kbd></label
         >
         <div class="filter-controls">
-          <PhFunnel :size="16" class="muted" /><select
-            v-model="stage"
-            :aria-label="t('Filter by stage')"
-          >
+          <PhFunnel :size="16" class="muted" />
+          <select v-model="channel" aria-label="按渠道筛选项目">
+            <option value="">全部渠道</option>
+            <option
+              v-for="entry in channelEntries(catalogs)"
+              :key="entry.id"
+              :value="entry.id"
+            >
+              {{ entry.shortName }}{{ entry.archived ? "（已停用）" : "" }}
+            </option></select
+          ><select v-model="stage" :aria-label="t('Filter by stage')">
             <option value="">{{ t("All stages") }}</option>
             <option value="unclassified">{{ stageLabels.unclassified }}</option>
             <option v-for="s in stages" :key="s" :value="s">
@@ -303,12 +524,23 @@ function edit(id: string) {
             </option></select
           ><select v-model="sort" :aria-label="t('Sort projects')">
             <option value="updated">{{ t("Latest report") }}</option>
-            <option value="name">{{ t("Name A–Z") }}</option></select
+            <option value="name">{{ t("Name A–Z") }}</option>
+            <option value="manual">{{ t("Manual order") }}</option></select
           ><button v-if="filtered" class="text-button" @click="clear">
             {{ t("Clear") }}
           </button>
         </div>
       </div>
+      <p class="drag-instructions muted">
+        {{
+          t(
+            "Drag the grip to a stage card to change stage, between rows to reorder, or onto a project to merge. Arrow keys also move a focused grip.",
+          )
+        }}
+      </p>
+      <p v-if="orderError" class="error-box" role="alert">
+        {{ t(orderError) }}
+      </p>
       <div v-if="!projects.length" class="empty">
         <PhMagnifyingGlass :size="32" />
         <h2>
@@ -344,7 +576,7 @@ function edit(id: string) {
         <div class="project-table-head">
           <span>{{ t("Project") }}</span
           ><span>{{ t("Stage") }}</span
-          ><span>{{ t("Latest reported update") }}</span
+          ><span>{{ t("Latest progress log") }}</span
           ><span>{{
             t(scope === "week" ? "This week's work" : "Today's work")
           }}</span
@@ -357,10 +589,36 @@ function edit(id: string) {
           v-for="project in projects"
           :key="project.id"
           class="project-record"
-          :class="{ expanded: expanded === project.id }"
+          :class="{
+            expanded: expanded === project.id,
+            dragging: dragSource === project.id,
+            'drop-before': dropTarget === project.id && dropZone === 'before',
+            'drop-after': dropTarget === project.id && dropZone === 'after',
+            'drop-merge': dropTarget === project.id && dropZone === 'merge',
+          }"
+          @dragover="dragOver(project, $event)"
+          @drop="drop(project, $event)"
+          @dragleave="dragLeave"
         >
+          <span
+            v-if="dropTarget === project.id && dropZone === 'merge'"
+            class="project-drop-hint"
+            >{{ t("Release to merge into this project") }}</span
+          >
           <div class="project-row">
             <div class="project-cell">
+              <button
+                class="icon-button project-drag-grip"
+                :draggable="!store.busy && !project.intakeInbox"
+                :disabled="store.busy || project.intakeInbox"
+                :aria-label="t('Move {name}', { name: project.name })"
+                :title="t('Drag to reorder or merge')"
+                @dragstart.stop="dragStart(project, $event)"
+                @dragend="endDrag"
+                @keydown="moveByKey(project, $event)"
+              >
+                <PhDotsSixVertical :size="15" />
+              </button>
               <button
                 class="icon-button expand-button"
                 :aria-label="t('Expand {name}', { name: project.name })"
@@ -376,10 +634,28 @@ function edit(id: string) {
                 <PhSquaresFour :size="18" weight="duotone" />
               </div>
               <div class="project-name">
-                <RouterLink :to="`/projects/${project.id}`">{{
-                  project.name
-                }}</RouterLink
-                ><span>{{ project.client || t("Client to complete") }}</span>
+                <ProjectQuickActions
+                  :ref="
+                    (el) => {
+                      if (el)
+                        actionRefs.set(
+                          project.id,
+                          el as InstanceType<typeof ProjectQuickActions>,
+                        );
+                      else actionRefs.delete(project.id);
+                    }
+                  "
+                  :project="project"
+                  showName
+                />
+                <ClientLabel :client="project.client" />
+                <small class="muted" style="display: block; font-size: 10px"
+                  >渠道：{{
+                    channelEntries(catalogs).find(
+                      (c) => c.id === projectChannel(project),
+                    )?.shortName ?? projectChannel(project)
+                  }}</small
+                >
               </div>
             </div>
             <StatusBadge :stage="project.stage" />
@@ -387,28 +663,18 @@ function edit(id: string) {
               class="latest-update"
               :data-label="t('Latest reported update')"
             >
-              <p :title="project.latestUpdate">
-                {{ project.latestUpdate || t("No update reported yet.") }}
-              </p>
+              <InlineUpdate :project="project" compact />
               <span
                 >{{ reportTime(project) }} ·
                 {{ project.reportedBy ?? t("Reporter unavailable") }}</span
               >
             </div>
             <div class="project-week" :data-label="t('Planned work')">
-              <RouterLink
-                v-for="task in scopedTasks(project.id).slice(0, 2)"
-                :key="task.id"
-                :to="`/projects/${project.id}`"
-                class="week-task"
-                ><StatusBadge :status="task.status" /><span
-                  :title="task.title"
-                  >{{ task.title }}</span
-                ></RouterLink
-              >
-              <span v-if="!scopedTasks(project.id).length" class="muted">{{
-                t("No work planned")
-              }}</span>
+              <ScopeWork
+                :projectId="project.id"
+                :tasks="scopedTasks(project.id)"
+                :scope="scope"
+              />
             </div>
             <div class="project-scope-summary">
               <RouterLink
@@ -454,11 +720,15 @@ function edit(id: string) {
               @saved="saved"
             />
             <div v-else class="expanded-columns">
-              <InlineNotes :project="project" />
               <section class="inline-subtasks">
                 <div class="section-heading">
                   <h4>{{ t("Tasks & subtasks") }}</h4>
                   <div>
+                    <RouterLink
+                      :to="`/projects/${project.id}#source-records`"
+                      class="text-button"
+                      >{{ t("View source records") }}</RouterLink
+                    >
                     <button class="text-button" @click="edit(project.id)">
                       {{ t("Edit project") }}</button
                     ><button
@@ -499,6 +769,123 @@ function edit(id: string) {
 </template>
 
 <style scoped>
+.expanded-columns {
+  display: block;
+}
+.inline-task-scroll {
+  max-height: none;
+  overflow: visible;
+}
+.inline-subtasks :deep(.task-row) {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  align-items: center;
+  min-height: 38px;
+  padding: 3px 0;
+}
+.inline-subtasks :deep(.task-name) {
+  flex: 1;
+  min-width: 0;
+}
+.inline-subtasks :deep(.task-status select) {
+  width: 80px;
+  min-height: 28px;
+  height: 28px;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+.inline-subtasks :deep(.task-row > .badge) {
+  display: none;
+}
+.inline-subtasks :deep(.task-assignee),
+.inline-subtasks :deep(.task-date) {
+  display: block;
+  min-width: 80px;
+  font-size: 11px;
+}
+.inline-subtasks :deep(.task-row .icon-button) {
+  min-height: 28px;
+  height: 28px;
+  width: 28px;
+  padding: 4px;
+}
+.inline-subtasks :deep(.field-value) {
+  padding: 3px 4px;
+  min-height: 28px;
+  font-size: 12px;
+}
+@media (max-width: 760px) {
+  .inline-subtasks :deep(.task-row) {
+    flex-wrap: wrap;
+  }
+  .inline-subtasks :deep(.task-name) {
+    flex-basis: calc(100% - 96px);
+  }
+  .inline-subtasks :deep(.task-row .icon-button),
+  .inline-subtasks :deep(.field-value) {
+    min-height: 36px;
+  }
+}
+
+.project-row {
+  height: auto;
+}
+.drag-instructions {
+  font-size: 11px;
+  margin: 6px 0;
+}
+.project-record {
+  position: relative;
+}
+.project-drag-grip {
+  width: 18px;
+  min-width: 18px;
+  height: 28px;
+  padding: 0;
+  cursor: grab;
+  color: var(--muted);
+}
+.project-drag-grip:active {
+  cursor: grabbing;
+}
+.project-record.dragging {
+  opacity: 0.45;
+}
+.project-record.drop-merge > .project-row {
+  background: var(--surface-selected);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.project-record.drop-before::before,
+.project-record.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent);
+  z-index: 3;
+  pointer-events: none;
+}
+.project-record.drop-before::before {
+  top: -2px;
+}
+.project-record.drop-after::after {
+  bottom: -2px;
+}
+.project-drop-hint {
+  position: absolute;
+  top: -9px;
+  left: 45px;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: white;
+  z-index: 4;
+  pointer-events: none;
+}
 .overview-distribution {
   width: 130px;
   flex-shrink: 0;

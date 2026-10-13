@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { t, formatDate, formatNumber } from "../locales";
+import { t, formatNumber } from "../locales";
 import { computed, ref } from "vue";
 import {
   PhPlus,
@@ -18,6 +18,9 @@ import { useWorkspace } from "../stores/workspace";
 import { statusLabels } from "../locales/en";
 import { confirmDiscard } from "../composables/unsaved";
 import TaskEditor from "./TaskEditor.vue";
+import TaskQuickField from "./TaskQuickField.vue";
+import TaskReviewPanel from "./TaskReviewPanel.vue";
+import TaskQuickAdd from "./TaskQuickAdd.vue";
 import StatusBadge from "./StatusBadge.vue";
 const props = defineProps<{
   tasks: Task[];
@@ -106,12 +109,7 @@ function close() {
           </select>
         </div>
         <div class="task-name">
-          <button
-            class="text-button"
-            @click="confirmDiscard() && (editing = task)"
-          >
-            {{ task.title }}</button
-          ><RouterLink
+          <TaskQuickField :task="task" field="title" /><RouterLink
             v-if="showProject"
             class="muted task-project"
             :to="`/projects/${task.projectId}`"
@@ -124,16 +122,22 @@ function close() {
               total: formatNumber(children(task).total),
             })
           }}</span>
+          <TaskReviewPanel :task="task" />
         </div>
-        <StatusBadge v-if="!parents.has(task.id)" :status="task.status" /><span
+        <StatusBadge
+          v-if="!parents.has(task.id)"
+          :status="task.status"
+        /><TaskQuickField
           class="task-assignee muted"
-          >{{ t(task.assignee || "Unassigned") }}</span
-        ><span class="task-date muted">{{
-          task.dueDate
-            ? formatDate(task.dueDate, { month: "short", day: "numeric" })
-            : t("No due date")
-        }}</span
-        ><button
+          :task="task"
+          field="assignee"
+          :copy-targets="ordered"
+        /><TaskQuickField
+          class="task-date muted"
+          :task="task"
+          field="dueDate"
+          :copy-targets="ordered"
+        /><button
           v-if="projectId"
           class="icon-button"
           :aria-label="t('Add subtask to {title}', { title: task.title })"
@@ -151,14 +155,19 @@ function close() {
           @click="confirmDiscard() && (editing = task)"
         >
           <PhPencilSimple :size="15" />
-        </button></div></template
-    ><TaskEditor
-      v-if="adding && projectId"
+        </button>
+      </div>
+      <TaskQuickAdd
+        v-if="adding && projectId && parentId === task.id"
+        :projectId="projectId"
+        :parentId="parentId"
+        @close="close" /></template
+    ><TaskQuickAdd
+      v-if="adding && projectId && !parentId"
       :key="parentId ?? 'root'"
       :projectId="projectId"
       :parentId="parentId"
       @close="close"
-      @saved="close"
     /><button
       v-if="projectId && !adding"
       class="text-button add-task"

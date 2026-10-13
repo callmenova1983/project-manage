@@ -1,4 +1,24 @@
 export const adminZh: Record<string, string> = {
+  "Qwen API key": "Qwen API Key 配置",
+  "API key": "API Key（百炼密钥）",
+  "Replace API key": "更换 API Key",
+  "Save API key": "保存 API Key",
+  "API endpoint (optional)": "接口地址（可选）",
+  "Total allowed attempts": "允许调用总次数",
+  "Allowance expires": "调用授权有效期",
+  "Choose a future allowance expiry": "请选择未来的调用授权到期时间",
+  "Enter your Model Studio API key. It is saved encrypted on the server and never displayed again. Saving does not call the model.":
+    "填写百炼 API Key。密钥加密保存在服务器，保存后不回显，也不会调用模型。",
+  "Leave the endpoint empty to use the selected region's default. The attempt allowance includes previous calls and is not a monetary billing limit.":
+    "接口地址留空时使用所选区域的默认地址。总次数包含已使用次数；费用上限需在百炼控制台设置。",
+  "Saving an API key leaves external calls disabled. Enable calls separately when you are ready. Saved keys are never returned to the browser.":
+    "保存 API Key 后外部调用仍关闭。准备好后再单独勾选启用；已保存的密钥不会返回浏览器。",
+  "API key saved. External calls remain disabled.":
+    "API Key 已保存，外部调用仍关闭。",
+  "This credential is managed by the server operator":
+    "此密钥由服务端运维配置，请在服务端更新",
+  "API keys cannot be saved in the browser demo.":
+    "浏览器演示不能保存真实 API Key。",
   "This file includes stage and category definitions. Importing changes to these definitions requires administrator access.":
     "此文件包含阶段和业务分类定义；导入定义变更需要管理员权限。",
   Administration: "管理后台",

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { locale, setLocale, t } from "../locales";
+import AccentSwitch from "./AccentSwitch.vue";
 import ThemeSwitch from "./ThemeSwitch.vue";
 </script>
 <template>
@@ -13,6 +14,7 @@ import ThemeSwitch from "./ThemeSwitch.vue";
       <option value="en" lang="en">EN</option>
       <option value="zh-CN" lang="zh-CN">中文</option>
     </select>
+    <AccentSwitch />
     <ThemeSwitch />
   </div>
 </template>

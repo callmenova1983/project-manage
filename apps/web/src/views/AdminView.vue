@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, nextTick } from "vue";
+import { computed, ref, onMounted, onBeforeUnmount, nextTick } from "vue";
 import {
   PhUsers,
   PhFolders,
@@ -9,9 +9,10 @@ import {
   PhPlus,
   PhArrowClockwise,
 } from "@phosphor-icons/vue";
+import ChannelManagement from "../components/ChannelManagement.vue";
 import { api } from "../services/api";
 import { useWorkspace } from "../stores/workspace";
-import { useUnsaved } from "../composables/unsaved";
+import { useUnsaved, confirmDiscard } from "../composables/unsaved";
 import { t, formatDate, formatNumber } from "../locales";
 import {
   defaultCatalogs,
@@ -31,6 +32,7 @@ const allowed = computed(
 );
 const tabs = [
   { id: "users", label: "Users", icon: PhUsers },
+  { id: "channels", label: "渠道与项目信息", icon: PhFolders },
   { id: "catalogs", label: "Stages & categories", icon: PhFolders },
   { id: "model", label: "Model settings", icon: PhCpu },
   { id: "logs", label: "Call logs", icon: PhListBullets },
@@ -56,6 +58,8 @@ const tab = ref<Tab>("users"),
   editingId = ref<string | null>(null),
   userDraft = ref({
     name: "",
+    username: "",
+    useStarterPassword: false,
     email: "",
     role: "member" as ManagedUser["role"],
     status: "pending" as ManagedUser["status"],
@@ -69,8 +73,11 @@ const tab = ref<Tab>("users"),
   activationLink = ref(""),
   activationExpiry = ref(""),
   copied = ref(false);
+const channelDirty = ref(false);
 const dirty = computed(
   () =>
+    channelDirty.value ||
+    !!apiKey.value ||
     (editingId.value !== null &&
       JSON.stringify(userDraft.value) !== userBaseline.value) ||
     (catalogBaseline.value !== "" &&
@@ -78,10 +85,23 @@ const dirty = computed(
     (modelBaseline.value !== "" &&
       JSON.stringify(model.value.settings) !== modelBaseline.value),
 );
+const apiKey = ref("");
+const credentialBaseUrl = ref("");
+const allowanceAttempts = ref(20);
+const initialExpiry = new Date(Date.now() + 7 * 86400000);
+const allowanceExpiry = ref(
+  new Date(initialExpiry.getTime() - initialExpiry.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16),
+);
+onBeforeUnmount(() => {
+  apiKey.value = "";
+});
 const mayDiscard = useUnsaved(dirty);
 const filteredLogs = computed(() =>
   logs.value.filter((l) => logMode.value === "all" || l.mode === logMode.value),
 );
+const starterPasswordConfigured = ref(false);
 const currentUser = computed(() =>
   users.value.find((u) => u.id === editingId.value),
 );
@@ -104,8 +124,10 @@ async function load() {
       api.modelAdmin(),
       api.modelLogs(),
       api.adminAudit(),
+      api.accountDefaults(),
     ]);
     [users.value, catalog.value, model.value, logs.value, audit.value] = result;
+    starterPasswordConfigured.value = result[5].starterPasswordConfigured;
     editingId.value = null;
     resetBaselines();
   } catch (e) {
@@ -116,7 +138,7 @@ async function load() {
 }
 function chooseTab(value: Tab) {
   if (value === tab.value) return;
-  if (!mayDiscard()) return;
+  if (!confirmDiscard()) return;
   editingId.value = null;
   catalog.value = JSON.parse(
     catalogBaseline.value || JSON.stringify(defaultCatalogs),
@@ -147,12 +169,22 @@ function editUser(user?: ManagedUser) {
   userDraft.value = user
     ? {
         name: user.name,
+        username: user.username ?? "",
+        useStarterPassword: false,
         email: user.email,
         role: user.role,
         status: user.status,
         version: user.version,
       }
-    : { name: "", email: "", role: "member", status: "pending", version: 1 };
+    : {
+        name: "",
+        username: "",
+        useStarterPassword: starterPasswordConfigured.value,
+        email: "",
+        role: "member",
+        status: "pending",
+        version: 1,
+      };
   userBaseline.value = JSON.stringify(userDraft.value);
   error.value = "";
 }
@@ -167,6 +199,8 @@ async function saveUser() {
       ? adminUserUpdate.parse(userDraft.value)
       : adminUserInput.parse({
           name: userDraft.value.name,
+          username: userDraft.value.username,
+          useStarterPassword: userDraft.value.useStarterPassword,
           email: userDraft.value.email,
           role: userDraft.value.role,
         });
@@ -248,6 +282,7 @@ async function saveCatalog() {
   }
 }
 async function saveModel() {
+  if (apiKey.value) return saveCredential();
   error.value = "";
   try {
     model.value = await store.operation(
@@ -258,6 +293,37 @@ async function saveModel() {
     audit.value = await api.adminAudit();
   } catch (e) {
     error.value = (e as Error).message;
+  }
+}
+async function saveCredential() {
+  error.value = "";
+  const expiresAt = new Date(allowanceExpiry.value);
+  if (
+    !Number.isFinite(expiresAt.getTime()) ||
+    expiresAt.getTime() <= Date.now()
+  ) {
+    error.value = t("Choose a future allowance expiry");
+    return;
+  }
+  try {
+    model.value = await store.operation(
+      () =>
+        api.saveModelCredential({
+          version: model.value.settings.version,
+          apiKey: apiKey.value,
+          region: model.value.settings.region,
+          baseUrl: credentialBaseUrl.value,
+          maxRequests: allowanceAttempts.value,
+          expiresAt: expiresAt.toISOString(),
+        }),
+      "API key saved. External calls remain disabled.",
+    );
+    modelBaseline.value = JSON.stringify(model.value.settings);
+    audit.value = await api.adminAudit();
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    apiKey.value = "";
   }
 }
 onMounted(load);
@@ -366,6 +432,15 @@ onMounted(load);
                   maxlength="80"
                   autocomplete="off" /></label
               ><label
+                >{{ t("Login name")
+                }}<input
+                  v-model="userDraft.username"
+                  maxlength="64"
+                  autocomplete="off"
+                  :placeholder="
+                    t('Leave blank to generate from name')
+                  " /></label
+              ><label
                 >{{ t("Email")
                 }}<input
                   v-model="userDraft.email"
@@ -398,7 +473,24 @@ onMounted(load);
                 </select></label
               >
             </div>
-            <p class="muted">
+            <label v-if="editingId === ''" class="check-label"
+              ><input
+                type="checkbox"
+                v-model="userDraft.useStarterPassword"
+                :disabled="!starterPasswordConfigured"
+              />{{ t("Use configured initial password") }}</label
+            >
+            <p
+              v-if="editingId === '' && userDraft.useStarterPassword"
+              class="muted"
+            >
+              {{
+                t(
+                  "The new account can sign in with its generated login name and the initial password supplied by the company.",
+                )
+              }}
+            </p>
+            <p v-else class="muted">
               {{
                 t(
                   editingId
@@ -450,7 +542,12 @@ onMounted(load);
             >
               <div>
                 <strong>{{ user.name }}</strong>
-                <p>{{ user.email }}</p>
+                <p>
+                  <strong class="account-login-name">{{
+                    user.username
+                  }}</strong>
+                  · {{ user.email }}
+                </p>
               </div>
               <div class="admin-user-tags">
                 <span>{{
@@ -492,6 +589,15 @@ onMounted(load);
             </article>
           </div>
         </template>
+        <ChannelManagement
+          v-else-if="tab === 'channels'"
+          :catalog="catalog"
+          @dirty="channelDirty = $event"
+          @saved="
+            catalog = $event;
+            catalogBaseline = JSON.stringify($event);
+          "
+        />
         <form v-else-if="tab === 'catalogs'" @submit.prevent="saveCatalog">
           <div class="section-heading">
             <div>
@@ -687,6 +793,78 @@ onMounted(load);
                 required
             /></label>
           </div>
+          <fieldset
+            v-if="model.credentialEditable"
+            class="credential-fields"
+            :disabled="store.busy"
+          >
+            <legend>{{ t("Qwen API key") }}</legend>
+            <p class="muted">
+              {{
+                t(
+                  "Enter your Model Studio API key. It is saved encrypted on the server and never displayed again. Saving does not call the model.",
+                )
+              }}
+            </p>
+            <div class="admin-fields">
+              <label
+                >{{
+                  t(model.credentialAvailable ? "Replace API key" : "API key")
+                }}
+                <input
+                  v-model="apiKey"
+                  type="password"
+                  autocomplete="new-password"
+                  spellcheck="false"
+                  maxlength="1024"
+                  placeholder="sk-…"
+                  :disabled="store.busy"
+                />
+              </label>
+              <label
+                >{{ t("API endpoint (optional)") }}
+                <input
+                  v-model="credentialBaseUrl"
+                  type="url"
+                  placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                  :disabled="store.busy"
+                />
+              </label>
+              <label
+                >{{ t("Total allowed attempts") }}
+                <input
+                  v-model.number="allowanceAttempts"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  :disabled="store.busy"
+                />
+              </label>
+              <label
+                >{{ t("Allowance expires") }}
+                <input
+                  v-model="allowanceExpiry"
+                  type="datetime-local"
+                  :disabled="store.busy"
+                />
+              </label>
+            </div>
+            <p class="muted">
+              {{
+                t(
+                  "Leave the endpoint empty to use the selected region's default. The attempt allowance includes previous calls and is not a monetary billing limit.",
+                )
+              }}
+            </p>
+            <button
+              type="button"
+              class="primary"
+              :disabled="store.busy || !apiKey"
+              @click="saveCredential"
+            >
+              {{ t("Save API key") }}
+            </button>
+          </fieldset>
           <label class="admin-check"
             ><input
               v-model="model.settings.enabled"
@@ -697,7 +875,7 @@ onMounted(load);
           <p class="muted">
             {{
               t(
-                "Server limits cannot be increased here. No API key is returned to or stored in this browser.",
+                "Saving an API key leaves external calls disabled. Enable calls separately when you are ready. Saved keys are never returned to the browser.",
               )
             }}
           </p>
@@ -716,14 +894,19 @@ onMounted(load);
             <button
               type="button"
               :disabled="store.busy"
-              @click="model.settings = JSON.parse(modelBaseline)"
+              @click="
+                model.settings = JSON.parse(modelBaseline);
+                apiKey = '';
+              "
             >
               {{ t("Cancel changes") }}</button
             ><button
               class="primary"
               type="submit"
               :disabled="
-                store.busy || JSON.stringify(model.settings) === modelBaseline
+                store.busy ||
+                !!apiKey ||
+                JSON.stringify(model.settings) === modelBaseline
               "
             >
               {{ t("Save model settings") }}
@@ -870,6 +1053,18 @@ onMounted(load);
 .admin-page {
   max-width: 1280px;
   margin: auto;
+}
+.credential-fields {
+  min-width: 0;
+  margin: 20px 0 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-raised);
+}
+.credential-fields legend {
+  padding: 0 6px;
+  font-weight: 600;
 }
 .admin-demo {
   padding: 12px 15px;

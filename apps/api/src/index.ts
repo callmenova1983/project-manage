@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { buildApp } from "./app.js";
 import { readQwenConfig } from "./ai/config.js";
+import { readWecomConfig } from "./wecom.js";
 import { configuredAppOrigin, configuredCodespacesRewrite } from "./origin.js";
 const production = process.env.NODE_ENV === "production";
 const origin = configuredAppOrigin(process.env);
@@ -13,6 +14,8 @@ const { app } = await buildApp({
   origin,
   production,
   qwen: readQwenConfig(process.env),
+  wecom: readWecomConfig(process.env),
+  starterPassword: process.env.PM_DEFAULT_USER_PASSWORD,
   originDiagnostics: process.env.ORIGIN_DIAGNOSTICS === "1",
   codespacesOriginRewrite,
 });

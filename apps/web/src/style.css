@@ -7,24 +7,24 @@
   --surface-subtle: #101a2b;
   --surface-raised: #1b263a;
   --surface-hover: #18253b;
-  --surface-selected: #202743;
+  --surface-selected: #203149;
   --border: #2a3447;
   --border-strong: #465672;
   --text: #e6e7ec;
   --text-secondary: #c3cbdc;
   --muted: #a1aec2;
-  --placeholder: #8996ac;
-  --accent: #b6a4ff;
-  --accent-bg: #2b2949;
-  --accent-border: #504774;
-  --accent-text: #d9d2ef;
-  --accent-selected: #42377d;
-  --on-accent-selected: #f0edff;
-  --primary: #6853dd;
-  --primary-border: #7965ef;
-  --primary-hover: #5c49ca;
+  --placeholder: #909fb5;
+  --accent: #85bdff;
+  --accent-bg: #203149;
+  --accent-border: #3b5779;
+  --accent-text: #c9e2ff;
+  --accent-selected: #224b79;
+  --on-accent-selected: #e5f1ff;
+  --primary: #1677d2;
+  --primary-border: #388cdc;
+  --primary-hover: #1267b8;
   --on-primary: #ffffff;
-  --focus: #b9adff;
+  --focus: #85bdff;
   --danger: #f4b7c3;
   --danger-bg: #302026;
   --danger-border: #703e48;
@@ -37,9 +37,9 @@
   --status-todo: #a6b2c5;
   --status-todo-bg: #263044;
   --status-todo-border: #3d4b61;
-  --status-in-progress: #b6a4ff;
-  --status-in-progress-bg: #2b2949;
-  --status-in-progress-border: #504774;
+  --status-in-progress: #85bdff;
+  --status-in-progress-bg: #203149;
+  --status-in-progress-border: #3b5779;
   --status-done: #85caa6;
   --status-done-bg: #21372e;
   --status-done-border: #355848;
@@ -49,9 +49,9 @@
   --stage-potential: #d2bf80;
   --stage-potential-bg: #323023;
   --stage-potential-border: #5e5334;
-  --stage-proposal: #cfb1df;
-  --stage-proposal-bg: #352b3c;
-  --stage-proposal-border: #594364;
+  --stage-proposal: #83cfc9;
+  --stage-proposal-bg: #203631;
+  --stage-proposal-border: #3b655f;
   --stage-approved: #a1bad9;
   --stage-approved-bg: #29313d;
   --stage-approved-border: #425771;
@@ -73,38 +73,38 @@
   --surface-subtle: #f8f9fc;
   --surface-raised: #edf1f7;
   --surface-hover: #eaf0f8;
-  --surface-selected: #eeebfb;
+  --surface-selected: #eaf3ff;
   --border: #d5ddea;
   --border-strong: #a9b7ca;
   --text: #1d293d;
   --text-secondary: #41516a;
   --muted: #5a697f;
   --placeholder: #5a697f;
-  --accent: #6248b9;
-  --accent-bg: #eee9fa;
-  --accent-border: #cbbded;
-  --accent-text: #524278;
-  --accent-selected: #e5ddfa;
-  --on-accent-selected: #4f3497;
-  --primary: #624bcf;
-  --primary-border: #5b44c6;
-  --primary-hover: #513ab9;
-  --focus: #5c43c1;
+  --accent: #1767af;
+  --accent-bg: #eaf3ff;
+  --accent-border: #abcdec;
+  --accent-text: #255782;
+  --accent-selected: #dcebfc;
+  --on-accent-selected: #1b5a92;
+  --primary: #1677d2;
+  --primary-border: #1169bd;
+  --primary-hover: #1267b8;
+  --focus: #1767af;
   --danger: #a3263e;
   --danger-bg: #fff0f2;
   --danger-border: #e0aab4;
   --danger-solid: #ad2c45;
   --danger-solid-hover: #912039;
-  --avatar-bg: #e8e3f4;
-  --avatar-border: #d2c8e7;
-  --avatar-text: #544376;
+  --avatar-bg: #e5eef9;
+  --avatar-border: #bdd1e8;
+  --avatar-text: #345a85;
   --success-text: #21583f;
   --status-todo: #55677f;
   --status-todo-bg: #edf1f7;
   --status-todo-border: #c5d0df;
-  --status-in-progress: #6346b6;
-  --status-in-progress-bg: #eee8fb;
-  --status-in-progress-border: #cabbeb;
+  --status-in-progress: #1767af;
+  --status-in-progress-bg: #eaf3ff;
+  --status-in-progress-border: #abcdec;
   --status-done: #246b4c;
   --status-done-bg: #e6f4eb;
   --status-done-border: #a6cfb7;
@@ -114,15 +114,85 @@
   --stage-potential: #78601d;
   --stage-potential-bg: #f8f1da;
   --stage-potential-border: #d8c899;
-  --stage-proposal: #805091;
-  --stage-proposal-bg: #f3eaf8;
-  --stage-proposal-border: #d5b9e0;
+  --stage-proposal: #276f68;
+  --stage-proposal-bg: #e6f4f0;
+  --stage-proposal-border: #afd1c5;
   --stage-approved: #385f94;
   --stage-approved-bg: #e8eff9;
   --stage-approved-border: #b2c7e3;
   --scrim: rgb(21 31 49 / 38%);
   --shadow-popover: 0 12px 45px rgb(32 48 77 / 16%);
   --shadow-card: 0 18px 65px rgb(32 48 77 / 10%);
+}
+
+/* Brand accents are independent of light/dark and shared with Element Plus. */
+:root[data-accent="teal"] {
+  --brand: #087f79;
+  --brand-bright: #63d8ca;
+}
+:root[data-accent="green"] {
+  --brand: #218343;
+  --brand-bright: #80d9a1;
+}
+:root[data-accent="orange"] {
+  --brand: #ad5e08;
+  --brand-bright: #ffc078;
+}
+:root[data-theme][data-accent]:not([data-accent="blue"]) {
+  --primary: var(--brand);
+  --primary-border: var(--brand);
+  --primary-hover: color-mix(in srgb, var(--brand) 85%, black);
+  --accent: var(--brand-bright);
+  --accent-bg: color-mix(in srgb, var(--brand) 18%, var(--surface));
+  --accent-border: color-mix(in srgb, var(--brand-bright) 40%, var(--border));
+  --accent-text: var(--brand-bright);
+  --accent-selected: color-mix(in srgb, var(--brand) 38%, var(--surface));
+  --on-accent-selected: var(--brand-bright);
+  --focus: var(--brand-bright);
+}
+:root[data-theme="light"][data-accent]:not([data-accent="blue"]) {
+  --accent: var(--brand);
+  --accent-bg: color-mix(in srgb, var(--brand) 8%, var(--surface));
+  --accent-text: var(--brand);
+  --accent-selected: color-mix(in srgb, var(--brand) 14%, var(--surface));
+  --on-accent-selected: var(--brand);
+  --focus: var(--brand);
+}
+:root[data-theme] {
+  --el-color-primary: var(--primary);
+  --el-color-primary-light-3: color-mix(
+    in srgb,
+    var(--primary) 70%,
+    var(--surface)
+  );
+  --el-color-primary-light-5: color-mix(
+    in srgb,
+    var(--primary) 50%,
+    var(--surface)
+  );
+  --el-color-primary-light-7: color-mix(
+    in srgb,
+    var(--primary) 30%,
+    var(--surface)
+  );
+  --el-color-primary-light-8: color-mix(
+    in srgb,
+    var(--primary) 20%,
+    var(--surface)
+  );
+  --el-color-primary-light-9: var(--accent-bg);
+  --el-color-primary-dark-2: var(--primary-hover);
+  --el-bg-color: var(--surface);
+  --el-bg-color-overlay: var(--surface);
+  --el-fill-color-blank: var(--surface);
+  --el-fill-color-light: var(--surface-raised);
+  --el-fill-color-lighter: var(--surface-subtle);
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text-secondary);
+  --el-text-color-secondary: var(--muted);
+  --el-border-color: var(--border);
+  --el-border-color-light: var(--border);
+  --el-border-color-lighter: var(--border);
 }
 
 :root {

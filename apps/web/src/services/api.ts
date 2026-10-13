@@ -1,8 +1,20 @@
+import type { TaskFieldCopyInput } from "../../../../packages/domain/task-field-copy";
+import type {
+  ProgressMaterial,
+  ProgressAnalysis,
+  ProgressAnalysisInput,
+} from "../../../../packages/domain/progress-material";
+import type { TaskReview } from "../../../../packages/domain/task-review";
+import type {
+  ProgressEntry,
+  ProgressInput,
+} from "../../../../packages/domain/progress";
 import type {
   ManagedUser,
   Catalogs,
   ModelAdminState,
   ModelSettings,
+  ModelCredentialInput,
   ModelLog,
   AdminAudit,
 } from "../../../../packages/domain/admin";
@@ -23,6 +35,12 @@ import {
   type ReviewedSuggestion,
 } from "./contracts";
 import { browserDemo } from "./mode";
+import type { ProjectMergeInput } from "../../../../packages/domain/project-merge";
+import type {
+  CompanyDirectory,
+  WecomSyncState,
+} from "../../../../packages/domain/directory";
+import type { ProjectOrderInput } from "../../../../packages/domain/project-order";
 import type {
   IntakeInput,
   IntakeBatch,
@@ -38,7 +56,16 @@ export class HttpApi implements WorkspaceApi {
     method = "GET",
     body?: unknown,
   ): Promise<T> {
-    const fingerprint = method + path + JSON.stringify(body);
+    const fingerprint = Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(method + path + JSON.stringify(body)),
+        ),
+      ),
+    )
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
     const key = this.pending.get(fingerprint) ?? crypto.randomUUID();
     if (method !== "GET") this.pending.set(fingerprint, key);
     let response: Response;
@@ -52,7 +79,13 @@ export class HttpApi implements WorkspaceApi {
           "idempotency-key": key,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(path === "/proposals/qwen" ? 70000 : 15000),
+        signal: AbortSignal.timeout(
+          ["/proposals/qwen", "/directory/wecom/sync"].includes(path) ||
+            path.endsWith("/review") ||
+            path.endsWith("/analyze")
+            ? 70000
+            : 15000,
+        ),
       });
     } catch {
       throw new ApiError(
@@ -105,6 +138,9 @@ export class HttpApi implements WorkspaceApi {
   snapshot() {
     return this.call<Snapshot>("/workspace");
   }
+  copyTaskField(input: TaskFieldCopyInput) {
+    return this.call<Task[]>("/tasks/copy-field", "POST", input);
+  }
   saveProject(data: ProjectInput, id?: string, version?: number) {
     return this.call<Project>(
       id ? `/projects/${id}` : "/projects",
@@ -112,12 +148,80 @@ export class HttpApi implements WorkspaceApi {
       id ? { ...data, version } : data,
     );
   }
+  addProgress(id: string, input: ProgressInput) {
+    return this.call<Project>(`/projects/${id}/progress`, "POST", input);
+  }
+  progressMaterial(id: string, name: string, data: string) {
+    return this.call<ProgressMaterial>(`/projects/${id}/materials`, "POST", {
+      name,
+      data,
+    });
+  }
+  progressMaterials(id: string, ids: string[]) {
+    return this.call<ProgressMaterial[]>(
+      `/projects/${id}/materials/list`,
+      "POST",
+      { ids },
+    );
+  }
+  analyzeProgress(id: string, input: ProgressAnalysisInput) {
+    return this.call<ProgressAnalysis>(
+      `/projects/${id}/progress/analyze`,
+      "POST",
+      input,
+    );
+  }
+  progressHistory(id: string) {
+    return this.call<ProgressEntry[]>(`/projects/${id}/progress`);
+  }
+  reviewTask(id: string, version: number) {
+    return this.call<TaskReview>(`/tasks/${id}/review`, "POST", { version });
+  }
   saveTask(data: TaskInput, id?: string, version?: number) {
     return this.call<Task>(
       id ? `/tasks/${id}` : "/tasks",
       id ? "PUT" : "POST",
       id ? { ...data, version } : data,
     );
+  }
+  renameProject(id: string, name: string, version: number, shortName?: string) {
+    return this.call<Project>(`/projects/${id}/name`, "PUT", {
+      name,
+      version,
+      shortName,
+    });
+  }
+  mergeProjects(input: ProjectMergeInput) {
+    return this.call<Project>("/projects/merge", "POST", input);
+  }
+  companyDirectory() {
+    return this.call<CompanyDirectory>("/directory");
+  }
+  saveCompanyDirectory(input: CompanyDirectory) {
+    return this.call<CompanyDirectory>("/directory", "PUT", input);
+  }
+  directoryAccounts() {
+    return this.call<
+      {
+        id: string;
+        name: string;
+        email: string;
+        username?: string;
+        status?: string;
+      }[]
+    >("/directory/accounts");
+  }
+  wecomSyncState() {
+    return this.call<WecomSyncState>("/directory/wecom");
+  }
+  syncWecom(version: number) {
+    return this.call<CompanyDirectory>("/directory/wecom/sync", "POST", {
+      version,
+      confirmed: true,
+    });
+  }
+  saveProjectOrder(input: ProjectOrderInput) {
+    return this.call<string[]>("/project-order", "PUT", input);
   }
   confirmNoteDate(projectId: string, data: NoteDateInput) {
     return this.call<Task>(`/projects/${projectId}/note-dates`, "POST", data);
@@ -168,6 +272,11 @@ export class HttpApi implements WorkspaceApi {
       confirmed: true,
     });
   }
+  accountDefaults() {
+    return this.call<{ starterPasswordConfigured: boolean }>(
+      "/admin/account-defaults",
+    );
+  }
   adminUsers() {
     return this.call<ManagedUser[]>("/admin/users");
   }
@@ -203,6 +312,9 @@ export class HttpApi implements WorkspaceApi {
   }
   saveModel(input: ModelSettings) {
     return this.call<ModelAdminState>("/admin/model", "PUT", input);
+  }
+  saveModelCredential(input: ModelCredentialInput) {
+    return this.call<ModelAdminState>("/admin/model/credential", "PUT", input);
   }
   modelLogs() {
     return this.call<ModelLog[]>("/admin/model/logs");

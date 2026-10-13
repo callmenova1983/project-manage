@@ -12,6 +12,7 @@ import { api, ApiError } from "../services/api";
 import SaveError from "./SaveError.vue";
 const props = defineProps<{ project: Project }>();
 const store = useWorkspace();
+const editing = ref(false);
 const original = ref(props.project),
   draft = ref(props.project.notes),
   error = ref<Error | ApiError | null>(null);
@@ -61,6 +62,7 @@ function cancel() {
     draft.value = original.value.notes;
     error.value = null;
     resetReview();
+    editing.value = false;
   }
 }
 function reload() {
@@ -79,6 +81,7 @@ async function save() {
     );
     original.value = p;
     draft.value = p.notes;
+    editing.value = false;
     resetReview();
   } catch (e) {
     error.value = e as Error;
@@ -114,6 +117,9 @@ async function applyDate(line: number) {
   >
     <div class="section-heading">
       <h4>{{ t("Original notes") }}</h4>
+      <button v-if="!editing" class="text-button" @click="editing = true">
+        {{ t("Edit notes") }}
+      </button>
       <span class="muted"
         >{{ t(dirty ? "Unsaved changes" : "Text / table paste") }} · v{{
           formatNumber(original.version)
@@ -153,7 +159,10 @@ async function applyDate(line: number) {
         </tbody>
       </table>
     </div>
-    <form @submit.prevent="save">
+    <div v-if="!editing" class="notes-reading">
+      {{ draft || t("No notes yet") }}
+    </div>
+    <form v-if="editing" @submit.prevent="save">
       <textarea
         v-model="draft"
         :aria-label="t('Original notes for {name}', { name: project.name })"
@@ -162,10 +171,10 @@ async function applyDate(line: number) {
         :placeholder="t('Capture what happened. Paste notes or a table here…')"
         @input="resetReview"
       ></textarea>
-      <div v-if="dirty" class="form-actions">
+      <div class="form-actions">
         <button type="button" :disabled="store.busy" @click="cancel">
           {{ t("Cancel notes") }}</button
-        ><button class="primary" :disabled="store.busy">
+        ><button class="primary" :disabled="store.busy || !dirty">
           {{ t("Save notes") }}
         </button>
       </div>
@@ -269,3 +278,27 @@ async function applyDate(line: number) {
     </div>
   </section>
 </template>
+
+<style scoped>
+.notes-reading {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 280px;
+  overflow-y: auto;
+  line-height: 1.9;
+  font-size: 13px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+}
+.inline-notes textarea {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  width: 100%;
+  min-height: 180px;
+  line-height: 1.8;
+  height: auto;
+  font-family: inherit;
+}
+</style>

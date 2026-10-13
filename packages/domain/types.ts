@@ -1,5 +1,8 @@
+import { progressArchiveInput } from "./progress-material.js";
+import type { ProgressSource } from "./progress-material.js";
 import { z } from "zod";
 import { catalogsInput, type Catalogs } from "./admin.js";
+import type { CompanyDirectory, ProjectMember } from "./directory.js";
 export const stages = [
   "potential",
   "proposal",
@@ -28,6 +31,11 @@ export const dateSchema = z
 export const projectInput = z
   .object({
     name: text(120),
+    shortName: z.string().trim().max(80).optional(),
+    channelId: z
+      .string()
+      .regex(/^[a-z][a-z0-9_-]{0,49}$/)
+      .optional(),
     intakeInbox: z.boolean().optional(),
     client: z.string().trim().max(120),
     description: z.string().max(4000),
@@ -52,6 +60,8 @@ export const taskInput = z
     status: z.enum(statuses),
     assignee: z.string().trim().max(80),
     dueDate: dateSchema.nullable(),
+    estimatedDate: dateSchema.nullable().optional(),
+    reminderAt: z.string().datetime({ offset: true }).nullable().optional(),
     workDates: z.array(dateSchema).max(31),
     workWeek: dateSchema.nullable(),
   })
@@ -84,12 +94,15 @@ export interface Actor {
 export interface Activity {
   id: string;
   projectId: string | null;
+  /** Preserve the original audit grouping when a project is merged. */
+  originalProjectId?: string;
   entityId: string;
   kind: "project" | "task" | "import" | "proposal";
   action: string;
   actor: string;
   createdAt: string;
   source: string;
+  progressSource?: ProgressSource;
   before: Project | Task | null;
   after: Project | Task | null;
 }
@@ -100,12 +113,17 @@ export interface Snapshot {
   projects: Project[];
   tasks: Task[];
   activities: Activity[];
+  directory?: CompanyDirectory;
+  projectMembers?: ProjectMember[];
+  projectOrder?: string[];
 }
 export const snapshotImport = z.object({
+  ...progressArchiveInput.shape,
   schemaVersion: z.union([z.literal(1), z.literal(2)]),
   catalogs: catalogsInput.optional(),
   projects: z.array(projectSchema).max(1000),
   tasks: z.array(taskSchema).max(10000),
+  projectOrder: z.array(text(100)).max(1000).optional(),
 });
 export interface Suggestion {
   id: string;

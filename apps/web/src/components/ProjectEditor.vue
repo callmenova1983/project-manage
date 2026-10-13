@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import {
+  channelEntries,
+  projectChannel,
+} from "../../../../packages/domain/channels";
 import { catalogs, catalogLabel } from "../composables/catalogs";
 import { t } from "../locales";
 import { ref, computed } from "vue";
@@ -11,6 +15,7 @@ import {
 import { useWorkspace } from "../stores/workspace";
 import { useUnsaved } from "../composables/unsaved";
 import { stageLabels } from "../locales/en";
+import PersonPicker from "./PersonPicker.vue";
 import SaveError from "./SaveError.vue";
 import { ApiError } from "../services/api";
 const props = defineProps<{ project?: Project }>();
@@ -23,6 +28,7 @@ const empty: ProjectInput = {
   description: "",
   stage: "unclassified",
   categoryIds: [],
+  channelId: "company",
   owner: "Unassigned",
   discipline: "Unassigned",
   latestUpdate: "",
@@ -33,6 +39,14 @@ const draft = ref<ProjectInput>(
   props.project ? projectInput.strip().parse(props.project) : empty,
 );
 draft.value.categoryIds ??= [];
+draft.value.channelId ??= "company";
+const channels = computed(() =>
+  channelEntries(catalogs.value).filter(
+    (c) =>
+      !c.archived ||
+      (original.value && projectChannel(original.value) === c.id),
+  ),
+);
 const stages = computed(() =>
   catalogs.value.stages
     .filter((s) => !s.archived || s.id === original.value?.stage)
@@ -75,6 +89,7 @@ function reload() {
   const current = (error.value as ApiError).current as Project;
   original.value = current;
   draft.value = projectInput.strip().parse(current);
+  draft.value.channelId ??= "company";
   aliases.value = current.aliases.join(", ");
   baseline = JSON.stringify(draft.value);
   error.value = null;
@@ -97,6 +112,21 @@ function reload() {
           autofocus
           :placeholder="t('A clear, memorable name')" /></label
       ><label
+        >{{ t("Short name (optional)")
+        }}<input v-model="draft.shortName" maxlength="80" /></label
+      ><label
+        >渠道<select v-model="draft.channelId" aria-label="渠道">
+          <option
+            v-for="channel in channels"
+            :key="channel.id"
+            :value="channel.id"
+          >
+            {{ channel.shortName
+            }}{{ channel.id === "company" ? "（默认）" : ""
+            }}{{ channel.archived ? "（已停用）" : "" }}
+          </option>
+        </select></label
+      ><label
         >{{ t("Client / organization")
         }}<input
           v-model="draft.client"
@@ -111,7 +141,12 @@ function reload() {
           </option>
         </select></label
       ><label
-        >{{ t("Owner") }}<input v-model="draft.owner" maxlength="80" /></label
+        >{{ t("Owner")
+        }}<PersonPicker
+          v-model="draft.owner"
+          :project-id="project?.id"
+          :label="t('Owner')"
+          :disabled="store.busy" /></label
       ><label
         >{{ t("Responsibility")
         }}<select v-model="draft.discipline">

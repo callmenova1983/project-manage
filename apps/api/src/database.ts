@@ -1,8 +1,16 @@
+import { assignLoginName } from "./login-name.js";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, mkdirSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createSeed } from "../../../packages/domain/seed.js";
+import { orderedProjectIds } from "../../../packages/domain/project-order.js";
+import {
+  directorySchema,
+  emptyDirectory,
+  type CompanyDirectory,
+  type ProjectMember,
+} from "../../../packages/domain/directory.js";
 import {
   catalogsInput,
   defaultCatalogs,
@@ -56,6 +64,20 @@ export class Repository {
           .run(version, new Date().toISOString());
       });
     }
+    const missingNames = this.db
+      .prepare(
+        "SELECT id,name FROM users WHERE username IS NULL ORDER BY rowid",
+      )
+      .all();
+    if (missingNames.length)
+      this.transaction(() => {
+        for (const user of missingNames)
+          this.db
+            .prepare(
+              "UPDATE users SET username=? WHERE id=? AND username IS NULL",
+            )
+            .run(assignLoginName(this.db, String(user.name)), String(user.id));
+      });
   }
   close() {
     this.db.close();
@@ -92,7 +114,7 @@ export class Repository {
         this.audit(workspaceId, { ...a, id: randomUUID() });
     });
   }
-  snapshot(workspaceId: string): Snapshot {
+  snapshot(workspaceId: string, includeSources = false): Snapshot {
     const row = this.db
       .prepare("SELECT revision FROM workspaces WHERE id=?")
       .get(workspaceId);
@@ -103,7 +125,12 @@ export class Repository {
       revision: Number(row.revision),
       projects: this.read<Project>("projects", workspaceId),
       tasks: this.read<Task>("tasks", workspaceId),
-      activities: this.read<Activity>("activities", workspaceId),
+      activities: this.read<Activity>("activities", workspaceId).map((a) =>
+        includeSources ? a : { ...a, progressSource: undefined },
+      ),
+      directory: this.directory(workspaceId),
+      projectMembers: this.projectMembers(workspaceId),
+      projectOrder: this.projectOrder(workspaceId),
     };
   }
   catalogs(workspaceId: string): Catalogs {
@@ -113,6 +140,52 @@ export class Repository {
     return row
       ? catalogsInput.parse(JSON.parse(String(row.data)))
       : structuredClone(defaultCatalogs);
+  }
+  directory(workspaceId: string): CompanyDirectory {
+    const row = this.db
+      .prepare("SELECT data FROM workspace_directory WHERE workspace_id=?")
+      .get(workspaceId);
+    return row
+      ? directorySchema.parse(JSON.parse(String(row.data)))
+      : emptyDirectory();
+  }
+  projectOrder(ws: string) {
+    const row = this.db
+      .prepare("SELECT data FROM workspace_project_order WHERE workspace_id=?")
+      .get(ws);
+    return orderedProjectIds(
+      this.read<Project>("projects", ws),
+      row ? JSON.parse(String(row.data)) : [],
+    );
+  }
+  projectMembers(workspaceId: string): ProjectMember[] {
+    const directory = this.directory(workspaceId);
+    return this.db
+      .prepare(
+        "SELECT project_id,user_id,users.name,joined_at,last_edited_at FROM project_members JOIN users ON users.id=project_members.user_id WHERE project_members.workspace_id=? ORDER BY joined_at,user_id",
+      )
+      .all(workspaceId)
+      .map((row) => {
+        const employee = directory.employees.find(
+          (e) => e.userId === row.user_id,
+        );
+        return {
+          projectId: String(row.project_id),
+          userId: String(row.user_id),
+          name: employee?.name ?? String(row.name),
+          department:
+            employee?.departmentIds
+              .map(
+                (id) =>
+                  directory.departments.find((d) => d.id === id)?.name ?? "",
+              )
+              .filter(Boolean)
+              .join(" / ") ?? "",
+          position: employee?.position ?? "",
+          joinedAt: String(row.joined_at),
+          lastEditedAt: String(row.last_edited_at),
+        };
+      });
   }
   read<T>(table: "projects" | "tasks" | "activities", ws: string): T[] {
     return this.db
@@ -165,6 +238,7 @@ export class Repository {
     before: Project | Task | null,
     after: Project | Task | null,
     source = "Manual edit",
+    progressSource?: Activity["progressSource"],
   ) {
     this.audit(actor.workspaceId, {
       id: randomUUID(),
@@ -180,9 +254,29 @@ export class Repository {
       actor: actor.name,
       createdAt: new Date().toISOString(),
       source,
+      progressSource,
       before,
       after,
     });
+    const projectId =
+      kind === "task"
+        ? (after as Task | null)?.projectId
+        : kind === "project"
+          ? after?.id
+          : undefined;
+    if (
+      projectId &&
+      this.db
+        .prepare("SELECT 1 FROM users WHERE id=? AND workspace_id=?")
+        .get(actor.id, actor.workspaceId)
+    ) {
+      const time = new Date().toISOString();
+      this.db
+        .prepare(
+          "INSERT INTO project_members(workspace_id,project_id,user_id,joined_at,last_edited_at) VALUES(?,?,?,?,?) ON CONFLICT(workspace_id,project_id,user_id) DO UPDATE SET last_edited_at=excluded.last_edited_at",
+        )
+        .run(actor.workspaceId, projectId, actor.id, time, time);
+    }
     this.db
       .prepare("UPDATE workspaces SET revision=revision+1 WHERE id=?")
       .run(actor.workspaceId);
