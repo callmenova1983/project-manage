@@ -93,6 +93,16 @@ const scopeDate = computed(() => {
 const scopeStats = computed(() =>
   statistics(store.data.tasks, scope.value, new Date(), store.timeZone),
 );
+const overviewTasks = computed(() => {
+  const tasks = leafTasks(store.data.tasks),
+    day = currentDay(),
+    week = currentWeek();
+  return tasks.filter((task) =>
+    scope.value === "week"
+      ? task.workWeek === week
+      : task.workDates.includes(day),
+  );
+});
 const ownerKey = (p: Project) =>
   JSON.stringify(p.ownerId ? ["member", p.ownerId] : ["text", p.owner]);
 const ownerName = (p: Project) =>
@@ -277,13 +287,7 @@ function edit(id: string) {
       </div>
       <TaskDistribution
         class="overview-distribution"
-        :tasks="
-          leafTasks(store.data.tasks).filter((task) =>
-            scope === 'week'
-              ? task.workWeek === currentWeek()
-              : task.workDates.includes(currentDay()),
-          )
-        "
+        :tasks="overviewTasks"
         compact
         :showLegend="false"
       />

@@ -2549,6 +2549,7 @@ body {
   .summary-counts {
     gap: 10px;
     width: 100%;
+    flex-wrap: wrap;
     justify-content: space-between;
   }
   .summary-counts .badge {

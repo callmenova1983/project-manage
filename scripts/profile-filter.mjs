@@ -2,11 +2,16 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { expect } from "@playwright/test";
 import { fixture } from "./reliability-fixture.mjs";
 const f = await fixture(200, 25);
+const containmentTrial = process.argv.includes("--containment-trial");
 try {
   const { context, page } = await f.session(0),
     observations = [];
   await page.goto("/projects");
   await expect(page.locator(".project-row")).toHaveCount(200);
+  if (containmentTrial)
+    await page.addStyleTag({
+      content: ".project-record { contain: layout style; }",
+    });
   const cdp = await context.newCDPSession(page);
   await cdp.send("Performance.enable");
   const metrics = async () =>
@@ -55,12 +60,15 @@ try {
   mkdirSync("artifacts", { recursive: true });
   const result = {
     environment: f.environment,
+    containmentTrial,
     method:
       "Five 1→200 row resets; Chromium CDP Performance metric deltas around input and two animation frames. TaskDuration includes script/layout/style and must not be summed with them. Diagnostic samples are separate from the acceptance benchmark.",
     observations,
   };
   writeFileSync(
-    "artifacts/filter-profile.json",
+    containmentTrial
+      ? "artifacts/filter-containment-trial.json"
+      : "artifacts/filter-profile.json",
     JSON.stringify(result, null, 2),
   );
   console.log(JSON.stringify(result));

@@ -46,6 +46,8 @@ jobs:
       - run: node scripts/check-collaboration.mjs
       - run: node scripts/measure-scale.mjs
       - run: node scripts/profile-filter.mjs
+      - run: node scripts/diagnose-filter.mjs
+      - run: node scripts/check-scale-filter.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -1,0 +1,52 @@
+{
+  "environment": {
+    "node": "v24.19.0",
+    "chromium": "154.0.8037.57",
+    "os": "linux 6.18.44",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "logicalCpus": 5,
+    "memoryGiB": 17.59,
+    "viewport": "1536x1024",
+    "network": "loopback, no throttling",
+    "build": "compiled Vite + Node/Fastify/SQLite, local HTTP"
+  },
+  "containmentTrial": false,
+  "method": "Five 1→200 row resets; Chromium CDP Performance metric deltas around input and two animation frames. TaskDuration includes script/layout/style and must not be summed with them. Diagnostic samples are separate from the acceptance benchmark.",
+  "observations": [
+    {
+      "elapsedMs": 471,
+      "ScriptDurationMs": 0.6,
+      "LayoutDurationMs": 81.2,
+      "RecalcStyleDurationMs": 72.5,
+      "TaskDurationMs": 459.4
+    },
+    {
+      "elapsedMs": 478.5999999977648,
+      "ScriptDurationMs": 0.1,
+      "LayoutDurationMs": 97.3,
+      "RecalcStyleDurationMs": 68.8,
+      "TaskDurationMs": 481.7
+    },
+    {
+      "elapsedMs": 330.5,
+      "ScriptDurationMs": 0.6,
+      "LayoutDurationMs": 77.2,
+      "RecalcStyleDurationMs": 50.9,
+      "TaskDurationMs": 324.3
+    },
+    {
+      "elapsedMs": 364.80000000074506,
+      "ScriptDurationMs": 1.5,
+      "LayoutDurationMs": 53.9,
+      "RecalcStyleDurationMs": 39.2,
+      "TaskDurationMs": 365.6
+    },
+    {
+      "elapsedMs": 487.5999999977648,
+      "ScriptDurationMs": 0.2,
+      "LayoutDurationMs": 95.7,
+      "RecalcStyleDurationMs": 62,
+      "TaskDurationMs": 490.8
+    }
+  ]
+}
