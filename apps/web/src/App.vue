@@ -58,6 +58,10 @@ watch(expanded, async (open) => {
   }
 });
 let interval: ReturnType<typeof setInterval>;
+function resumeSync() {
+  if (store.mode === "server" && store.user && !store.busy && !document.hidden)
+    void store.refresh(true);
+}
 function guardRepeatedActivation(event: MouseEvent) {
   // A saved editor can disappear between clicks. Do not let the second click
   // activate an unrelated button/link newly exposed at the same coordinates.
@@ -106,6 +110,8 @@ onMounted(() => {
   if (!activationToken.value) void store.initialize();
   window.addEventListener("keydown", shortcut);
   window.addEventListener("click", guardRepeatedActivation, true);
+  window.addEventListener("online", resumeSync);
+  document.addEventListener("visibilitychange", resumeSync);
   interval = setInterval(() => {
     if (store.user && !store.busy && !document.hidden) void store.refresh(true);
   }, 20000);
@@ -115,6 +121,8 @@ onBeforeUnmount(() => {
   document.body.style.overflow = previousOverflow;
   window.removeEventListener("keydown", shortcut);
   window.removeEventListener("click", guardRepeatedActivation, true);
+  window.removeEventListener("online", resumeSync);
+  document.removeEventListener("visibilitychange", resumeSync);
 });
 async function signIn() {
   signingIn.value = true;

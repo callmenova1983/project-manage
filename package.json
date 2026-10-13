@@ -17,6 +17,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "db:migrate": "tsx apps/api/src/cli.ts migrate",
+    "db:backup": "tsx apps/api/src/backup-cli.ts",
+    "check:entry": "tsx apps/api/src/check-entry.ts",
     "db:seed": "tsx apps/api/src/cli.ts seed",
     "user:create": "tsx apps/api/src/cli.ts user",
     "user:reset-password": "tsx apps/api/src/reset-password.ts",

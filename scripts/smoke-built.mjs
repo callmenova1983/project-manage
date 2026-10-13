@@ -16,6 +16,8 @@ import { chromium } from "@playwright/test";
 import { Repository } from "../dist/server/apps/api/src/database.js";
 import { createUser } from "../dist/server/apps/api/src/auth.js";
 import { projectInput } from "../dist/server/packages/domain/types.js";
+import { backupDatabase } from "../dist/server/apps/api/src/backup.js";
+import { checkEntry } from "../dist/server/apps/api/src/entry-check.js";
 const dir = mkdtempSync(join(tmpdir(), "pm-built-"));
 const probe = createServer();
 probe.listen(0, "127.0.0.1");
@@ -33,10 +35,16 @@ await createUser(repo, {
   password,
   workspaceId: "smoke",
 });
+await createUser(repo, {
+  email: "second-smoke@example.test",
+  name: "Second Synthetic Member",
+  password,
+  workspaceId: "smoke",
+});
 repo.close();
 let child;
 let browser;
-async function start() {
+async function start(databaseFile = path) {
   child = spawn(process.execPath, ["dist/server/apps/api/src/index.js"], {
     env: {
       ...process.env,
@@ -44,7 +52,9 @@ async function start() {
       HOST: "127.0.0.1",
       PORT: String(port),
       APP_ORIGIN: origin,
-      DATABASE_PATH: path,
+      DATABASE_PATH: databaseFile,
+      AI_PROVIDER: "rules",
+      AI_CALLS_ENABLED: "false",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -73,6 +83,13 @@ async function stop() {
 }
 try {
   await start();
+  const entry = await checkEntry(origin);
+  assert.equal(entry.passed, true, JSON.stringify(entry));
+  mkdirSync("artifacts", { recursive: true });
+  writeFileSync(
+    "artifacts/entry-response.json",
+    JSON.stringify(entry, null, 2),
+  );
   assert.equal((await fetch(origin + "/api/health")).status, 200);
   assert.equal((await fetch(origin + "/api/workspace")).status, 401);
   const html = await (await fetch(origin + "/projects")).text();
@@ -164,6 +181,49 @@ try {
     },
   });
   assert.equal(saved.status(), 200);
+  const otherContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const otherLogin = await otherContext.request.post(
+    origin + "/api/auth/login",
+    {
+      data: { email: "second-smoke@example.test", password },
+      headers: { Origin: origin },
+    },
+  );
+  assert.equal(otherLogin.status(), 200);
+  const otherSession = await otherLogin.json();
+  assert.notEqual(otherSession.actor.id, session.actor.id);
+  const shared = await (
+    await otherContext.request.get(origin + "/api/projects/project-1")
+  ).json();
+  assert.equal(shared.notes, "Persisted across actual process restart");
+  const sharedSave = await otherContext.request.put(
+    origin + "/api/projects/project-1",
+    {
+      headers: {
+        Origin: origin,
+        "x-csrf-token": otherSession.csrf,
+        "idempotency-key": randomUUID(),
+      },
+      data: {
+        ...projectInput.strip().parse(shared),
+        latestUpdate: "Saved from a second independent member session",
+        version: shared.version,
+      },
+    },
+  );
+  assert.equal(sharedSave.status(), 200);
+  const synced = page.waitForResponse(
+    (response) => response.url().endsWith("/api/workspace") && response.ok(),
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await synced;
+  await page
+    .getByText("Saved from a second independent member session", {
+      exact: true,
+    })
+    .waitFor();
   // The same built site can offer a demo even when this browser already owns
   // a real session. Demo edits must not use, clear or mutate that session/data.
   const serverBeforeDemo = await (
@@ -261,12 +321,41 @@ try {
     serverBeforeDemo,
   );
   await demoContext.close();
+  const backupPath = join(dir, "verified-backup.sqlite");
+  await backupDatabase(path, backupPath);
+  const beforeLateWrite = await (
+    await page.request.get(origin + "/api/projects/project-1")
+  ).json();
+  const lateWrite = await page.request.put(origin + "/api/projects/project-1", {
+    headers: { "x-csrf-token": session.csrf, "idempotency-key": randomUUID() },
+    data: {
+      ...projectInput.strip().parse(beforeLateWrite),
+      notes: "Later write in the original database",
+      version: beforeLateWrite.version,
+    },
+  });
+  assert.equal(lateWrite.status(), 200);
   await stop();
   await start();
+  const restarted = await (
+    await page.request.get(origin + "/api/projects/project-1")
+  ).json();
+  assert.equal(restarted.notes, "Later write in the original database");
+  await stop();
+  await start(backupPath);
   const restored = await (
     await page.request.get(origin + "/api/projects/project-1")
   ).json();
   assert.equal(restored.notes, "Persisted across actual process restart");
+  assert.equal(
+    restored.latestUpdate,
+    "Saved from a second independent member session",
+  );
+  assert.equal(
+    (await otherContext.request.get(origin + "/api/workspace")).status(),
+    200,
+  );
+  await otherContext.close();
   assert.deepEqual(errors, []);
   const result = {
     build: "passed",
@@ -274,6 +363,11 @@ try {
     authenticatedBrowser: "passed",
     browserDemoIsolationAndPersistence: "passed",
     processRestartPersistence: "passed",
+    independentMemberSessions: "passed",
+    consistentBackupAndIndependentRestore: "passed",
+    documentAndBundleResponses: "passed",
+    environment:
+      "local compiled HTTP server; no live deployment or real device",
     unexpectedConsoleErrors: errors.length,
     chromium: browser.version(),
   };

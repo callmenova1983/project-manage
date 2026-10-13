@@ -1,9 +1,14 @@
 import "dotenv/config";
+import { existsSync } from "node:fs";
 import { buildApp } from "./app.js";
 import { readQwenConfig } from "./ai/config.js";
 import { configuredAppOrigin, configuredCodespacesRewrite } from "./origin.js";
 const production = process.env.NODE_ENV === "production";
 const origin = configuredAppOrigin(process.env);
+if (production && !existsSync("dist/web/index.html"))
+  throw new Error(
+    "Production web build is missing. Run npm run build before starting.",
+  );
 const codespacesOriginRewrite = configuredCodespacesRewrite(
   process.env,
   origin,
