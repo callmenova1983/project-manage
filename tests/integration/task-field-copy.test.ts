@@ -66,6 +66,7 @@ it("copies only the chosen field to several rows and replays without duplicating
     expect(snapshot.tasks.find((task) => task.id === before.id)).toEqual({
       ...before,
       assignee: "Copy source",
+      assigneeId: null,
       version: before.version + 1,
       updatedAt: expect.any(String),
     });
@@ -130,4 +131,29 @@ it("copies dates, rejects stale source and tasks in other projects or workspaces
     expect(after.dueDate).toBe("2026-10-20");
     expect(after.assignee).toBe("");
   }
+});
+
+it("preserves an explicitly linked assignee when copying, and clears an older link when the source is text-only", async () => {
+  const member = context.repo.members("team")[0]!;
+  context.repo.putTask("team", {
+    ...tasks[0]!,
+    assignee: member.name,
+    assigneeId: member.id,
+  });
+  expect((await request(input())).statusCode).toBe(200);
+  let current = context.repo.snapshot("team").tasks;
+  const target = current.find((t) => t.id === tasks[1]!.id)!;
+  expect(target.assigneeId).toBe(member.id);
+  const source = current.find((t) => t.id === tasks[0]!.id)!;
+  context.repo.putTask("team", { ...source, assigneeId: null });
+  const body = {
+    ...input(),
+    targets: [{ id: target.id, version: target.version }],
+  };
+  expect((await request(body)).statusCode).toBe(400);
+  expect(
+    (await request({ ...body, overwriteConfirmed: true })).statusCode,
+  ).toBe(200);
+  current = context.repo.snapshot("team").tasks;
+  expect(current.find((t) => t.id === target.id)!.assigneeId).toBeNull();
 });

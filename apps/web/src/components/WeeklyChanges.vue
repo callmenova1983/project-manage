@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { currentWeek } from "../composables/calendar";
+import { calendarWeek } from "../../../../packages/domain/time-zone";
 import { computed, ref, useId } from "vue";
 import {
   PhArrowUpRight,
@@ -10,13 +12,14 @@ import {
   PhNotePencil,
   PhTray,
 } from "@phosphor-icons/vue";
-import type { Activity, Project } from "../../../../packages/domain/types";
+import { type Activity, type Project } from "../../../../packages/domain/types";
 import {
   describeActivity,
-  summarizeWeeklyActivity,
   type ActivityTone,
 } from "../composables/activity-summary";
 import { t, formatDate, formatNumber } from "../locales";
+import { useActivityHistory } from "../composables/activity-history";
+import { useWorkspace } from "../stores/workspace";
 
 const props = defineProps<{
   activities: Activity[];
@@ -25,13 +28,21 @@ const props = defineProps<{
   projectIds?: string[];
 }>();
 const expanded = ref(true);
-const visibleCount = ref(3);
 const sectionId = useId();
-const summary = computed(() =>
-  summarizeWeeklyActivity(props.activities, { projectIds: props.projectIds }),
+const store = useWorkspace();
+const selectedWeek = ref<string | null>(null);
+const week = computed(
+  () => selectedWeek.value ?? currentWeek(store.lastSynced ?? new Date()),
 );
+const history = useActivityHistory(() => ({
+  weekStart: week.value,
+  projectIds: props.projectIds,
+  excludeSeed: true,
+  limit: 7,
+}));
+const { page: summary, loading, loadingMore, error } = history;
 const maxDaily = computed(() =>
-  Math.max(1, ...summary.value.days.map((day) => day.count)),
+  Math.max(1, ...(summary.value?.days ?? []).map((day) => day.count)),
 );
 const projectNames = computed(
   () => new Map(props.projects.map((project) => [project.id, project.name])),
@@ -40,16 +51,19 @@ const hasSampleRecords = computed(() =>
   props.activities.some((event) => event.source === "Synthetic demo seed"),
 );
 const entries = computed(() =>
-  summary.value.events.slice(0, visibleCount.value).map((event) => ({
+  history.events.value.map((event) => ({
     event,
     description: describeActivity(event),
   })),
 );
-const historyLink = computed(() =>
-  props.projectIds?.length === 1
-    ? { path: "/activity", query: { project: props.projectIds[0] } }
-    : { path: "/activity" },
-);
+const historyLink = computed(() => ({
+  path: "/activity",
+  query: { week: week.value, projects: props.projectIds, real: "1" },
+}));
+function selectWeek(event: Event) {
+  const value = (event.target as HTMLInputElement).value;
+  selectedWeek.value = value ? calendarWeek(value) : null;
+}
 const icons = {
   completed: PhCheckCircle,
   task: PhListChecks,
@@ -96,7 +110,9 @@ function dayLabel(day: { date: string; count: number }) {
           @click="expanded = !expanded"
         >
           <PhClockCounterClockwise :size="17" aria-hidden="true" />
-          <span>{{ t("This week's changes") }}</span>
+          <span>{{
+            t(week === currentWeek() ? "This week's changes" : "Weekly changes")
+          }}</span>
           <PhCaretDown
             :size="12"
             class="disclosure"
@@ -110,9 +126,22 @@ function dayLabel(day: { date: string; count: number }) {
       </RouterLink>
     </header>
 
-    <div class="change-metrics">
+    <label class="week-selector"
+      >{{ t("Week starting ({zone})", { zone: store.timeZone })
+      }}<input type="date" :value="week" @change="selectWeek"
+    /></label>
+    <p v-if="history.newChanges.value" role="status">
+      {{ t("New changes are available. Refresh to include them.") }}
+      <button @click="history.refresh()">{{ t("Refresh history") }}</button>
+    </p>
+    <p v-if="loading" role="status">{{ t("Loading history…") }}</p>
+    <p v-if="error" class="error-box" role="alert">
+      {{ t(error) }}
+      <button @click="history.refresh()">{{ t("Retry") }}</button>
+    </p>
+    <div v-if="summary" class="change-metrics">
       <div>
-        <strong>{{ formatNumber(summary.changeCount) }}</strong>
+        <strong>{{ formatNumber(summary.total) }}</strong>
         <span>{{ t("Saved changes") }}</span>
       </div>
       <div>
@@ -132,11 +161,13 @@ function dayLabel(day: { date: string; count: number }) {
       </div>
     </div>
 
-    <div v-show="expanded" :id="`${sectionId}-details`">
+    <div v-if="summary" v-show="expanded" :id="`${sectionId}-details`">
       <ol
-        v-if="summary.changeCount"
+        v-if="summary.total"
         class="week-pulse"
-        :aria-label="t('Saved changes by day, UTC')"
+        :aria-label="
+          t('Saved changes by day, {zone}', { zone: store.timeZone })
+        "
       >
         <li
           v-for="day in summary.days"
@@ -155,9 +186,17 @@ function dayLabel(day: { date: string; count: number }) {
           }}</span>
         </li>
       </ol>
-      <div v-if="!summary.changeCount" class="changes-empty">
+      <div v-if="!summary.total" class="changes-empty">
         <PhClockCounterClockwise :size="21" aria-hidden="true" />
-        <p>{{ t("No saved changes this week") }}</p>
+        <p>
+          {{
+            t(
+              week === currentWeek()
+                ? "No saved changes this week"
+                : "No saved changes in the selected week",
+            )
+          }}
+        </p>
         <span>{{ t("Project edits and task updates will appear here.") }}</span>
         <span v-if="hasSampleRecords">{{
           t("Initial sample records are excluded.")
@@ -217,33 +256,20 @@ function dayLabel(day: { date: string; count: number }) {
         </li>
       </ol>
       <button
-        v-if="summary.events.length > visibleCount"
+        v-if="summary.nextCursor"
         class="more-changes"
         type="button"
-        @click="visibleCount += 4"
+        :disabled="loadingMore"
+        @click="history.more()"
       >
-        {{
-          t("Show {count} more changes", {
-            count: formatNumber(
-              Math.min(4, summary.events.length - visibleCount),
-            ),
-          })
-        }}
-        <PhCaretDown :size="12" aria-hidden="true" />
-      </button>
-      <button
-        v-else-if="visibleCount > 3 && summary.events.length > 3"
-        class="more-changes"
-        type="button"
-        @click="visibleCount = 3"
-      >
-        {{ t("Show fewer changes") }}
+        {{ t(loadingMore ? "Loading history…" : "Load more changes")
+        }}<PhCaretDown :size="12" aria-hidden="true" />
       </button>
     </div>
     <p class="history-limit">
       {{
-        t("Action counts · Up to {count} recent records · UTC week", {
-          count: formatNumber(summary.historyLimit),
+        t("Complete selected week · Action counts · {zone}", {
+          zone: store.timeZone,
         })
       }}
     </p>
@@ -251,6 +277,18 @@ function dayLabel(day: { date: string; count: number }) {
 </template>
 
 <style scoped>
+.week-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+.week-selector input {
+  width: auto;
+  min-height: 44px;
+}
 .weekly-changes {
   min-width: 0;
   border: 1px solid var(--border);

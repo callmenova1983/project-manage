@@ -1,6 +1,12 @@
 import { progressArchiveInput } from "./progress-material.js";
 import type { ProgressSource } from "./progress-material.js";
 import { z } from "zod";
+import {
+  zonedDay,
+  zonedWeek,
+  workspaceSettingsInput,
+  type WorkspaceSettings,
+} from "./time-zone.js";
 import { catalogsInput, type Catalogs } from "./admin.js";
 import type { CompanyDirectory, ProjectMember } from "./directory.js";
 export const stages = [
@@ -45,6 +51,8 @@ export const projectInput = z
       .max(20)
       .optional(),
     owner: z.string().trim().max(80),
+    ownerId: z.string().min(1).max(100).nullable().optional(),
+    participantIds: z.array(z.string().min(1).max(100)).max(50).optional(),
     discipline: z.enum(disciplines),
     latestUpdate: z.string().max(4000),
     notes: z.string().max(20000),
@@ -59,6 +67,7 @@ export const taskInput = z
     description: z.string().max(4000),
     status: z.enum(statuses),
     assignee: z.string().trim().max(80),
+    assigneeId: z.string().min(1).max(100).nullable().optional(),
     dueDate: dateSchema.nullable(),
     estimatedDate: dateSchema.nullable().optional(),
     reminderAt: z.string().datetime({ offset: true }).nullable().optional(),
@@ -100,6 +109,7 @@ export interface Activity {
   kind: "project" | "task" | "import" | "proposal";
   action: string;
   actor: string;
+  actorId?: string;
   createdAt: string;
   source: string;
   progressSource?: ProgressSource;
@@ -109,6 +119,8 @@ export interface Activity {
 export interface Snapshot {
   schemaVersion: 1 | 2;
   catalogs?: Catalogs;
+  settings?: WorkspaceSettings;
+  members?: Member[];
   revision: number;
   projects: Project[];
   tasks: Task[];
@@ -117,10 +129,17 @@ export interface Snapshot {
   projectMembers?: ProjectMember[];
   projectOrder?: string[];
 }
+export interface Member {
+  id: string;
+  name: string;
+  email: string;
+  status: "active" | "disabled" | "pending";
+}
 export const snapshotImport = z.object({
   ...progressArchiveInput.shape,
   schemaVersion: z.union([z.literal(1), z.literal(2)]),
   catalogs: catalogsInput.optional(),
+  settings: workspaceSettingsInput.optional(),
   projects: z.array(projectSchema).max(1000),
   tasks: z.array(taskSchema).max(10000),
   projectOrder: z.array(text(100)).max(1000).optional(),
@@ -160,10 +179,13 @@ export interface AiCapabilities {
   connectionVerified: false;
   remainingAttempts: number;
 }
-export function dayKey(date = new Date()): string {
-  return date.toISOString().slice(0, 10);
+export function dayKey(date = new Date(), timeZone = "UTC"): string {
+  return timeZone === "UTC"
+    ? date.toISOString().slice(0, 10)
+    : zonedDay(date, timeZone);
 }
-export function weekKey(date = new Date()): string {
+export function weekKey(date = new Date(), timeZone = "UTC"): string {
+  if (timeZone !== "UTC") return zonedWeek(date, timeZone);
   const d = new Date(dayKey(date) + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
   return dayKey(d);
@@ -176,13 +198,14 @@ export function statistics(
   tasks: Task[],
   scope: "all" | "week" | "today" = "all",
   date = new Date(),
+  timeZone = "UTC",
 ) {
+  const day = scope === "today" ? dayKey(date, timeZone) : "";
+  const week = scope === "week" ? weekKey(date, timeZone) : "";
   const leaves = leafTasks(tasks).filter(
     (t) =>
       scope === "all" ||
-      (scope === "today"
-        ? t.workDates.includes(dayKey(date))
-        : t.workWeek === weekKey(date)),
+      (scope === "today" ? t.workDates.includes(day) : t.workWeek === week),
   );
   return {
     total: leaves.length,

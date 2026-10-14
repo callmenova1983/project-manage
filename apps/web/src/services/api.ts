@@ -9,6 +9,7 @@ import type {
   ProgressEntry,
   ProgressInput,
 } from "../../../../packages/domain/progress";
+import type { WorkspaceSettings } from "../../../../packages/domain/time-zone";
 import type {
   ManagedUser,
   Catalogs,
@@ -20,6 +21,7 @@ import type {
 } from "../../../../packages/domain/admin";
 import type {
   NoteDateInput,
+  Activity,
   Actor,
   Project,
   ProjectInput,
@@ -29,6 +31,10 @@ import type {
   Proposal,
   AiCapabilities,
 } from "../../../../packages/domain/types";
+import type {
+  ActivityQuery,
+  ActivityPage,
+} from "../../../../packages/domain/activity-query";
 import {
   ApiError,
   type WorkspaceApi,
@@ -140,6 +146,22 @@ export class HttpApi implements WorkspaceApi {
   }
   copyTaskField(input: TaskFieldCopyInput) {
     return this.call<Task[]>("/tasks/copy-field", "POST", input);
+  }
+  activityPage(query: ActivityQuery) {
+    return this.call<ActivityPage>("/activity/query", "POST", query);
+  }
+  exportActivity(query: ActivityQuery) {
+    return this.call<ActivityPage>("/activity/export", "POST", query);
+  }
+  saveWorkspaceSettings(input: WorkspaceSettings & { confirmed: true }) {
+    return this.call<WorkspaceSettings>(
+      "/admin/workspace-settings",
+      "PUT",
+      input,
+    );
+  }
+  activity(id: string) {
+    return this.call<Activity>(`/activities/${encodeURIComponent(id)}`);
   }
   saveProject(data: ProjectInput, id?: string, version?: number) {
     return this.call<Project>(

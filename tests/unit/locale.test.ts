@@ -9,6 +9,7 @@ import {
   LOCALE_STORAGE_KEY,
 } from "../../apps/web/src/locales";
 import { stageLabels, statusLabels } from "../../apps/web/src/locales/en";
+import { workspaceTimeZone } from "../../apps/web/src/composables/calendar";
 const saved = new Map<string, string>();
 beforeEach(() => {
   saved.clear();
@@ -18,6 +19,7 @@ beforeEach(() => {
   });
   vi.stubGlobal("navigator", { language: "en-US" });
   locale.value = "en";
+  workspaceTimeZone.value = "UTC";
 });
 afterEach(() => vi.unstubAllGlobals());
 it("prefers an explicit language, otherwise follows supported browser language", () => {
@@ -70,4 +72,70 @@ it("keeps session switching usable when browser storage is unavailable", () => {
   expect(initialLocale()).toBe("en");
   expect(() => setLocale("zh-CN")).not.toThrow();
   expect(t("Projects")).toBe("项目");
+});
+it("keeps cached formats correct across language, options and workspace timezone switches", () => {
+  const instant = "2026-10-11T16:30:00Z";
+  for (const language of ["en", "zh-CN", "en"] as const) {
+    setLocale(language);
+    const intlLocale = language === "en" ? "en-US" : language;
+    for (const timeZone of [
+      "UTC",
+      "Asia/Shanghai",
+      "America/New_York",
+      "UTC",
+    ]) {
+      workspaceTimeZone.value = timeZone;
+      const options: Intl.DateTimeFormatOptions = {
+        dateStyle: "full",
+        timeStyle: "short",
+      };
+      expect(formatDate(instant, options)).toBe(
+        new Intl.DateTimeFormat(intlLocale, { ...options, timeZone }).format(
+          new Date(instant),
+        ),
+      );
+      expect(formatDate("2026-10-12", { day: "numeric" })).toBe(
+        new Intl.DateTimeFormat(intlLocale, {
+          day: "numeric",
+          timeZone: "UTC",
+        }).format(new Date("2026-10-12")),
+      );
+      expect(
+        formatDate(instant, { hour: "numeric", timeZone: "Europe/London" }),
+      ).toBe(
+        new Intl.DateTimeFormat(intlLocale, {
+          hour: "numeric",
+          timeZone: "Europe/London",
+        }).format(new Date(instant)),
+      );
+    }
+    const options: Intl.NumberFormatOptions = {
+      style: "percent",
+      maximumFractionDigits: 2,
+    };
+    expect(formatNumber(0.12345, options)).toBe(
+      new Intl.NumberFormat(intlLocale, options).format(0.12345),
+    );
+    options.maximumFractionDigits = 0;
+    expect(formatNumber(0.12345, options)).toBe(
+      new Intl.NumberFormat(intlLocale, options).format(0.12345),
+    );
+    expect(formatNumber(1500)).toBe(
+      new Intl.NumberFormat(intlLocale).format(1500),
+    );
+  }
+});
+it("still formats correctly after many configurations and rejects invalid options", () => {
+  for (let i = 0; i < 80; i++) {
+    const currency = `X${String.fromCharCode(65 + Math.floor(i / 26))}${String.fromCharCode(65 + (i % 26))}`;
+    expect(formatNumber(i, { style: "currency", currency })).toBe(
+      new Intl.NumberFormat("en-US", { style: "currency", currency }).format(i),
+    );
+  }
+  expect(formatNumber(1500)).toBe("1,500");
+  expect(() => formatNumber(1, { style: "currency" })).toThrow(TypeError);
+  expect(() => formatDate(new Date(), { timeZone: "invalid-zone" })).toThrow(
+    RangeError,
+  );
+  expect(formatDate("invalid-date")).toBe("—");
 });

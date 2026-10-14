@@ -1,0 +1,59 @@
+{
+  "label": "after",
+  "environment": {
+    "node": "v24.19.0",
+    "chromium": "154.0.8037.57",
+    "os": "linux 6.18.44",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "logicalCpus": 5,
+    "memoryGiB": 17.59,
+    "viewport": "1536x1024",
+    "network": "loopback, no throttling",
+    "build": "compiled Vite + Node/Fastify/SQLite, local HTTP"
+  },
+  "method": "Separate instrumented diagnostic: count Intl constructors and formatToParts calls during three narrow/reset cycles; not an acceptance timing sample.",
+  "observations": [
+    {
+      "resultingRows": 1,
+      "numbers": 0,
+      "dates": 0,
+      "dateParts": 0,
+      "dateObjects": 1
+    },
+    {
+      "resultingRows": 200,
+      "numbers": 0,
+      "dates": 0,
+      "dateParts": 0,
+      "dateObjects": 233
+    },
+    {
+      "resultingRows": 1,
+      "numbers": 0,
+      "dates": 0,
+      "dateParts": 0,
+      "dateObjects": 1
+    },
+    {
+      "resultingRows": 200,
+      "numbers": 0,
+      "dates": 0,
+      "dateParts": 0,
+      "dateObjects": 233
+    },
+    {
+      "resultingRows": 1,
+      "numbers": 0,
+      "dates": 0,
+      "dateParts": 0,
+      "dateObjects": 1
+    },
+    {
+      "resultingRows": 200,
+      "numbers": 0,
+      "dates": 0,
+      "dateParts": 0,
+      "dateObjects": 233
+    }
+  ]
+}

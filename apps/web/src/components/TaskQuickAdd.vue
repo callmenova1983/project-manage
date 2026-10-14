@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { PhX } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
-import { weekKey, dayKey } from "../../../../packages/domain/types";
+import { currentWeek, currentDay } from "../composables/calendar";
 import { useUnsaved } from "../composables/unsaved";
 import { t } from "../locales";
 import TaskEditor from "./TaskEditor.vue";
@@ -32,8 +32,8 @@ async function add() {
       status: "todo",
       assignee: "",
       dueDate: null,
-      workWeek: weekKey(),
-      workDates: props.scope === "today" ? [dayKey()] : [],
+      workWeek: currentWeek(),
+      workDates: props.scope === "today" ? [currentDay()] : [],
     });
     title.value = "";
     if (props.compact) emit("close");

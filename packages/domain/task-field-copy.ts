@@ -47,7 +47,9 @@ export function planTaskFieldCopy(tasks: Task[], raw: TaskFieldCopyInput) {
       );
     if (
       task[input.field] &&
-      task[input.field] !== value &&
+      (task[input.field] !== value ||
+        (input.field === "assignee" &&
+          (task.assigneeId ?? null) !== (source.assigneeId ?? null))) &&
       !input.overwriteConfirmed
     )
       throw new Error("Confirm replacing the selected tasks' existing values.");
@@ -55,12 +57,20 @@ export function planTaskFieldCopy(tasks: Task[], raw: TaskFieldCopyInput) {
   });
   const updatedAt = new Date().toISOString();
   return targets
-    .filter((task) => task[input.field] !== value)
+    .filter(
+      (task) =>
+        task[input.field] !== value ||
+        (input.field === "assignee" &&
+          (task.assigneeId ?? null) !== (source.assigneeId ?? null)),
+    )
     .map((before) => ({
       before,
       after: {
         ...before,
         [input.field]: value,
+        ...(input.field === "assignee"
+          ? { assigneeId: source.assigneeId ?? null }
+          : {}),
         version: before.version + 1,
         updatedAt,
       } as Task,

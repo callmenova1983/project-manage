@@ -1,4 +1,38 @@
 export const activityZh: Record<string, string> = {
+  "Weekly changes": "每周变化",
+  "Week starting ({zone})": "周起始日（{zone}）",
+  "Loading history…": "正在加载历史…",
+  "Load more changes": "加载更多变更",
+  "Complete selected week · Action counts · {zone}":
+    "完整所选周 · 按动作统计 · {zone}",
+  "No saved changes in the selected week": "所选周暂无已保存的变更",
+  "Projects from list filters": "列表筛选范围内的项目",
+  "All dates": "全部日期",
+  "Exclude sample history": "排除初始化示例记录",
+  "Refresh history": "刷新历史",
+  "Linked history record is shown separately from the current filters.":
+    "链接指向的历史记录单独显示，不计入当前筛选结果。",
+  "Showing {shown} of {total} matching events · Complete history · {zone}":
+    "已显示 {shown} / {total} 条匹配记录 · 完整历史 · {zone}",
+  "Activity filters changed. Reload the first page.":
+    "历史筛选条件已改变，请重新加载第一页。",
+  "Project participants": "项目参与者",
+  "Participants describe the team; everyone can still view and edit.":
+    "参与者用于标记协作成员，全员仍可查看和编辑。",
+  "{field} member": "{field}关联成员",
+  "Keep name as text": "保留姓名文本",
+  "Member unavailable": "成员不可用",
+  "Linked member; renames keep this assignment.":
+    "已关联成员，改名后仍保持关联。",
+  "Text only; no member is linked.": "仅保留文本，尚未关联成员。",
+  "Choose a member from this workspace": "请选择本工作区成员",
+  "Choose an active member for a new assignment": "新关联请选择启用中的成员",
+  "Project participants must be unique": "项目参与者不可重复",
+  disabled: "已停用",
+  pending: "待激活",
+  "New changes are available. Refresh to include them.":
+    "有新变更，刷新后纳入统计。",
+
   "This week's changes": "本周发生的变化",
   History: "查看历史",
   "Saved changes": "已记录变更",
@@ -6,7 +40,7 @@ export const activityZh: Record<string, string> = {
   "Marked done": "标记完成",
   "Saved status changes to done; not a count of completed tasks. Imports and restores are excluded.":
     "统计保存后切换为完成的动作，不是已完成任务总数；不含导入和历史还原。",
-  "Saved changes by day, UTC": "每日记录的变更（UTC）",
+  "Saved changes by day, {zone}": "每日记录的变更（{zone}）",
   "{day}: {count} saved changes": "{day}：已记录 {count} 次变更",
   "No saved changes this week": "本周暂无已保存的变更",
   "Project edits and task updates will appear here.":

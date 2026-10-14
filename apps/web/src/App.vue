@@ -60,6 +60,10 @@ watch(expanded, async (open) => {
   }
 });
 let interval: ReturnType<typeof setInterval>;
+function resumeSync() {
+  if (store.mode === "server" && store.user && !store.busy && !document.hidden)
+    void store.refresh(true);
+}
 function guardRepeatedActivation(event: MouseEvent) {
   // A saved editor can disappear between clicks. Do not let the second click
   // activate an unrelated button/link newly exposed at the same coordinates.
@@ -108,6 +112,8 @@ onMounted(() => {
   if (!activationToken.value) void store.initialize();
   window.addEventListener("keydown", shortcut);
   window.addEventListener("click", guardRepeatedActivation, true);
+  window.addEventListener("online", resumeSync);
+  document.addEventListener("visibilitychange", resumeSync);
   interval = setInterval(() => {
     if (store.user && !store.busy && !document.hidden) void store.refresh(true);
   }, 20000);
@@ -117,6 +123,8 @@ onBeforeUnmount(() => {
   document.body.style.overflow = previousOverflow;
   window.removeEventListener("keydown", shortcut);
   window.removeEventListener("click", guardRepeatedActivation, true);
+  window.removeEventListener("online", resumeSync);
+  document.removeEventListener("visibilitychange", resumeSync);
 });
 async function signIn() {
   signingIn.value = true;
@@ -393,7 +401,19 @@ function search() {
         ><button @click="store.refresh()">{{ t("Retry") }}</button>
       </div>
       <TaskFeedback />
-      <main id="main-content" tabindex="-1"><RouterView /></main>
+      <div v-if="store.preferenceError" role="alert" class="global-error">
+        <span>{{ t(store.preferenceError) }}</span
+        ><button @click="store.preferenceError = ''">
+          {{ t("Dismiss preference notice") }}
+        </button>
+      </div>
+      <main id="main-content" tabindex="-1">
+        <RouterView
+          :key="
+            JSON.stringify([store.mode, store.user.workspaceId, store.user.id])
+          "
+        />
+      </main>
       <footer class="app-footer">
         <span>{{
           t(

@@ -2,6 +2,7 @@
 export function initialProjectNavigation() {
   return {
     query: "",
+    followedOnly: false,
     stage: "",
     owner: "",
     discipline: "",

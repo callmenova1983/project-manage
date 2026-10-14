@@ -6,9 +6,55 @@
     <meta name="theme-color" content="#101114" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Project Manage</title>
+    <style>
+      body:has(.boot-panel) {
+        background: #0e1525;
+      }
+      .boot-panel {
+        box-sizing: border-box;
+        max-width: 34rem;
+        margin: 12vh auto;
+        padding: 24px;
+        font:
+          16px/1.6 system-ui,
+          sans-serif;
+        color: #dce1ec;
+        background: #151e2e;
+        border: 1px solid #354158;
+        border-radius: 12px;
+      }
+      .boot-panel h1 {
+        font-size: 22px;
+      }
+      .boot-panel a {
+        display: inline-block;
+        padding: 10px 0;
+        color: #c8baff;
+      }
+      .boot-panel a:focus-visible {
+        outline: 2px solid #c8baff;
+        outline-offset: 4px;
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app" data-pm-entry="1">
+      <main class="boot-panel" aria-label="Opening workspace">
+        <h1>Opening Project Manage</h1>
+        <p lang="zh-CN">正在打开工作区</p>
+        <p>
+          If this message remains, the application could not finish loading.
+          Reload the page or ask the workspace operator to check the service.
+        </p>
+        <p lang="zh-CN">
+          若此提示一直显示，应用尚未加载完成。请重新加载，或联系工作区维护者检查服务。
+        </p>
+        <a href="">Reload page / 重新加载</a>
+        <noscript
+          ><p>JavaScript is required. / 请启用 JavaScript。</p></noscript
+        >
+      </main>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

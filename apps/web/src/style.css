@@ -805,6 +805,12 @@ small {
   padding-top: 14px;
   padding-bottom: 14px;
 }
+.draft-edit-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
 .project-record + .project-record {
   border-top: 1px solid var(--surface-raised);
 }
@@ -2619,6 +2625,7 @@ body {
   .summary-counts {
     gap: 10px;
     width: 100%;
+    flex-wrap: wrap;
     justify-content: space-between;
   }
   .summary-counts .badge {

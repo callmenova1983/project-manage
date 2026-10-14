@@ -1,7 +1,14 @@
 import type { TaskReview } from "../../../../packages/domain/task-review";
+import { workspaceTimeZone } from "../composables/calendar";
 import { setCatalogs } from "../composables/catalogs";
 import { defineStore } from "pinia";
-import { ref, computed, nextTick } from "vue";
+import { ref, computed, nextTick, watch } from "vue";
+import { accountStorageKey } from "../services/account-storage";
+import { readFollowing, writeFollowing } from "../services/project-following";
+import {
+  clearAccountEditorDrafts,
+  editorDraftPrefix,
+} from "../services/editor-drafts";
 import { clearIntakeDraft, intakeDraftKey } from "../services/intake-drafts";
 import { initialProjectNavigation } from "../composables/project-navigation";
 import { api, ApiError } from "../services/api";
@@ -37,6 +44,40 @@ export const useWorkspace = defineStore("workspace", () => {
   let sessionGeneration = 0;
   let snapshotRequest = 0;
   const projectNavigation = ref(initialProjectNavigation());
+  const followedIds = ref<string[]>([]),
+    preferenceError = ref("");
+  const following = computed(() => new Set(followedIds.value));
+  watch(
+    user,
+    (actor) => {
+      const loaded = actor
+        ? readFollowing(accountStorageKey("following", api.mode, actor))
+        : { ids: [], unavailable: false };
+      followedIds.value = loaded.ids;
+      preferenceError.value = loaded.unavailable
+        ? "Following preferences are unavailable in this browser. You can still view every project."
+        : "";
+    },
+    { flush: "sync" },
+  );
+  function toggleFollowing(id: string) {
+    if (!user.value || !data.value.projects.some((p) => p.id === id)) return;
+    const next = following.value.has(id)
+      ? followedIds.value.filter((value) => value !== id)
+      : [...followedIds.value, id];
+    if (
+      !writeFollowing(
+        accountStorageKey("following", api.mode, user.value),
+        next,
+      )
+    ) {
+      preferenceError.value =
+        "Could not save following preferences in this browser. Try again; your selection is unchanged.";
+      return;
+    }
+    followedIds.value = next;
+    preferenceError.value = "";
+  }
   const taskFeedback = ref<{
     task: Task;
     previousStatus: Status;
@@ -144,13 +185,23 @@ export const useWorkspace = defineStore("workspace", () => {
       activities: [],
     };
     setCatalogs();
+    workspaceTimeZone.value = "UTC";
     lastSynced.value = null;
     error.value = "";
     loading.value = false;
   }
   const total = computed(() => statistics(data.value.tasks)),
-    week = computed(() => statistics(data.value.tasks, "week")),
-    today = computed(() => statistics(data.value.tasks, "today"));
+    week = computed(() =>
+      statistics(data.value.tasks, "week", new Date(), workspaceTimeZone.value),
+    ),
+    today = computed(() =>
+      statistics(
+        data.value.tasks,
+        "today",
+        new Date(),
+        workspaceTimeZone.value,
+      ),
+    );
   const notify = (message: string) => {
     if (message) dismissTaskFeedback();
     toast.value = message;
@@ -164,18 +215,21 @@ export const useWorkspace = defineStore("workspace", () => {
     try {
       const snapshot = await api.snapshot();
       if (generation !== sessionGeneration || request !== snapshotRequest)
-        return;
+        return false;
       data.value = snapshot;
       setCatalogs(snapshot.catalogs);
+      workspaceTimeZone.value = snapshot.settings?.timeZone ?? "UTC";
       lastSynced.value = new Date();
       error.value = "";
+      return true;
     } catch (e) {
       if (generation !== sessionGeneration || request !== snapshotRequest)
-        return;
+        return false;
       if (e instanceof ApiError && e.status === 401) {
         clearWorkspace();
         sessionState.value = "signed_out";
       } else error.value = (e as Error).message;
+      return false;
     } finally {
       if (generation === sessionGeneration && request === snapshotRequest)
         loading.value = false;
@@ -210,12 +264,16 @@ export const useWorkspace = defineStore("workspace", () => {
   }
   async function logout() {
     const draftKey = user.value && intakeDraftKey(api.mode, user.value);
+    const editorPrefix = user.value && editorDraftPrefix(api.mode, user.value);
     await api.logout();
     clearWorkspace();
     sessionState.value = "signed_out";
     // Let the editor flush during unmount before removing this account's draft.
     await nextTick();
     if (draftKey) clearIntakeDraft(draftKey);
+    if (editorPrefix && !clearAccountEditorDrafts(editorPrefix))
+      error.value =
+        "You are signed out, but this browser could not clear your editor drafts. Clear this site's browser data to remove them.";
   }
   async function operation<T>(
     fn: () => Promise<T>,
@@ -316,6 +374,9 @@ export const useWorkspace = defineStore("workspace", () => {
     }
   }
   return {
+    following,
+    toggleFollowing,
+    preferenceError,
     data,
     user,
     sessionState,
@@ -336,6 +397,7 @@ export const useWorkspace = defineStore("workspace", () => {
     week,
     today,
     mode: api.mode,
+    timeZone: workspaceTimeZone,
     initialize,
     login,
     logout,

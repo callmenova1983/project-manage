@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { currentDay, workspaceTimeZone } from "../composables/calendar";
 import { computed, ref, watch, nextTick, onBeforeUnmount, useId } from "vue";
 import {
   PhArrowUpRight,
@@ -7,11 +8,7 @@ import {
   PhCaretLeft,
   PhCaretRight,
 } from "@phosphor-icons/vue";
-import {
-  dayKey,
-  type Task,
-  type Project,
-} from "../../../../packages/domain/types";
+import { type Task, type Project } from "../../../../packages/domain/types";
 import { t, formatDate, formatNumber } from "../locales";
 import {
   plannedWork,
@@ -25,7 +22,13 @@ const props = defineProps<{
   scope: "today" | "week";
 }>();
 const next = computed(() =>
-  plannedWork(props.tasks, props.projects, props.scope),
+  plannedWork(
+    props.tasks,
+    props.projects,
+    props.scope,
+    new Date(),
+    workspaceTimeZone.value,
+  ),
 );
 const visibleCount = ref(4),
   selected = ref(""),
@@ -118,7 +121,7 @@ async function showMore() {
 }
 onBeforeUnmount(() => clearTimeout(scrollTimer));
 function plannedLabel(date: string | null) {
-  return date === dayKey()
+  return date === currentDay()
     ? t("Today")
     : date
       ? t("Planned {date}", {

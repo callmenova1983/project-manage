@@ -1,15 +1,21 @@
 import { onBeforeUnmount, type Ref } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { t } from "../locales";
-const editors = new Set<Ref<boolean>>();
+const editors = new Map<Ref<boolean>, (() => string) | undefined>();
 export function hasUnsavedChanges() {
-  return [...editors].some((dirty) => dirty.value);
+  return [...editors.keys()].some((dirty) => dirty.value);
 }
 export function confirmDiscard() {
-  return !hasUnsavedChanges() || window.confirm(t("Discard unsaved changes?"));
+  const active = [...editors].find(
+    ([dirty, message]) => dirty.value && message,
+  );
+  return (
+    !hasUnsavedChanges() ||
+    window.confirm(active?.[1]?.() ?? t("Discard unsaved changes?"))
+  );
 }
 export function useUnsaved(dirty: Ref<boolean>, leaveMessage?: () => string) {
-  editors.add(dirty);
+  editors.set(dirty, leaveMessage);
   const ask = () =>
     !dirty.value || window.confirm(t("Discard unsaved changes?"));
   onBeforeRouteLeave(

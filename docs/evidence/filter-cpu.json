@@ -1,0 +1,994 @@
+{
+  "environment": {
+    "node": "v24.19.0",
+    "chromium": "154.0.8037.57",
+    "os": "linux 6.18.44",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "logicalCpus": 5,
+    "memoryGiB": 17.59,
+    "viewport": "1536x1024",
+    "network": "loopback, no throttling",
+    "build": "compiled Vite + Node/Fastify/SQLite, local HTTP"
+  },
+  "method": "Three sampled CPU profiles of 1→200 row resets. Profiler overhead is excluded from acceptance timings. Function locations refer to this compiled bundle; inclusive times overlap.",
+  "reports": [
+    {
+      "self": [
+        {
+          "ms": 346.1,
+          "functionName": "(program)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 18.7,
+          "functionName": "(idle)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 7.1,
+          "functionName": "U",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 53403
+        },
+        {
+          "ms": 7.1,
+          "functionName": "zo",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 61590
+        },
+        {
+          "ms": 5.9,
+          "functionName": "insertBefore",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 4.1,
+          "functionName": "Lo",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 61097
+        },
+        {
+          "ms": 3.6,
+          "functionName": "setAttribute",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 3.5,
+          "functionName": "createElementNS",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 3.2,
+          "functionName": "createTextNode",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 2.9,
+          "functionName": "",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 6,
+          "columnNumber": 163189
+        },
+        {
+          "ms": 2.9,
+          "functionName": "Ko",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 62400
+        },
+        {
+          "ms": 2.7,
+          "functionName": "setAttribute",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 2.5,
+          "functionName": "Ot",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 7729
+        },
+        {
+          "ms": 2.4,
+          "functionName": "createElement",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 2.4,
+          "functionName": "setAttribute",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 2.3,
+          "functionName": "ee",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 43678
+        },
+        {
+          "ms": 2.2,
+          "functionName": "insertBefore",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 2.2,
+          "functionName": "oa",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 39477
+        },
+        {
+          "ms": 2.1,
+          "functionName": "createElementNS",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 2,
+          "functionName": "insertBefore",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        }
+      ],
+      "inclusive": [
+        {
+          "ms": 596.6,
+          "functionName": "(root)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 346.1,
+          "functionName": "(program)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 228.8,
+          "functionName": "Sr",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 23274
+        },
+        {
+          "ms": 228.6,
+          "functionName": "run",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 6795
+        },
+        {
+          "ms": 228.6,
+          "functionName": "runIfDirty",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 7202
+        },
+        {
+          "ms": 228.6,
+          "functionName": "rr",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 21583
+        },
+        {
+          "ms": 228.5,
+          "functionName": "s",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 46132
+        },
+        {
+          "ms": 216.2,
+          "functionName": "re",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 44851
+        },
+        {
+          "ms": 216.2,
+          "functionName": "ne",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 43999
+        },
+        {
+          "ms": 216.2,
+          "functionName": "x",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 42919
+        },
+        {
+          "ms": 216.2,
+          "functionName": "h",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 41865
+        },
+        {
+          "ms": 216,
+          "functionName": "h",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 41865
+        },
+        {
+          "ms": 215.8,
+          "functionName": "ne",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 43999
+        },
+        {
+          "ms": 215.8,
+          "functionName": "x",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 42919
+        },
+        {
+          "ms": 215.5,
+          "functionName": "ue",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 47436
+        },
+        {
+          "ms": 215.5,
+          "functionName": "ae",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 45227
+        },
+        {
+          "ms": 215.5,
+          "functionName": "h",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 41865
+        },
+        {
+          "ms": 215.5,
+          "functionName": "re",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 44851
+        },
+        {
+          "ms": 214.9,
+          "functionName": "fe",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 47955
+        },
+        {
+          "ms": 214.8,
+          "functionName": "x",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 42919
+        }
+      ]
+    },
+    {
+      "self": [
+        {
+          "ms": 177,
+          "functionName": "(program)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 24.7,
+          "functionName": "(garbage collector)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 7.6,
+          "functionName": "(idle)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 6.8,
+          "functionName": "as",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 63951
+        },
+        {
+          "ms": 4.4,
+          "functionName": "setAttribute",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 4.2,
+          "functionName": "zo",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 61590
+        },
+        {
+          "ms": 3.8,
+          "functionName": "ke",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 1549
+        },
+        {
+          "ms": 3.7,
+          "functionName": "Wa",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 53276
+        },
+        {
+          "ms": 3.4,
+          "functionName": "createElementNS",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 3.3,
+          "functionName": "q",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 55942
+        },
+        {
+          "ms": 2.7,
+          "functionName": "oa",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 39477
+        },
+        {
+          "ms": 2.5,
+          "functionName": "get",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 13768
+        },
+        {
+          "ms": 2.5,
+          "functionName": "Mn",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 17371
+        },
+        {
+          "ms": 2.5,
+          "functionName": "insertBefore",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.8,
+          "functionName": "setAttribute",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.8,
+          "functionName": "insertBefore",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.6,
+          "functionName": "createElementNS",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.6,
+          "functionName": "l",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 2,
+          "columnNumber": 22388
+        },
+        {
+          "ms": 1.4,
+          "functionName": "setAttribute",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.4,
+          "functionName": "Sa",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 51407
+        }
+      ],
+      "inclusive": [
+        {
+          "ms": 340.7,
+          "functionName": "(root)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 177,
+          "functionName": "(program)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 130.9,
+          "functionName": "Sr",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 23274
+        },
+        {
+          "ms": 130.8,
+          "functionName": "run",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 6795
+        },
+        {
+          "ms": 130.8,
+          "functionName": "runIfDirty",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 7202
+        },
+        {
+          "ms": 130.8,
+          "functionName": "rr",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 21583
+        },
+        {
+          "ms": 130.6,
+          "functionName": "s",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 46132
+        },
+        {
+          "ms": 121.7,
+          "functionName": "h",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 41865
+        },
+        {
+          "ms": 121.7,
+          "functionName": "re",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 44851
+        },
+        {
+          "ms": 121.7,
+          "functionName": "ne",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 43999
+        },
+        {
+          "ms": 121.7,
+          "functionName": "x",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 42919
+        },
+        {
+          "ms": 121.7,
+          "functionName": "h",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 41865
+        },
+        {
+          "ms": 120.9,
+          "functionName": "ne",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 43999
+        },
+        {
+          "ms": 120.9,
+          "functionName": "x",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 42919
+        },
+        {
+          "ms": 120.7,
+          "functionName": "fe",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 47955
+        },
+        {
+          "ms": 120.7,
+          "functionName": "ue",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 47436
+        },
+        {
+          "ms": 120.7,
+          "functionName": "ae",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 45227
+        },
+        {
+          "ms": 120.7,
+          "functionName": "h",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 41865
+        },
+        {
+          "ms": 120.7,
+          "functionName": "re",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 44851
+        },
+        {
+          "ms": 120.5,
+          "functionName": "x",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 42919
+        }
+      ]
+    },
+    {
+      "self": [
+        {
+          "ms": 213.1,
+          "functionName": "(program)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 5.1,
+          "functionName": "(idle)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 3.5,
+          "functionName": "zo",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 61590
+        },
+        {
+          "ms": 3.3,
+          "functionName": "setAttribute",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 2.9,
+          "functionName": "Kt",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 10227
+        },
+        {
+          "ms": 2.7,
+          "functionName": "U",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 53403
+        },
+        {
+          "ms": 2.6,
+          "functionName": "(garbage collector)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 2.5,
+          "functionName": "insertBefore",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.9,
+          "functionName": "get",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 13768
+        },
+        {
+          "ms": 1.8,
+          "functionName": "insertBefore",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.8,
+          "functionName": "createElementNS",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.7,
+          "functionName": "B",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 52819
+        },
+        {
+          "ms": 1.7,
+          "functionName": "y",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 2,
+          "columnNumber": 28189
+        },
+        {
+          "ms": 1.5,
+          "functionName": "insertBefore",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.5,
+          "functionName": "bt",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 6439
+        },
+        {
+          "ms": 1.5,
+          "functionName": "ee",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 43678
+        },
+        {
+          "ms": 1.5,
+          "functionName": "createElementNS",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.5,
+          "functionName": "Q",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 6,
+          "columnNumber": 19729
+        },
+        {
+          "ms": 1.4,
+          "functionName": "insertBefore",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 1.2,
+          "functionName": "Z",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 6,
+          "columnNumber": 19584
+        }
+      ],
+      "inclusive": [
+        {
+          "ms": 348.7,
+          "functionName": "(root)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 213.1,
+          "functionName": "(program)",
+          "scriptId": "0",
+          "url": "",
+          "lineNumber": -1,
+          "columnNumber": -1
+        },
+        {
+          "ms": 127.2,
+          "functionName": "Sr",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 23274
+        },
+        {
+          "ms": 127,
+          "functionName": "run",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 6795
+        },
+        {
+          "ms": 127,
+          "functionName": "runIfDirty",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 7202
+        },
+        {
+          "ms": 127,
+          "functionName": "rr",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 21583
+        },
+        {
+          "ms": 126.5,
+          "functionName": "s",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 46132
+        },
+        {
+          "ms": 116.9,
+          "functionName": "h",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 41865
+        },
+        {
+          "ms": 116.9,
+          "functionName": "re",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 44851
+        },
+        {
+          "ms": 116.9,
+          "functionName": "ne",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 43999
+        },
+        {
+          "ms": 116.9,
+          "functionName": "x",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 42919
+        },
+        {
+          "ms": 116.9,
+          "functionName": "h",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 41865
+        },
+        {
+          "ms": 116.4,
+          "functionName": "ue",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 47436
+        },
+        {
+          "ms": 116.4,
+          "functionName": "ae",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 45227
+        },
+        {
+          "ms": 116.4,
+          "functionName": "h",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 41865
+        },
+        {
+          "ms": 116.4,
+          "functionName": "re",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 44851
+        },
+        {
+          "ms": 116.4,
+          "functionName": "ne",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 43999
+        },
+        {
+          "ms": 116.4,
+          "functionName": "x",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 42919
+        },
+        {
+          "ms": 116.1,
+          "functionName": "x",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 42919
+        },
+        {
+          "ms": 116.1,
+          "functionName": "h",
+          "scriptId": "5",
+          "url": "http://127.0.0.1:42443/assets/index-BBD2BjpE.js",
+          "lineNumber": 1,
+          "columnNumber": 41865
+        }
+      ]
+    }
+  ]
+}

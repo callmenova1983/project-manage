@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ElDialog } from "element-plus";
 import "element-plus/es/components/dialog/style/css";
+import ProjectFollow from "../components/ProjectFollow.vue";
+import { memberName } from "../../../../packages/domain/members";
 import ProgressHistory from "../components/ProgressHistory.vue";
 import InlineUpdate from "../components/InlineUpdate.vue";
 import InlineNotes from "../components/InlineNotes.vue";
@@ -109,6 +111,7 @@ function activityLabel(action: string) {
         </p>
       </div>
       <div class="heading-actions">
+        <ProjectFollow :id="project.id" :name="project.name" />
         <ProjectQuickActions
           ref="quickActions"
           :project="project"
@@ -137,7 +140,15 @@ function activityLabel(action: string) {
       <StatusBadge :stage="project.stage" />
       <span
         ><PhUserCircle :size="16" />{{ t("Owner") }} ·
-        {{ project.owner || t("Unassigned") }}</span
+        {{
+          t(
+            memberName(
+              project.ownerId,
+              project.owner,
+              store.data.members ?? [],
+            ),
+          )
+        }}</span
       >
       <span class="completion-label">{{
         t("{done} of {total} tasks completed", {
@@ -148,7 +159,7 @@ function activityLabel(action: string) {
       <TaskDistribution :tasks="tasks" compact :showLegend="false" />
     </div>
     <div class="project-workspace">
-      <main class="project-main">
+      <div class="project-main">
         <section class="update-card">
           <div class="update-heading">
             <PhChartLineUp :size="18" />
@@ -241,7 +252,7 @@ function activityLabel(action: string) {
             </div>
           </div>
         </details>
-      </main>
+      </div>
       <aside class="project-sidebar">
         <section class="panel project-facts">
           <h3>{{ t("Project overview") }}</h3>
@@ -280,6 +291,19 @@ function activityLabel(action: string) {
             <summary>{{ t("Project context") }}</summary>
             <p>{{ project.description }}</p>
           </details>
+        </section>
+        <section
+          v-if="project.participantIds?.length"
+          class="panel project-participants"
+        >
+          {{ t("Project participants:") }}
+          {{
+            project.participantIds
+              .map((id) =>
+                memberName(id, "Member unavailable", store.data.members ?? []),
+              )
+              .join(" · ")
+          }}
         </section>
         <ProjectMembers :projectId="project.id" />
       </aside>

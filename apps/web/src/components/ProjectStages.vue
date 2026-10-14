@@ -11,6 +11,7 @@ import {
   type Stage,
   type Task,
 } from "../../../../packages/domain/types";
+import { workspaceTimeZone } from "../composables/calendar";
 import { stageSummaries } from "../../../../packages/domain/stage-summary";
 import { stageLabels } from "../locales/en";
 import { t, formatNumber } from "../locales";
@@ -67,7 +68,14 @@ const stages = computed(() =>
     ? [...stageIds.value, "unclassified"]
     : stageIds.value,
 );
-const summaries = computed(() => stageSummaries(props.projects, props.tasks));
+const summaries = computed(() =>
+  stageSummaries(
+    props.projects,
+    props.tasks,
+    new Date(),
+    workspaceTimeZone.value,
+  ),
+);
 const empty = {
   projects: 0,
   open: 0,

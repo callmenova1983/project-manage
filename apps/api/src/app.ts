@@ -14,8 +14,8 @@ import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import serveStatic from "@fastify/static";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, statSync, readFileSync } from "node:fs";
+import { resolve, extname, basename } from "node:path";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { z, ZodError } from "zod";
 import {
@@ -34,6 +34,7 @@ import {
   type Suggestion,
 } from "../../../packages/domain/types.js";
 import { Repository, HttpError } from "./database.js";
+import { activityQueryInput } from "../../../packages/domain/activity-query.js";
 import {
   projectRenameInput,
   projectMergeInput,
@@ -50,7 +51,13 @@ import { safeOriginDiagnostic } from "./origin-diagnostics.js";
 import { registerAiRoutes } from "./ai/routes.js";
 import { AiError } from "./ai/provider.js";
 import { registerIntakeRoutes } from "./intake.js";
-import { registerAdminRoutes, workspaceQwen } from "./admin.js";
+import {
+  registerAdminRoutes,
+  workspaceQwen,
+  adminActor,
+  adminAudit,
+} from "./admin.js";
+import { workspaceSettingsInput } from "../../../packages/domain/time-zone.js";
 import {
   checkProjectCatalog,
   importCatalogs,
@@ -96,6 +103,15 @@ export async function buildApp(options: {
   wecomFetch?: typeof fetch;
 }) {
   const allowedOrigin = validateAppOrigin(options.origin, !!options.production);
+  const root = options.staticPath ?? resolve("dist/web");
+  const entry = resolve(root, "index.html");
+  if (
+    existsSync(root) &&
+    (!existsSync(entry) || !statSync(entry).isFile() || !statSync(entry).size)
+  )
+    throw new Error(
+      "Web build is missing or empty. Run npm run build before serving it.",
+    );
   const repo = new Repository(options.databasePath);
   const credentials = new QwenCredentialStore(repo, options.databasePath);
   const app = Fastify({
@@ -132,8 +148,10 @@ export async function buildApp(options: {
     FastifyRequest,
     { actor: Actor; csrf: string }
   >();
-  app.addHook("onRequest", async (req) => {
-    if (!req.url.startsWith("/api/")) return;
+  app.addHook("onRequest", async (req, reply) => {
+    const path = req.url.split("?")[0]!;
+    if (!path.startsWith("/api/")) return;
+    reply.header("Cache-Control", "no-store");
     const mutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
     if (
       options.originDiagnostics &&
@@ -159,9 +177,9 @@ export async function buildApp(options: {
     )
       throw new HttpError(403, "Origin not allowed");
     if (
-      req.url === "/api/health" ||
-      req.url === "/api/auth/login" ||
-      req.url === "/api/auth/activate"
+      path === "/api/health" ||
+      path === "/api/auth/login" ||
+      path === "/api/auth/activate"
     )
       return;
     const session = sessionActor(repo, req.cookies.pm_session);
@@ -338,6 +356,32 @@ export async function buildApp(options: {
     return { ok: true };
   });
   app.get("/api/workspace", (req) => repo.snapshot(actor(req).workspaceId));
+  app.put("/api/admin/workspace-settings", (req) =>
+    mutate(req, (a) => {
+      adminActor(repo, a);
+      const input = workspaceSettingsInput
+        .extend({ confirmed: z.literal(true) })
+        .parse(req.body);
+      const old = repo.settings(a.workspaceId);
+      if (old.version !== input.version)
+        throw new HttpError(
+          409,
+          "Workspace settings changed. Reload the current settings before saving.",
+        );
+      repo.db
+        .prepare(
+          "UPDATE workspaces SET time_zone=?,settings_version=settings_version+1,revision=revision+1 WHERE id=?",
+        )
+        .run(input.timeZone, a.workspaceId);
+      adminAudit(
+        repo,
+        a,
+        `Changed workspace time zone: ${old.timeZone} → ${input.timeZone}`,
+        a.workspaceId,
+      );
+      return repo.settings(a.workspaceId);
+    }),
+  );
   app.get("/api/projects", (req) => {
     const q = z
       .object({
@@ -391,6 +435,32 @@ export async function buildApp(options: {
   app.get(
     "/api/activities",
     (req) => repo.snapshot(actor(req).workspaceId).activities,
+  );
+  app.post("/api/activity/query", (req) => {
+    const query = activityQueryInput.parse(req.body);
+    try {
+      return repo.activityPage(actor(req).workspaceId, query);
+    } catch (e) {
+      if (e instanceof HttpError) throw e;
+      throw new HttpError(400, (e as Error).message);
+    }
+  });
+  app.post("/api/activity/export", (req, reply) => {
+    const query = activityQueryInput.parse(req.body);
+    try {
+      const result = repo.activityPage(actor(req).workspaceId, query, true);
+      reply.header(
+        "Content-Disposition",
+        'attachment; filename="project-manage-history.json"',
+      );
+      return result;
+    } catch (e) {
+      if (e instanceof HttpError) throw e;
+      throw new HttpError(400, (e as Error).message);
+    }
+  });
+  app.get("/api/activities/:id", (req) =>
+    repo.activity(actor(req).workspaceId, (req.params as { id: string }).id),
   );
   app.post("/api/projects", (req) =>
     mutate(req, (a) => {
@@ -843,25 +913,33 @@ export async function buildApp(options: {
         .prepare("DELETE FROM projects WHERE workspace_id=?")
         .run(a.workspaceId);
       for (const p of input.projects)
-        repo.putProject(a.workspaceId, {
-          ...p,
-          version:
-            Math.max(
-              p.version,
-              current.projects.find((x) => x.id === p.id)?.version ?? 0,
-            ) + 1,
-          updatedAt: new Date().toISOString(),
-        });
+        repo.putProject(
+          a.workspaceId,
+          {
+            ...p,
+            version:
+              Math.max(
+                p.version,
+                current.projects.find((x) => x.id === p.id)?.version ?? 0,
+              ) + 1,
+            updatedAt: new Date().toISOString(),
+          },
+          current.projects.find((x) => x.id === p.id),
+        );
       for (const t of input.tasks)
-        repo.putTask(a.workspaceId, {
-          ...t,
-          version:
-            Math.max(
-              t.version,
-              current.tasks.find((x) => x.id === t.id)?.version ?? 0,
-            ) + 1,
-          updatedAt: new Date().toISOString(),
-        });
+        repo.putTask(
+          a.workspaceId,
+          {
+            ...t,
+            version:
+              Math.max(
+                t.version,
+                current.tasks.find((x) => x.id === t.id)?.version ?? 0,
+              ) + 1,
+            updatedAt: new Date().toISOString(),
+          },
+          current.tasks.find((x) => x.id === t.id),
+        );
       repo.db
         .prepare(
           "INSERT INTO workspace_project_order(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
@@ -1052,14 +1130,47 @@ export async function buildApp(options: {
       return result;
     }),
   );
-  const root = options.staticPath ?? resolve("dist/web");
   if (existsSync(root)) {
-    await app.register(serveStatic, { root });
-    app.setNotFoundHandler((req, reply) =>
-      req.url.startsWith("/api/")
-        ? reply.status(404).send({ message: "API route not found" })
-        : reply.sendFile("index.html"),
-    );
+    const html = readFileSync(entry);
+    const document = (
+      req: FastifyRequest,
+      reply: import("fastify").FastifyReply,
+    ) =>
+      reply
+        .type("text/html; charset=utf-8")
+        .header("Cache-Control", "no-store")
+        .header("Content-Disposition", "inline")
+        .header("Content-Length", html.byteLength)
+        .send(req.method === "HEAD" ? undefined : html);
+    app.get("/", document);
+    app.get("/index.html", document);
+    await app.register(serveStatic, {
+      root,
+      cacheControl: false,
+      setHeaders(response, file) {
+        const html = basename(file) === "index.html";
+        response.header(
+          "Cache-Control",
+          html ? "no-store" : "public, max-age=0, must-revalidate",
+        );
+        if (html) response.header("Content-Disposition", "inline");
+      },
+    });
+    app.setNotFoundHandler((req, reply) => {
+      const path = req.url.split("?")[0]!;
+      reply.header("Cache-Control", "no-store");
+      if (path === "/api" || path.startsWith("/api/"))
+        return reply.status(404).send({ message: "API route not found" });
+      // A stale bundle URL must be a real 404, never index.html with a 200.
+      if (
+        !["GET", "HEAD"].includes(req.method) ||
+        path.startsWith("/assets/") ||
+        extname(path) ||
+        (req.headers.accept && !/text\/html|\*\/\*/i.test(req.headers.accept))
+      )
+        return reply.status(404).send({ message: "Resource not found" });
+      return document(req, reply);
+    });
   }
   return { app, repo };
 }

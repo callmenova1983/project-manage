@@ -1,0 +1,112 @@
+{
+  "environment": {
+    "node": "v24.19.0",
+    "chromium": "154.0.8037.57",
+    "os": "linux 6.18.44",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "logicalCpus": 5,
+    "memoryGiB": 17.59,
+    "viewport": "1536x1024",
+    "network": "loopback, no throttling",
+    "build": "compiled Vite + Node/Fastify/SQLite, local HTTP"
+  },
+  "results": [
+    {
+      "language": "en",
+      "theme": "dark",
+      "width": 1536,
+      "projects": 200,
+      "leafTasks": 5000,
+      "exactIds": true,
+      "combinedFilters": true,
+      "emptyAndKeyboardReset": true,
+      "lastRowReachable": true,
+      "scopedAxe": true
+    },
+    {
+      "language": "en",
+      "theme": "dark",
+      "width": 390,
+      "projects": 200,
+      "leafTasks": 5000,
+      "exactIds": true,
+      "combinedFilters": true,
+      "emptyAndKeyboardReset": true,
+      "lastRowReachable": true,
+      "scopedAxe": true
+    },
+    {
+      "language": "en",
+      "theme": "light",
+      "width": 1536,
+      "projects": 200,
+      "leafTasks": 5000,
+      "exactIds": true,
+      "combinedFilters": true,
+      "emptyAndKeyboardReset": true,
+      "lastRowReachable": true,
+      "scopedAxe": true
+    },
+    {
+      "language": "en",
+      "theme": "light",
+      "width": 390,
+      "projects": 200,
+      "leafTasks": 5000,
+      "exactIds": true,
+      "combinedFilters": true,
+      "emptyAndKeyboardReset": true,
+      "lastRowReachable": true,
+      "scopedAxe": true
+    },
+    {
+      "language": "zh-CN",
+      "theme": "dark",
+      "width": 1536,
+      "projects": 200,
+      "leafTasks": 5000,
+      "exactIds": true,
+      "combinedFilters": true,
+      "emptyAndKeyboardReset": true,
+      "lastRowReachable": true,
+      "scopedAxe": true
+    },
+    {
+      "language": "zh-CN",
+      "theme": "dark",
+      "width": 390,
+      "projects": 200,
+      "leafTasks": 5000,
+      "exactIds": true,
+      "combinedFilters": true,
+      "emptyAndKeyboardReset": true,
+      "lastRowReachable": true,
+      "scopedAxe": true
+    },
+    {
+      "language": "zh-CN",
+      "theme": "light",
+      "width": 1536,
+      "projects": 200,
+      "leafTasks": 5000,
+      "exactIds": true,
+      "combinedFilters": true,
+      "emptyAndKeyboardReset": true,
+      "lastRowReachable": true,
+      "scopedAxe": true
+    },
+    {
+      "language": "zh-CN",
+      "theme": "light",
+      "width": 390,
+      "projects": 200,
+      "leafTasks": 5000,
+      "exactIds": true,
+      "combinedFilters": true,
+      "emptyAndKeyboardReset": true,
+      "lastRowReachable": true,
+      "scopedAxe": true
+    }
+  ],
+  "unexpectedBrowserErrors": []
+}

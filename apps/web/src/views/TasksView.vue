@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { currentDay, currentWeek } from "../composables/calendar";
 import { computed, ref } from "vue";
 import { onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import {
@@ -9,12 +10,7 @@ import {
   PhSquaresFour,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
-import {
-  dayKey,
-  weekKey,
-  statuses,
-  type Task,
-} from "../../../../packages/domain/types";
+import { statuses, type Task } from "../../../../packages/domain/types";
 import { statusLabels } from "../locales/en";
 import { t, formatDate, formatNumber } from "../locales";
 import { confirmDiscard } from "../composables/unsaved";
@@ -36,12 +32,26 @@ const filters = computed(() => readTaskFilters(route.query));
 const creating = ref(false),
   creatingProject = ref(""),
   savedOutsideFilters = ref(false);
-const tasks = computed(() => filterTaskWork(store.data.tasks, filters.value));
+const tasks = computed(() =>
+  filterTaskWork(
+    store.data.tasks,
+    filters.value,
+    new Date(),
+    store.data.members,
+    store.timeZone,
+  ),
+);
 const scopeCounts = computed(() =>
   Object.fromEntries(
     taskScopes.map((scope) => [
       scope,
-      filterTaskWork(store.data.tasks, { ...filters.value, scope }).length,
+      filterTaskWork(
+        store.data.tasks,
+        { ...filters.value, scope },
+        new Date(),
+        store.data.members,
+        store.timeZone,
+      ).length,
     ]),
   ),
 );
@@ -49,7 +59,13 @@ const focusCounts = computed(() =>
   Object.fromEntries(
     taskFocuses.map((focus) => [
       focus,
-      filterTaskWork(store.data.tasks, { ...filters.value, focus }).length,
+      filterTaskWork(
+        store.data.tasks,
+        { ...filters.value, focus },
+        new Date(),
+        store.data.members,
+        store.timeZone,
+      ).length,
     ]),
   ),
 );
@@ -226,13 +242,16 @@ function saved(task: Task) {
               )
             }}
           </h3>
-          <span class="muted task-summary-date">{{
-            filters.scope === "today"
-              ? formatDate(dayKey())
-              : filters.scope === "week"
-                ? t("Week of {date}", { date: formatDate(weekKey()) })
-                : t("All planned and unplanned work")
-          }}</span>
+          <span class="muted task-summary-date"
+            >{{
+              filters.scope === "today"
+                ? formatDate(currentDay())
+                : filters.scope === "week"
+                  ? t("Week of {date}", { date: formatDate(currentWeek()) })
+                  : t("All planned and unplanned work")
+            }}
+            · {{ store.timeZone }}</span
+          >
         </div>
         <span class="muted task-result-count" aria-live="polite">{{
           t("{count} leaf tasks", { count: tasks.length })

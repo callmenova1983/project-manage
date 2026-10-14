@@ -1,3 +1,4 @@
+import type { WorkspaceSettings } from "../../../../packages/domain/time-zone";
 import type {
   ProgressMaterial,
   ProgressAnalysis,
@@ -20,6 +21,7 @@ import type {
 } from "../../../../packages/domain/admin";
 import type {
   NoteDateInput,
+  Activity,
   Actor,
   Project,
   ProjectInput,
@@ -30,6 +32,10 @@ import type {
   Suggestion,
   AiCapabilities,
 } from "../../../../packages/domain/types";
+import type {
+  ActivityQuery,
+  ActivityPage,
+} from "../../../../packages/domain/activity-query";
 import type {
   IntakeInput,
   IntakeBatch,
@@ -67,6 +73,12 @@ export interface WorkspaceApi {
   logout(): Promise<void>;
   snapshot(): Promise<Snapshot>;
   copyTaskField(input: TaskFieldCopyInput): Promise<Task[]>;
+  activityPage(query: ActivityQuery): Promise<ActivityPage>;
+  exportActivity(query: ActivityQuery): Promise<ActivityPage>;
+  saveWorkspaceSettings(
+    input: WorkspaceSettings & { confirmed: true },
+  ): Promise<WorkspaceSettings>;
+  activity(id: string): Promise<Activity>;
   saveProject(
     data: ProjectInput,
     id?: string,

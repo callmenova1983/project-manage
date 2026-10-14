@@ -3,5 +3,7 @@ export default defineConfig({
   test: {
     include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],
     testTimeout: 15000,
+    // Bound memory and password-hashing concurrency on local and CI machines.
+    maxWorkers: 2,
   },
 });

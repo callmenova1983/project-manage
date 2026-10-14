@@ -13,6 +13,10 @@ import {
   progressHistory,
 } from "../../../../packages/domain/progress";
 import {
+  defaultWorkspaceSettings,
+  workspaceSettingsInput,
+} from "../../../../packages/domain/time-zone";
+import {
   defaultCatalogs,
   defaultModelSettings,
   catalogsInput,
@@ -38,6 +42,14 @@ import {
   orderedProjectIds,
   projectOrderInput,
 } from "../../../../packages/domain/project-order";
+import {
+  projectMembers,
+  taskMember,
+} from "../../../../packages/domain/members";
+import {
+  queryActivities,
+  compareActivities,
+} from "../../../../packages/domain/activity-query";
 import {
   intakeInput,
   planIntake,
@@ -154,6 +166,7 @@ export function createLocalApi(): WorkspaceApi {
       kind,
       action: action ?? (before ? "Updated " + kind : "Created " + kind),
       actor: actor.name,
+      actorId: actor.id,
       createdAt: new Date().toISOString(),
       source,
       progressSource,
@@ -213,7 +226,7 @@ export function createLocalApi(): WorkspaceApi {
         old,
       );
     const p: Project = {
-      ...data,
+      ...projectMembers(data, administration().users, old),
       reportedAt:
         data.latestUpdate === old?.latestUpdate
           ? old.reportedAt
@@ -270,7 +283,7 @@ export function createLocalApi(): WorkspaceApi {
     )
       throw new ApiError("Only standalone tasks can change project assignment");
     const t: Task = {
-      ...data,
+      ...taskMember(data, administration().users, old),
       id: id ?? crypto.randomUUID(),
       version: (old?.version ?? 0) + 1,
       updatedAt: new Date().toISOString(),
@@ -363,6 +376,31 @@ export function createLocalApi(): WorkspaceApi {
       target,
     });
   }
+  function historyPage(
+    query: import("../../../../packages/domain/activity-query").ActivityQuery,
+    exportAll = false,
+  ) {
+    const timeZone = (state.settings ?? defaultWorkspaceSettings).timeZone;
+    if (query.timeZone && query.timeZone !== timeZone)
+      throw new ApiError(
+        "Workspace time zone changed. Refresh history before continuing.",
+        409,
+      );
+    const through =
+      query.cursor?.through ??
+      query.checkpoint?.through ??
+      state.activities.length;
+    const events = through
+      ? state.activities.slice(-through).sort(compareActivities)
+      : [];
+    return queryActivities(
+      events,
+      { ...query, timeZone },
+      through,
+      new Date(),
+      exportAll,
+    );
+  }
   function modelState() {
     return {
       settings: structuredClone(administration().model),
@@ -444,7 +482,53 @@ export function createLocalApi(): WorkspaceApi {
     },
     async logout() {},
     async snapshot() {
-      return read();
+      const snapshot = read();
+      return {
+        ...snapshot,
+        settings: state.settings ?? { ...defaultWorkspaceSettings },
+        members: administration().users.map(({ id, name, email, status }) => ({
+          id,
+          name,
+          email,
+          status,
+        })),
+      };
+    },
+    async saveWorkspaceSettings(input) {
+      read();
+      const old = state.settings ?? defaultWorkspaceSettings;
+      if (!input.confirmed)
+        throw new ApiError("Confirm changing the workspace time zone");
+      const parsed = workspaceSettingsInput.parse({
+        timeZone: input.timeZone,
+        version: input.version,
+      });
+      if (old.version !== parsed.version)
+        throw new ApiError(
+          "Workspace settings changed. Reload the current settings before saving.",
+          409,
+        );
+      state.settings = { timeZone: parsed.timeZone, version: old.version + 1 };
+      auditAdmin(
+        `Changed workspace time zone: ${old.timeZone} → ${parsed.timeZone}`,
+        actor.workspaceId,
+      );
+      persist();
+      return structuredClone(state.settings);
+    },
+    async activityPage(query) {
+      read();
+      return historyPage(query);
+    },
+    async exportActivity(query) {
+      read();
+      return historyPage(query, true);
+    },
+    async activity(id) {
+      read();
+      const event = state.activities.find((a) => a.id === id);
+      if (!event) throw new ApiError("History record not found", 404);
+      return structuredClone(event);
     },
     saveProject,
     async progressHistory(id) {
@@ -698,7 +782,7 @@ export function createLocalApi(): WorkspaceApi {
     async addTasks(tasks) {
       read();
       const result = tasks.map((data) => ({
-        ...taskInput.parse(data),
+        ...taskMember(taskInput.parse(data), administration().users),
         id: crypto.randomUUID(),
         version: 1,
         updatedAt: new Date().toISOString(),
@@ -710,13 +794,31 @@ export function createLocalApi(): WorkspaceApi {
       return result;
     },
     async exportData() {
-      return read();
+      const result = read();
+      return {
+        ...result,
+        settings: state.settings ?? { ...defaultWorkspaceSettings },
+      };
     },
     async importData(data, revision) {
       read();
       if (state.revision !== revision)
         throw new ApiError("Workspace changed. Review again.", 409);
       const parsed = snapshotImport.parse(data);
+      parsed.projects = parsed.projects.map((p) =>
+        projectMembers(
+          p,
+          administration().users,
+          state.projects.find((old) => old.id === p.id),
+        ),
+      );
+      parsed.tasks = parsed.tasks.map((t) =>
+        taskMember(
+          t,
+          administration().users,
+          state.tasks.find((old) => old.id === t.id),
+        ),
+      );
       validateGraph(parsed.projects, parsed.tasks);
       const catalogs = importCatalogs(
         parsed,
@@ -725,6 +827,7 @@ export function createLocalApi(): WorkspaceApi {
       );
       state = {
         ...parsed,
+        settings: state.settings ?? { ...defaultWorkspaceSettings },
         schemaVersion: 2,
         catalogs,
         revision: state.revision,
@@ -970,6 +1073,10 @@ export function createLocalApi(): WorkspaceApi {
       );
       for (const project of batch.projects)
         checkProjectCatalog(project, state.catalogs ?? defaultCatalogs);
+      for (const p of batch.projects)
+        Object.assign(p, projectMembers(p, administration().users));
+      for (const t of batch.tasks)
+        Object.assign(t, taskMember(t, administration().users));
       state.projects.push(...batch.projects);
       state.tasks.push(...batch.tasks);
       validateGraph(state.projects, state.tasks);

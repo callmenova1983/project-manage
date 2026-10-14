@@ -3,6 +3,7 @@ import { computed, nextTick, ref } from "vue";
 import PersonPicker from "./PersonPicker.vue";
 import TaskFieldCopy from "./TaskFieldCopy.vue";
 import { PhCheck, PhX } from "@phosphor-icons/vue";
+import { memberName } from "../../../../packages/domain/members";
 import { taskInput, type Task } from "../../../../packages/domain/types";
 import { useWorkspace } from "../stores/workspace";
 import { useUnsaved, confirmDiscard } from "../composables/unsaved";
@@ -29,13 +30,29 @@ const label = computed(() =>
   ),
 );
 const dirty = computed(
-  () => editing.value && draft.value !== (original.value?.[props.field] ?? ""),
+  () =>
+    editing.value &&
+    draft.value !==
+      (props.field === "assignee" && original.value
+        ? memberName(
+            original.value.assigneeId,
+            original.value.assignee,
+            store.data.members ?? [],
+          )
+        : (original.value?.[props.field] ?? "")),
 );
 useUnsaved(dirty);
 async function open() {
   if (store.busy || !confirmDiscard()) return;
   original.value = { ...props.task };
-  draft.value = props.task[props.field] ?? "";
+  draft.value =
+    props.field === "assignee"
+      ? memberName(
+          props.task.assigneeId,
+          props.task.assignee,
+          store.data.members ?? [],
+        )
+      : (props.task[props.field] ?? "");
   error.value = "";
   editing.value = true;
   await nextTick();
@@ -56,6 +73,7 @@ async function save() {
     await store.saveTask(
       taskInput.parse({
         ...taskInput.strip().parse(original.value!),
+        ...(props.field === "assignee" ? { assigneeId: null } : {}),
         [props.field]:
           props.field === "dueDate" ? draft.value || null : draft.value,
       }),
@@ -138,7 +156,13 @@ async function save() {
         field === "title"
           ? task.title
           : field === "assignee"
-            ? t(task.assignee || "Unassigned")
+            ? t(
+                memberName(
+                  task.assigneeId,
+                  task.assignee,
+                  store.data.members ?? [],
+                ),
+              )
             : task.dueDate
               ? formatDate(task.dueDate, { month: "short", day: "numeric" })
               : t("No due date")

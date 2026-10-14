@@ -1,6 +1,18 @@
 <script setup lang="ts">
 import { activeStages, catalogs } from "../composables/catalogs";
-import { computed, ref, onMounted, onBeforeUnmount, nextTick } from "vue";
+import {
+  computed,
+  ref,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+  watch,
+} from "vue";
+import MappingTemplates from "../components/MappingTemplates.vue";
+import {
+  groupIntakeCandidates,
+  needsIntakeDecision,
+} from "../composables/intake-review";
 import {
   PhUploadSimple,
   PhX,
@@ -10,11 +22,11 @@ import {
 } from "@phosphor-icons/vue";
 import {
   intakeCandidates,
+  sourceAt,
   intakeFields,
   detectColumns,
   parseDelimited,
   intakeInput,
-  planIntake,
   normalizeName,
   type IntakeCandidate,
   type IntakeSource,
@@ -81,6 +93,39 @@ const draft = useIntakeDraft(intakeDraftKey(store.mode, store.user!), {
   dirty,
 });
 const selected = computed(() => candidates.value.filter((c) => c.selected));
+const reviewMode = ref("all");
+const groups = ref<ReturnType<typeof groupIntakeCandidates>>([]);
+watch(candidates, (rows) => {
+  groups.value = groupIntakeCandidates(rows);
+  reviewMode.value = "all";
+});
+const reviewGroups = computed(() =>
+  groups.value
+    .map((group) => ({
+      ...group,
+      rows: group.rows.filter(
+        (c) =>
+          reviewMode.value === "all" || needsIntakeDecision(c, duplicate(c)),
+      ),
+    }))
+    .filter((group) => group.rows.length),
+);
+const decisionCount = computed(
+  () =>
+    candidates.value.filter((c) => needsIntakeDecision(c, duplicate(c))).length,
+);
+watch(reviewGroups, async () => {
+  const focused = document.activeElement;
+  await nextTick();
+  if (
+    reviewMode.value === "decisions" &&
+    focused instanceof HTMLElement &&
+    !focused.isConnected
+  )
+    document
+      .querySelector<HTMLSelectElement>(".review-options select")
+      ?.focus();
+});
 async function restoreDraft() {
   draft.restore();
   await nextTick();
@@ -144,7 +189,7 @@ function useExample() {
   text.value = example;
   error.value = "";
 }
-async function preview() {
+async function preview(reviewOnly = false) {
   error.value = "";
   try {
     if (
@@ -184,13 +229,17 @@ async function preview() {
     confirmed.value = false;
     step.value = "review";
     const problems = candidates.value.some(
-      (c) => issueWarnings(c).length || duplicate(c),
+      (c) =>
+        reviewWarnings(c).some(
+          (w) => w !== "Rule-assisted draft. Review the project details.",
+        ) ||
+        duplicate(c) ||
+        needsIntakeDecision(c, false),
     );
-    if (problems) {
-      error.value = t("Fix the details below before creating");
-      return;
+    if (!problems && !reviewOnly) {
+      confirmed.value = true;
+      await apply();
     }
-    await apply();
   } catch (e) {
     error.value = (e as Error).message;
   }
@@ -200,6 +249,29 @@ function targetChanged(c: IntakeCandidate) {
   if (p) c.project = projectInput.strip().parse(p);
   c.targetProjectVersion = p?.version ?? null;
   confirmed.value = false;
+  c.matchConfirmed = false;
+}
+function reviewWarnings(c: IntakeCandidate) {
+  const assigned = !!c.targetProjectId && !c.project.intakeInbox;
+  return c.warnings
+    .filter(
+      (w) =>
+        !(
+          assigned &&
+          w === "Unresolved project. Save in Intake inbox and assign it later."
+        ),
+    )
+    .map((w) => {
+      if (assigned && w === "Several projects match. Choose the target.")
+        return "The source references several projects. Review your selected target.";
+      if (
+        assigned &&
+        w ===
+          "Partial project match. Confirm the target or keep it in Intake inbox."
+      )
+        return "The source has a partial name match. Review your selected target.";
+      return w;
+    });
 }
 function duplicate(c: IntakeCandidate) {
   return !!(
@@ -224,11 +296,6 @@ function duplicate(c: IntakeCandidate) {
       ))
   );
 }
-function issueWarnings(c: IntakeCandidate) {
-  return c.warnings.filter(
-    (warning) => warning !== "Rule-assisted draft. Review the project details.",
-  );
-}
 async function apply() {
   if (store.busy) return;
   error.value = "";
@@ -238,15 +305,16 @@ async function apply() {
       rows: selected.value.map((c) => ({
         sourceRow: c.sourceRow,
         sourcePart: c.sourcePart,
+        contextRows: c.contextRows,
+        matchConfirmed: c.matchConfirmed,
         targetProjectId: c.targetProjectId,
         targetProjectVersion: c.targetProjectVersion,
         project: c.project,
         task: c.task,
         duplicateConfirmed: c.duplicateConfirmed,
       })),
-      confirmed: true,
+      confirmed: confirmed.value,
     });
-    planIntake(input, store.data, store.user!.name, () => crypto.randomUUID());
     result.value = await store.operation(
       () => api.applyIntake(input),
       "Intake created",
@@ -257,7 +325,7 @@ async function apply() {
     draft.flush();
     await loadHistory();
   } catch (e) {
-    step.value = "review";
+    reviewMode.value = "all";
     error.value = (e as Error).message.startsWith("[")
       ? t("Check required project and task fields")
       : (e as Error).message;
@@ -293,9 +361,8 @@ function startAgain() {
   draft.flush();
 }
 function closePanel() {
-  if (store.busy || reading.value) return;
+  if (dirty.value && !askDiscard()) return;
   draft.flush();
-  if (dirty.value && draft.status.value !== "saved" && !askDiscard()) return;
   emit("close");
 }
 onMounted(async () => {
@@ -310,7 +377,7 @@ onBeforeUnmount(() => controller?.abort());
 <template>
   <section
     ref="panel"
-    class="intake-page"
+    class="page intake-page"
     :class="{ 'intake-embedded': embedded }"
     :aria-label="t('Quick intake')"
   >
@@ -321,10 +388,8 @@ onBeforeUnmount(() => controller?.abort());
       </div>
       <button
         v-if="embedded"
-        type="button"
         class="icon-button"
         :aria-label="t('Close quick intake')"
-        :disabled="store.busy || reading"
         @click="closePanel"
       >
         <PhX :size="18" />
@@ -391,7 +456,11 @@ onBeforeUnmount(() => controller?.abort());
       }}
     </p>
     <p v-else-if="draft.status.value === 'saved'" class="muted" role="status">
-      {{ t("Draft saved") }}
+      {{
+        t(
+          "Unsubmitted draft kept in this tab · up to 24 hours · review before saving to the workspace.",
+        )
+      }}
     </p>
     <p v-else-if="draft.status.value === 'expired'" class="muted" role="status">
       {{ t("The previous temporary draft expired after 24 hours.") }}
@@ -402,11 +471,17 @@ onBeforeUnmount(() => controller?.abort());
       @dragover.prevent
       @drop.prevent="drop"
     >
-      <label v-if="!sources.length" class="intake-text-label">
-        <span class="sr-only">{{ t("Notes or pasted table") }}</span>
-        <textarea
+      <div class="section-heading">
+        <h2>{{ t("Paste anything to get started") }}</h2>
+        <button class="text-button" @click="useExample">
+          {{ t("Try a sample") }}
+        </button>
+      </div>
+      <label v-if="!sources.length"
+        >{{ t("Notes or pasted table")
+        }}<textarea
           v-model="text"
-          rows="4"
+          rows="3"
           maxlength="200000"
           :placeholder="
             t(
@@ -415,52 +490,32 @@ onBeforeUnmount(() => controller?.abort());
           "
         />
       </label>
-      <div class="intake-source-toolbar">
-        <div class="intake-source-tools">
-          <label class="intake-upload button">
-            <PhUploadSimple :size="17" /><span>{{ t("Upload file") }}</span>
-            <input
-              type="file"
-              :aria-label="t('Upload file')"
-              accept=".txt,.csv,.tsv,.xlsx"
-              :disabled="reading"
-              @change="
-                loadFile(($event.target as HTMLInputElement).files?.[0]);
-                ($event.target as HTMLInputElement).value = '';
-              "
-            />
-          </label>
-          <button type="button" class="text-button" @click="useExample">
-            {{ t("Try a sample") }}
-          </button>
-          <span class="intake-file-hint muted"
-            >{{ t("Or drop a file") }} · TXT / CSV / XLSX</span
-          >
-        </div>
-        <button
-          v-if="!sources.length"
-          class="primary"
-          :disabled="store.busy || reading || !text.trim()"
-          @click="preview"
-        >
-          {{ t("Create items") }}<PhArrowRight :size="16" />
-        </button>
-      </div>
-      <details class="intake-help">
-        <summary>{{ t("Intake help") }}</summary>
-        <p>
+      <details class="intake-source-help">
+        <summary>{{ t("Input tips") }}</summary>
+        <p class="muted">
           {{
             t(
-              "Use project/client/owner/task labels for best results. Unclear details stay open for review. You can use your keyboard’s dictation.",
+              "Use project headings followed by bullet tasks, or project/client/owner/task labels. Aliases and multiple matches stay visible for review. Relative dates remain unset. This is rule assistance; no model is called.",
             )
           }}
         </p>
-        <p>{{ t("TXT, CSV, TSV, XLSX · 2 MB · 200 rows per sheet") }}</p>
-        <p>
-          {{ t("Rule-assisted · no AI connection") }} ·
-          {{ t("Files are read in your browser. Click Create to save.") }}
-        </p>
       </details>
+      <div class="intake-source-tools">
+        <label class="intake-upload button">
+          <PhUploadSimple :size="17" /><span>{{ t("Upload file") }}</span>
+          <input
+            type="file"
+            :aria-label="t('Upload file')"
+            accept=".txt,.csv,.tsv,.xlsx"
+            :disabled="reading"
+            @change="
+              loadFile(($event.target as HTMLInputElement).files?.[0]);
+              ($event.target as HTMLInputElement).value = '';
+            "
+          />
+        </label>
+        <span class="muted">{{ t("Or drop a file") }} · TXT / CSV / XLSX</span>
+      </div>
       <div v-if="reading" role="status">
         {{ t("Reading file…") }}
         <button class="text-button" @click="controller?.abort()">
@@ -518,15 +573,32 @@ onBeforeUnmount(() => controller?.abort());
                 "Only mapped columns become fields. All source cells remain visible in review. XLSX formulas are not executed; stored values are used.",
               )
             }}
-          </p></template
-        >
+          </p>
+          <MappingTemplates
+            :headers="source.rows[0] ?? []"
+            :mapping="mapping"
+            :has-header="hasHeader"
+            @reuse="
+              (fields, header) => {
+                mapping = fields;
+                hasHeader = header;
+              }
+            "
+        /></template>
         <pre v-else class="intake-original">{{ source.text }}</pre>
       </template>
-      <div v-if="sources.length" class="form-actions">
+      <div class="form-actions">
+        <button
+          class="text-button"
+          :disabled="reading || (!text.trim() && !sources.length)"
+          @click="preview(true)"
+        >
+          {{ t("Review candidates") }}
+        </button>
         <button
           class="primary"
-          :disabled="store.busy || reading || (!text.trim() && !sources.length)"
-          @click="preview"
+          :disabled="reading || (!text.trim() && !sources.length)"
+          @click="preview(false)"
         >
           {{ t("Create items") }}<PhArrowRight :size="16" />
         </button>
@@ -538,7 +610,14 @@ onBeforeUnmount(() => controller?.abort());
     >
       <div class="intake-review-header">
         <div>
-          <h2>{{ t("Check these details") }}</h2>
+          <h2>{{ t("{count} candidates", { count: candidates.length }) }}</h2>
+          <p class="muted">
+            {{
+              t(
+                "Keep the rows you want. Existing project details will not be overwritten.",
+              )
+            }}
+          </p>
         </div>
         <button
           type="button"
@@ -551,158 +630,267 @@ onBeforeUnmount(() => controller?.abort());
           {{ t("Back to source") }}
         </button>
       </div>
-      <article
-        v-for="c in candidates"
-        :key="c.id"
-        class="panel intake-candidate"
-        :class="{ excluded: !c.selected }"
+      <div class="review-options">
+        <label
+          >{{ t("Review view")
+          }}<select v-model="reviewMode" :aria-label="t('Review view')">
+            <option value="all">
+              {{ t("All rows, grouped by source project") }}
+            </option>
+            <option value="decisions">
+              {{ t("Needs decisions ({count})", { count: decisionCount }) }}
+            </option>
+          </select></label
+        >
+        <p class="muted">
+          {{
+            t(
+              "Filtering changes this view only. All selected rows are included; ambiguity and duplicate confirmations still apply.",
+            )
+          }}
+        </p>
+      </div>
+      <p v-if="!reviewGroups.length" role="status">
+        {{
+          t(
+            "No rows need a decision. Review all rows before creating the selected items.",
+          )
+        }}
+      </p>
+      <section
+        v-for="group in reviewGroups"
+        :key="group.id"
+        class="intake-project-group"
+        :aria-label="t('Source project: {name}', { name: group.name })"
       >
-        <div class="section-heading">
-          <label class="checkbox"
-            ><input
-              v-model="c.selected"
-              type="checkbox"
-              @change="confirmed = false"
-            />{{ t("Row {number}", { number: c.sourceRow }) }} ·
-            {{ c.project.name || t("Unnamed project") }}</label
-          ><span class="muted">{{
-            c.task ? t("Project + task") : t("Project only")
-          }}</span>
-        </div>
-        <details open>
-          <summary>{{ t("Review details") }}</summary>
-          <div class="intake-fields">
-            <label
-              >{{ t("Target project")
-              }}<select
-                v-model="c.targetProjectId"
-                :disabled="!c.selected"
-                @change="targetChanged(c)"
-              >
-                <option value="">
-                  {{
-                    t(
-                      c.project.intakeInbox
-                        ? "Save in Intake inbox"
-                        : "Create a new project",
-                    )
-                  }}
-                </option>
-                <option
-                  v-for="p in store.data.projects"
-                  :key="p.id"
-                  :value="p.id"
-                >
-                  {{ p.name }} · {{ p.client }}
-                </option>
-              </select></label
-            >
-            <label
-              >{{ t("Project name")
-              }}<input
-                v-model="c.project.name"
-                :disabled="!c.selected || !!c.targetProjectId"
-                required
-                maxlength="120"
-            /></label>
-            <label
-              >{{ t("Client")
-              }}<input
-                v-model="c.project.client"
-                :disabled="!c.selected || !!c.targetProjectId"
-                maxlength="120"
-            /></label>
-            <label
-              >{{ t("Project owner")
-              }}<input
-                v-model="c.project.owner"
-                :disabled="!c.selected || !!c.targetProjectId"
-                maxlength="80"
-            /></label>
-            <label
-              >{{ t("Stage")
-              }}<select
-                v-model="c.project.stage"
-                :disabled="!c.selected || !!c.targetProjectId"
-              >
-                <option value="unclassified">
-                  {{ stageLabels.unclassified }}
-                </option>
-                <option
-                  v-for="stage in activeStages"
-                  :key="stage.id"
-                  :value="stage.id"
-                >
-                  {{ stageLabels[stage.id] }}
-                </option>
-              </select></label
-            >
-            <label
-              >{{ t("Description")
-              }}<input
-                v-model="c.project.description"
-                :disabled="!c.selected || !!c.targetProjectId"
-                maxlength="4000"
-            /></label>
-            <template v-if="c.task"
-              ><label
-                >{{ t("Task title")
-                }}<input
-                  v-model="c.task.title"
-                  :disabled="!c.selected"
-                  required
-                  maxlength="240" /></label
-              ><label
-                >{{ t("Assignee")
-                }}<input
-                  v-model="c.task.assignee"
-                  :disabled="!c.selected"
-                  maxlength="80" /></label
-              ><label
-                >{{ t("Due date")
-                }}<input
-                  :value="c.task.dueDate ?? ''"
-                  type="date"
-                  :disabled="!c.selected"
-                  @input="
-                    c.task.dueDate =
-                      ($event.target as HTMLInputElement).value || null
-                  " /></label
-              ><label
-                >{{ t("Task status")
-                }}<select v-model="c.task.status" :disabled="!c.selected">
-                  <option
-                    v-for="status in statuses"
-                    :key="status"
-                    :value="status"
+        <h3>
+          {{ t("Source project: {name}", { name: group.name }) }}
+          <span class="muted"
+            >· {{ t("{count} rows", { count: group.rows.length }) }}</span
+          >
+        </h3>
+        <article
+          v-for="(c, index) in group.rows"
+          :key="c.id"
+          class="panel intake-candidate"
+          :class="{ excluded: !c.selected }"
+        >
+          <div class="section-heading">
+            <label class="checkbox"
+              ><input
+                v-model="c.selected"
+                type="checkbox"
+                @change="confirmed = false"
+              />{{ t("Row {number}", { number: c.sourceRow }) }} ·
+              {{ c.project.name || t("Unnamed project") }}</label
+            ><span class="muted">{{
+              c.task ? t("Project + task") : t("Project only")
+            }}</span>
+          </div>
+          <details :open="index === 0 || c.warnings.length > 0">
+            <summary>{{ t("Review details") }}</summary>
+            <div v-if="c.matchEvidence?.length" class="intake-matches">
+              <p class="muted">{{ t("Suggested project matches") }}</p>
+              <ul>
+                <li v-for="match in c.matchEvidence" :key="match.projectId">
+                  <button
+                    type="button"
+                    :disabled="!c.selected"
+                    @click="
+                      c.targetProjectId = match.projectId;
+                      targetChanged(c);
+                    "
                   >
-                    {{ statusLabels[status] }}
+                    {{
+                      store.data.projects.find((p) => p.id === match.projectId)
+                        ?.name ?? match.projectId
+                    }}
+                  </button>
+                  <span
+                    >{{
+                      t(
+                        {
+                          name: "Exact project name",
+                          alias: "Exact alias",
+                          partial: "Partial name",
+                          mention: "Mention in source",
+                        }[match.kind],
+                      )
+                    }}
+                    · {{ match.value }}</span
+                  >
+                </li>
+              </ul>
+            </div>
+            <div class="intake-fields">
+              <label
+                >{{ t("Target project")
+                }}<select
+                  v-model="c.targetProjectId"
+                  :disabled="!c.selected"
+                  @change="targetChanged(c)"
+                >
+                  <option value="">
+                    {{
+                      t(
+                        c.project.intakeInbox
+                          ? "Save in Intake inbox"
+                          : "Create a new project",
+                      )
+                    }}
+                  </option>
+                  <option
+                    v-for="p in store.data.projects"
+                    :key="p.id"
+                    :value="p.id"
+                  >
+                    {{ p.name }} · {{ p.client }}
                   </option>
                 </select></label
-              ></template
+              >
+              <label
+                >{{ t("Project name")
+                }}<input
+                  v-model="c.project.name"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  required
+                  maxlength="120"
+              /></label>
+              <label
+                >{{ t("Client")
+                }}<input
+                  v-model="c.project.client"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  maxlength="120"
+              /></label>
+              <label
+                >{{ t("Project owner")
+                }}<input
+                  v-model="c.project.owner"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  maxlength="80"
+              /></label>
+              <label
+                >{{ t("Stage")
+                }}<select
+                  v-model="c.project.stage"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                >
+                  <option value="unclassified">
+                    {{ stageLabels.unclassified }}
+                  </option>
+                  <option
+                    v-for="stage in activeStages"
+                    :key="stage.id"
+                    :value="stage.id"
+                  >
+                    {{ stageLabels[stage.id] }}
+                  </option>
+                </select></label
+              >
+              <label
+                >{{ t("Description")
+                }}<input
+                  v-model="c.project.description"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  maxlength="4000"
+              /></label>
+              <template v-if="c.task"
+                ><label
+                  >{{ t("Task title")
+                  }}<input
+                    v-model="c.task.title"
+                    :disabled="!c.selected"
+                    required
+                    maxlength="240" /></label
+                ><label
+                  >{{ t("Assignee")
+                  }}<input
+                    v-model="c.task.assignee"
+                    :disabled="!c.selected"
+                    maxlength="80" /></label
+                ><label
+                  >{{ t("Due date")
+                  }}<input
+                    :value="c.task.dueDate ?? ''"
+                    type="date"
+                    :disabled="!c.selected"
+                    @input="
+                      c.task.dueDate =
+                        ($event.target as HTMLInputElement).value || null
+                    " /></label
+                ><label
+                  >{{ t("Task status")
+                  }}<select v-model="c.task.status" :disabled="!c.selected">
+                    <option
+                      v-for="status in statuses"
+                      :key="status"
+                      :value="status"
+                    >
+                      {{ statusLabels[status] }}
+                    </option>
+                  </select></label
+                ></template
+              >
+            </div>
+            <p v-if="c.task" class="muted">
+              {{
+                t(
+                  "New tasks start without a work-week assignment. A due date does not assign weekly work.",
+                )
+              }}
+            </p>
+            <ul v-if="reviewWarnings(c).length" class="intake-warnings">
+              <li v-for="warning in reviewWarnings(c)" :key="warning">
+                {{ t(warning) }}
+              </li>
+            </ul>
+            <label
+              v-if="
+                c.matches.length > 1 &&
+                c.targetProjectId &&
+                !c.project.intakeInbox &&
+                c.selected
+              "
+              class="checkbox ambiguity-confirm"
             >
-          </div>
-          <ul v-if="issueWarnings(c).length" class="intake-warnings">
-            <li v-for="warning in issueWarnings(c)" :key="warning">
-              {{ t(warning) }}
-            </li>
-          </ul>
-          <label v-if="duplicate(c) && c.selected" class="checkbox"
-            ><input v-model="c.duplicateConfirmed" type="checkbox" />{{
-              t("Allow a new project or task with a matching name")
-            }}</label
-          >
-          <details class="intake-source-proof">
-            <summary>
-              {{ t("Original source") }} · {{ source.name }}
-              {{ source.sheet }} ·
-              {{ t("Row {number}", { number: c.sourceRow }) }}
-            </summary>
-            <pre>{{ c.sourceText }}</pre>
+              <input
+                v-model="c.matchConfirmed"
+                type="checkbox"
+                @change="confirmed = false"
+              />{{
+                t("I confirm this target despite multiple project matches")
+              }}
+            </label>
+            <label v-if="duplicate(c) && c.selected" class="checkbox"
+              ><input v-model="c.duplicateConfirmed" type="checkbox" />{{
+                t("Allow a new project or task with a matching name")
+              }}</label
+            >
+            <details class="intake-source-proof">
+              <summary>
+                {{ t("Original source") }} · {{ source.name }}
+                {{ source.sheet }} ·
+                {{ t("Row {number}", { number: c.sourceRow }) }}
+              </summary>
+              <div v-for="row in c.contextRows ?? []" :key="row">
+                <small>{{ t("Context row {number}", { number: row }) }}</small>
+                <pre>{{ sourceAt(source, row) }}</pre>
+              </div>
+              <pre>{{ c.sourceText }}</pre>
+            </details>
           </details>
-        </details>
-      </article>
+        </article>
+      </section>
       <div class="panel intake-confirm">
+        <h2>{{ t("Ready to create") }}</h2>
+        <p class="muted">
+          {{
+            t(
+              "Missing details do not block saving. Unresolved work stays in Intake inbox; owners, dates and stages can be completed later. Review warnings once before confirming.",
+            )
+          }}
+        </p>
         <p>
           {{
             t("{projects} new projects · {tasks} new tasks", {
@@ -711,6 +899,15 @@ onBeforeUnmount(() => controller?.abort());
             })
           }}
         </p>
+        <label class="checkbox"
+          ><input
+            v-model="confirmed"
+            type="checkbox"
+            :disabled="!selected.length"
+          />{{
+            t("I reviewed the selected rows and their target projects")
+          }}</label
+        >
         <div class="form-actions">
           <button
             type="button"
@@ -722,9 +919,20 @@ onBeforeUnmount(() => controller?.abort());
           ><button
             class="primary"
             type="submit"
-            :disabled="!selected.length || store.busy"
+            :disabled="
+              !confirmed ||
+              !selected.length ||
+              store.busy ||
+              selected.some(
+                (c) =>
+                  c.matches.length > 1 &&
+                  c.targetProjectId &&
+                  !c.project.intakeInbox &&
+                  !c.matchConfirmed,
+              )
+            "
           >
-            {{ store.busy ? t("Saving…") : t("Create items") }}
+            {{ store.busy ? t("Saving…") : t("Create confirmed items") }}
           </button>
         </div>
       </div>
@@ -749,9 +957,7 @@ onBeforeUnmount(() => controller?.abort());
         }}
       </p>
       <div class="form-actions">
-        <button v-if="embedded" class="button" @click="closePanel">
-          {{ t("View projects") }}</button
-        ><RouterLink v-else class="button" to="/projects">{{
+        <RouterLink class="button" to="/projects">{{
           t("View projects")
         }}</RouterLink
         ><button class="primary" @click="startAgain">
@@ -759,8 +965,8 @@ onBeforeUnmount(() => controller?.abort());
         </button>
       </div>
     </div>
-    <details v-if="history.length" class="intake-history">
-      <summary>{{ t("Recent intakes") }} · {{ history.length }}</summary>
+    <section v-if="history.length" class="intake-history">
+      <h2>{{ t("Recent intakes") }}</h2>
       <article v-for="batch in history" :key="batch.id" class="panel">
         <div class="section-heading">
           <div>
@@ -801,14 +1007,63 @@ onBeforeUnmount(() => controller?.abort());
           </button>
         </div>
       </article>
-    </details>
+    </section>
   </section>
 </template>
 <style scoped>
+.intake-project-group h3 {
+  overflow-wrap: anywhere;
+}
+.review-options select {
+  max-width: 100%;
+}
+.intake-matches ul {
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.intake-matches li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.intake-matches span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.intake-matches button {
+  white-space: normal;
+  text-align: left;
+}
+
 .intake-page {
   max-width: 1200px;
   margin: auto;
-  padding: 20px;
+}
+.intake-steps {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 20px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.intake-steps .active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.intake-method {
+  display: flex;
+  gap: 10px;
+  padding: 15px 0;
+  color: var(--text-secondary);
+}
+.intake-method p {
+  font-size: 12px;
+  margin: 4px 0 0;
 }
 .intake-source,
 .intake-candidate,
@@ -820,14 +1075,32 @@ onBeforeUnmount(() => controller?.abort());
 .intake-source textarea {
   width: 100%;
   resize: vertical;
-  min-height: 110px;
-  max-height: 300px;
+  min-height: 150px;
 }
 .intake-source .muted,
 .intake-candidate .muted,
 .intake-history .muted {
   font-size: 12px;
   line-height: 1.6;
+}
+.intake-drop {
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  margin: 18px 0;
+  flex-wrap: wrap;
+}
+.intake-drop input {
+  max-width: 100%;
+  flex: 1;
+  min-width: 190px;
+}
+.intake-drop small {
+  width: 100%;
+  color: var(--muted);
 }
 .intake-mapping,
 .intake-fields {
@@ -926,6 +1199,9 @@ onBeforeUnmount(() => controller?.abort());
   width: auto;
   flex-shrink: 0;
 }
+.intake-steps span {
+  white-space: nowrap;
+}
 @media (max-width: 760px) {
   .intake-fields,
   .intake-mapping {
@@ -933,6 +1209,10 @@ onBeforeUnmount(() => controller?.abort());
   }
   .intake-page {
     padding: 16px 12px;
+  }
+  .intake-steps {
+    gap: 6px;
+    font-size: 11px;
   }
   .intake-source,
   .intake-candidate,
@@ -956,7 +1236,6 @@ onBeforeUnmount(() => controller?.abort());
     font-size: 11px;
   }
 }
-
 .intake-embedded {
   max-width: none;
   margin: 0 0 20px;

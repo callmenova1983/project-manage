@@ -1,14 +1,10 @@
-import {
-  dayKey,
-  leafTasks,
-  weekKey,
-  type Project,
-  type Task,
-} from "./types.js";
+import { zonedDay, zonedWeek } from "./time-zone.js";
+import { leafTasks, type Project, type Task } from "./types.js";
 export function stageSummaries(
   projects: Project[],
   tasks: Task[],
   now = new Date(),
+  timeZone = "UTC",
 ) {
   const stages = new Map(projects.map((p) => [p.id, p.stage]));
   const result: Record<
@@ -33,8 +29,8 @@ export function stageSummaries(
     });
     counts.projects++;
   }
-  const week = weekKey(now),
-    today = dayKey(now);
+  const week = zonedWeek(now, timeZone),
+    today = zonedDay(now, timeZone);
   for (const task of leafTasks(tasks)) {
     const stage = stages.get(task.projectId),
       counts = stage ? result[stage] : undefined;

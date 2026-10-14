@@ -67,3 +67,24 @@ it("counts actual scheduled work and risks without counting parents or treating 
     },
   });
 });
+
+it("uses the workspace calendar for stage metrics across a Beijing Monday boundary", () => {
+  const seed = createSeed(),
+    project = seed.projects[0]!,
+    task = {
+      ...seed.tasks[0]!,
+      projectId: project.id,
+      parentId: null,
+      status: "todo" as const,
+      workWeek: "2026-10-12",
+      workDates: [],
+      dueDate: "2026-10-11",
+    };
+  const at = new Date("2026-10-11T16:30:00Z");
+  expect(
+    stageSummaries([project], [task], at, "Asia/Shanghai")[project.stage],
+  ).toMatchObject({ planned: 1, overdue: 1 });
+  expect(
+    stageSummaries([project], [task], at, "UTC")[project.stage],
+  ).toMatchObject({ planned: 0, overdue: 0 });
+});

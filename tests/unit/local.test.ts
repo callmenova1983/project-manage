@@ -245,3 +245,50 @@ it("keeps demo administration local, persists user/catalog/model changes and nev
   ).toBe(true);
   expect((await reopened.adminAudit()).length).toBeGreaterThanOrEqual(4);
 });
+
+it("persists shared timezone with explicit confirmation, tab conflicts and destination-safe imports", async () => {
+  const first = createLocalApi(),
+    second = createLocalApi(),
+    before = await first.snapshot();
+  expect(before.settings).toEqual({ timeZone: "UTC", version: 1 });
+  await first.saveWorkspaceSettings({
+    timeZone: "Asia/Shanghai",
+    version: 1,
+    confirmed: true,
+  });
+  expect((await second.snapshot()).settings).toEqual({
+    timeZone: "Asia/Shanghai",
+    version: 2,
+  });
+  await expect(
+    second.saveWorkspaceSettings({
+      timeZone: "UTC",
+      version: 1,
+      confirmed: true,
+    }),
+  ).rejects.toMatchObject({ status: 409 });
+  const exported = await first.exportData();
+  expect(exported.settings?.timeZone).toBe("Asia/Shanghai");
+  await first.importData(
+    { ...exported, settings: { timeZone: "UTC", version: 1 } },
+    exported.revision,
+  );
+  expect((await first.snapshot()).settings?.timeZone).toBe("Asia/Shanghai");
+  expect((await first.snapshot()).tasks).toEqual(before.tasks);
+  const query = { timeZone: "Asia/Shanghai", limit: 1 };
+  const page = await first.activityPage(query);
+  const history = await first.exportActivity({
+    ...query,
+    checkpoint: page.checkpoint,
+  });
+  expect(history.total).toBe(page.total);
+  expect(history.events.length).toBe(page.total);
+  await first.saveWorkspaceSettings({
+    timeZone: "UTC",
+    version: 2,
+    confirmed: true,
+  });
+  await expect(
+    first.exportActivity({ ...query, checkpoint: page.checkpoint }),
+  ).rejects.toMatchObject({ status: 409 });
+});

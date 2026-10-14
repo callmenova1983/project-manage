@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { currentDay, currentWeek } from "../composables/calendar";
+import { memberName } from "../../../../packages/domain/members";
 import {
   channelEntries,
   projectChannel,
@@ -19,8 +21,8 @@ import {
   PhArrowUpRight,
   PhFunnel,
   PhNotePencil,
-  PhSquaresFour,
   PhDotsSixVertical,
+  PhStar,
   PhCaretUp,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
@@ -30,9 +32,8 @@ import {
   disciplines,
   statistics,
   leafTasks,
-  dayKey,
-  weekKey,
   type Project,
+  type Task,
 } from "../../../../packages/domain/types";
 import { stageLabels } from "../locales/en";
 import { confirmDiscard } from "../composables/unsaved";
@@ -43,6 +44,7 @@ import ProjectQuickActions from "../components/ProjectQuickActions.vue";
 import { api } from "../services/api";
 import { orderedProjectIds } from "../../../../packages/domain/project-order";
 import ScopeWork from "../components/ScopeWork.vue";
+import ProjectFollow from "../components/ProjectFollow.vue";
 import TaskList from "../components/TaskList.vue";
 import InlineUpdate from "../components/InlineUpdate.vue";
 import PasteTasks from "../components/PasteTasks.vue";
@@ -69,6 +71,7 @@ async function closeIntake() {
 const store = useWorkspace();
 const {
   query,
+  followedOnly,
   stage,
   owner,
   discipline,
@@ -271,33 +274,65 @@ onBeforeRouteLeave(() => {
     record?.dataset.projectRecord ?? expanded.value;
 });
 const scopeDate = computed(() => {
-  const format = (date: Date) =>
-    formatDate(date, {
-      month: "short",
-      day: "numeric",
-      timeZone: "UTC",
-    });
+  const format = (date: string) =>
+    formatDate(date, { month: "short", day: "numeric" });
   if (scope.value === "today")
-    return `${format(new Date())}, ${new Date().getUTCFullYear()} · UTC`;
-  const start = new Date(weekKey() + "T00:00:00Z");
-  const end = new Date(start.getTime() + 6 * 86400000);
-  return `${format(start)}–${format(end)}, ${end.getUTCFullYear()} · UTC`;
+    return `${format(currentDay())}, ${currentDay().slice(0, 4)} · ${store.timeZone}`;
+  const start = currentWeek();
+  const end = new Date(Date.parse(start) + 6 * 86400000)
+    .toISOString()
+    .slice(0, 10);
+  return `${format(start)}–${format(end)}, ${end.slice(0, 4)} · ${store.timeZone}`;
 });
-const scopeStats = computed(() => statistics(store.data.tasks, scope.value));
+const scopeStats = computed(() =>
+  statistics(store.data.tasks, scope.value, new Date(), store.timeZone),
+);
+const overviewTasks = computed(() => {
+  const tasks = leafTasks(store.data.tasks),
+    day = currentDay(),
+    week = currentWeek();
+  return tasks.filter((task) =>
+    scope.value === "week"
+      ? task.workWeek === week
+      : task.workDates.includes(day),
+  );
+});
+const ownerKey = (p: Project) =>
+  JSON.stringify(p.ownerId ? ["member", p.ownerId] : ["text", p.owner]);
+const ownerName = (p: Project) =>
+  memberName(p.ownerId, p.owner, store.data.members ?? []);
 const owners = computed(() =>
-  [...new Set(store.data.projects.map((p) => p.owner))].sort(),
+  [
+    ...new Map(
+      store.data.projects.map((p) => {
+        const member = store.data.members?.find((m) => m.id === p.ownerId);
+        return [
+          ownerKey(p),
+          {
+            id: ownerKey(p),
+            label: member
+              ? `${member.name} · ${member.email}${member.status !== "active" ? ` · ${t(member.status)}` : ""}`
+              : p.owner,
+          },
+        ];
+      }),
+    ).values(),
+  ].sort((a, b) => a.label.localeCompare(b.label)),
 );
 const projects = computed(() =>
   store.data.projects
     .filter(
       (p) =>
         (!query.value ||
-          `${p.name} ${p.shortName ?? ""} ${p.aliases.join(" ")} ${p.client} ${p.latestUpdate} ${p.owner}`
+          `${p.name} ${p.shortName ?? ""} ${p.aliases.join(" ")} ${p.client} ${p.latestUpdate} ${ownerName(p)}`
             .toLowerCase()
             .includes(query.value.toLowerCase())) &&
         (!channel.value || projectChannel(p) === channel.value) &&
         (!stage.value || p.stage === stage.value) &&
-        (!owner.value || p.owner === owner.value) &&
+        (!owner.value ||
+          ownerKey(p) === owner.value ||
+          (!p.ownerId && p.owner === owner.value)) &&
+        (!followedOnly.value || store.following.has(p.id)) &&
         (!discipline.value || p.discipline === discipline.value) &&
         (!category.value || p.categoryIds?.includes(category.value)),
     )
@@ -313,6 +348,7 @@ const filtered = computed(
   () =>
     !!(
       query.value ||
+      followedOnly.value ||
       stage.value ||
       owner.value ||
       discipline.value ||
@@ -322,25 +358,43 @@ const filtered = computed(
 );
 function clear() {
   query.value = "";
+  followedOnly.value = false;
   stage.value = "";
   owner.value = "";
   discipline.value = "";
   category.value = "";
   channel.value = "";
 }
-function tasks(id: string) {
-  return store.data.tasks.filter((t) => t.projectId === id);
-}
-function scopedTasks(id: string) {
-  return leafTasks(tasks(id)).filter((t) =>
-    scope.value === "week"
-      ? t.workWeek === weekKey()
-      : t.workDates.includes(dayKey()),
+const tasksByProject = computed(() => {
+  const grouped = new Map<string, Task[]>();
+  for (const task of store.data.tasks) {
+    const group = grouped.get(task.projectId);
+    if (group) group.push(task);
+    else grouped.set(task.projectId, [task]);
+  }
+  return grouped;
+});
+const scopedByProject = computed(() => {
+  // Snapshot refresh invalidates this map, so local-day/week boundaries refresh too.
+  const groups = tasksByProject.value,
+    day = currentDay(),
+    week = currentWeek();
+  return new Map(
+    [...groups].map(([id, tasks]) => {
+      const scoped = leafTasks(tasks).filter((task) =>
+        scope.value === "week"
+          ? task.workWeek === week
+          : task.workDates.includes(day),
+      );
+      return [id, { tasks: scoped, summary: statistics(scoped) }];
+    }),
   );
-}
-function summary(id: string) {
-  return statistics(tasks(id), scope.value);
-}
+});
+const emptySummary = statistics([]);
+const tasks = (id: string) => tasksByProject.value.get(id) ?? [];
+const scopedTasks = (id: string) => scopedByProject.value.get(id)?.tasks ?? [];
+const summary = (id: string) =>
+  scopedByProject.value.get(id)?.summary ?? emptySummary;
 function reportTime(p: Project) {
   return p.reportedAt
     ? formatDate(p.reportedAt, {
@@ -348,8 +402,9 @@ function reportTime(p: Project) {
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
-        timeZone: "UTC",
-      }) + " UTC"
+      }) +
+        " " +
+        store.timeZone
     : t("Report time unavailable");
 }
 function saved(p: Project) {
@@ -446,13 +501,7 @@ function edit(id: string) {
       </div>
       <TaskDistribution
         class="overview-distribution"
-        :tasks="
-          leafTasks(store.data.tasks).filter((task) =>
-            scope === 'week'
-              ? task.workWeek === weekKey()
-              : task.workDates.includes(dayKey()),
-          )
-        "
+        :tasks="overviewTasks"
         compact
         :showLegend="false"
       />
@@ -492,7 +541,9 @@ function edit(id: string) {
       <WeeklyChanges
         :activities="store.data.activities"
         :projects="portfolioProjects"
-        :projectIds="projects.map((project) => project.id)"
+        :projectIds="
+          filtered ? projects.map((project) => project.id) : undefined
+        "
       /><NextWork
         :tasks="store.data.tasks"
         :projects="projects"
@@ -511,6 +562,21 @@ function edit(id: string) {
           /><kbd>/</kbd></label
         >
         <div class="filter-controls">
+          <button
+            class="following-filter"
+            :aria-pressed="followedOnly"
+            @click="followedOnly = !followedOnly"
+          >
+            <PhStar :size="16" :weight="followedOnly ? 'fill' : 'regular'" />{{
+              t("Following")
+            }}
+            {{
+              formatNumber(
+                store.data.projects.filter((p) => store.following.has(p.id))
+                  .length,
+              )
+            }}
+          </button>
           <PhFunnel :size="16" class="muted" />
           <select v-model="channel" aria-label="按渠道筛选项目">
             <option value="">全部渠道</option>
@@ -529,7 +595,9 @@ function edit(id: string) {
             </option></select
           ><select v-model="owner" :aria-label="t('Filter by owner')">
             <option value="">{{ t("All owners") }}</option>
-            <option v-for="o in owners" :key="o">{{ o }}</option></select
+            <option v-for="o in owners" :key="o.id" :value="o.id">
+              {{ o.label }}
+            </option></select
           ><select
             v-model="discipline"
             :aria-label="t('Filter by responsibility')"
@@ -569,6 +637,13 @@ function edit(id: string) {
       </p>
       <p v-if="orderError" class="error-box" role="alert">
         {{ t(orderError) }}
+      </p>
+      <p v-if="followedOnly" class="muted following-hint">
+        {{
+          t(
+            "Following is a personal filter saved for this account in this browser. Everyone can still view and edit all projects.",
+          )
+        }}
       </p>
       <div v-if="!projects.length" class="empty">
         <PhMagnifyingGlass :size="32" />
@@ -662,9 +737,7 @@ function edit(id: string) {
                   :size="15"
                 /><PhCaretRight v-else :size="15" />
               </button>
-              <div class="project-monogram" :class="project.stage">
-                <PhSquaresFour :size="18" weight="duotone" />
-              </div>
+              <ProjectFollow :id="project.id" :name="project.name" />
               <div class="project-name">
                 <ProjectQuickActions
                   :ref="

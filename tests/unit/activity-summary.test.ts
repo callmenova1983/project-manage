@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { createSeed } from "../../packages/domain/seed";
 import type { Activity, Task } from "../../packages/domain/types";
 import {
-  ACTIVITY_HISTORY_LIMIT,
   describeActivity,
   isCompletionAction,
   summarizeWeeklyActivity,
@@ -112,8 +111,8 @@ describe("weekly activity based on saved events", () => {
     expect(events).toEqual([earlier, later]);
   });
 
-  it("applies the global 500-record window before project filtering", () => {
-    const recent = Array.from({ length: ACTIVITY_HISTORY_LIMIT }, (_, index) =>
+  it("includes older matching records beyond the recent snapshot window", () => {
+    const recent = Array.from({ length: 500 }, (_, index) =>
       activity({
         id: `recent-${index}`,
         projectId: "other-project",
@@ -125,11 +124,10 @@ describe("weekly activity based on saved events", () => {
       now,
       projectIds: [project.id],
     });
-    expect(result.historyLimit).toBe(500);
-    expect(result.changeCount).toBe(0);
+    expect(result.changeCount).toBe(1);
     expect(
       summarizeWeeklyActivity([...recent, oldScoped], { now }).changeCount,
-    ).toBe(500);
+    ).toBe(501);
   });
 });
 

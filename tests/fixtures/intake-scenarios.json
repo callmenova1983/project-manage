@@ -1,0 +1,731 @@
+[
+  {
+    "name": "explicit English project and task",
+    "text": "Project: Atlas; Task: Review copy",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Review copy",
+        "matchCount": 1
+      }
+    ]
+  },
+  {
+    "name": "Chinese labels and synthetic owner",
+    "text": "项目：星河；负责人：林晓；任务：确认文案",
+    "expected": [
+      {
+        "projectName": "星河",
+        "target": "",
+        "taskTitle": "确认文案",
+        "owner": "林晓"
+      }
+    ]
+  },
+  {
+    "name": "new heading with two bullet tasks",
+    "text": "Project: New launch\n- Draft copy\n- Review copy",
+    "expected": [
+      {
+        "projectName": "New launch",
+        "target": "",
+        "taskTitle": "Draft copy",
+        "contextRows": [1]
+      },
+      {
+        "projectName": "New launch",
+        "target": "",
+        "taskTitle": "Review copy",
+        "contextRows": [1]
+      }
+    ]
+  },
+  {
+    "name": "alias heading carries context",
+    "text": "Atlas:\n- Review copy",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Review copy",
+        "contextRows": [1]
+      }
+    ]
+  },
+  {
+    "name": "two known project headings",
+    "text": "Atlas:\n- Copy\nMeridian:\n- Data",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Copy"
+      },
+      {
+        "projectName": "Meridian Data Platform",
+        "target": "meridian",
+        "taskTitle": "Data"
+      }
+    ]
+  },
+  {
+    "name": "two new project headings",
+    "text": "Project: Spring\n- Design\nProject: Autumn\n- Research",
+    "expected": [
+      {
+        "projectName": "Spring",
+        "target": "",
+        "taskTitle": "Design"
+      },
+      {
+        "projectName": "Autumn",
+        "target": "",
+        "taskTitle": "Research"
+      }
+    ]
+  },
+  {
+    "name": "markdown heading",
+    "text": "## Atlas\n- Review",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Review",
+        "contextRows": [1]
+      }
+    ]
+  },
+  {
+    "name": "bracket heading",
+    "text": "[Atlas]\n- Review",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Review"
+      }
+    ]
+  },
+  {
+    "name": "Chinese bracket heading",
+    "text": "【星河】\n- 确认需求",
+    "expected": [
+      {
+        "projectName": "星河",
+        "target": "",
+        "taskTitle": "确认需求"
+      }
+    ]
+  },
+  {
+    "name": "numbered items",
+    "text": "Atlas:\n1. Draft\n2、Review",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Draft"
+      },
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Review"
+      }
+    ]
+  },
+  {
+    "name": "case insensitive alias",
+    "text": "Project: aTlAs; Task: Review",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Review"
+      }
+    ]
+  },
+  {
+    "name": "fullwidth alias normalization",
+    "text": "Project: Ａｔｌａｓ; Task: Review",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Review"
+      }
+    ]
+  },
+  {
+    "name": "colliding aliases stay unresolved",
+    "text": "Project: Shared; Task: Review",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Review",
+        "matchCount": 2,
+        "warningIncludes": "Several projects"
+      }
+    ],
+    "projects": [
+      {
+        "id": "a",
+        "name": "North",
+        "aliases": ["Shared"]
+      },
+      {
+        "id": "b",
+        "name": "South",
+        "aliases": ["Shared"]
+      }
+    ]
+  },
+  {
+    "name": "same project name stays unresolved",
+    "text": "Project: Portal; Task: Review",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Review",
+        "matchCount": 2
+      }
+    ],
+    "projects": [
+      {
+        "id": "a",
+        "name": "Portal",
+        "client": "Acme"
+      },
+      {
+        "id": "b",
+        "name": "Portal",
+        "client": "Beta"
+      }
+    ]
+  },
+  {
+    "name": "client disambiguates an explicit label",
+    "text": "Project: Portal; Client: Acme; Task: Review",
+    "expected": [
+      {
+        "projectName": "Portal",
+        "target": "a",
+        "taskTitle": "Review",
+        "matchCount": 1
+      }
+    ],
+    "projects": [
+      {
+        "id": "a",
+        "name": "Portal",
+        "client": "Acme"
+      },
+      {
+        "id": "b",
+        "name": "Portal",
+        "client": "Beta"
+      }
+    ]
+  },
+  {
+    "name": "partial project name requires selection",
+    "text": "Project: Atla; Task: Review",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Review",
+        "matchCount": 1,
+        "warningIncludes": "Partial project"
+      }
+    ]
+  },
+  {
+    "name": "ASCII substring is not an alias mention",
+    "text": "Prepare Atlasian report",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Prepare Atlasian report",
+        "matchCount": 0
+      }
+    ]
+  },
+  {
+    "name": "single letter alias is not inferred in prose",
+    "text": "A needs a review",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "A needs a review",
+        "matchCount": 0
+      }
+    ],
+    "projects": [
+      {
+        "id": "a",
+        "name": "Apollo",
+        "aliases": ["A"]
+      }
+    ]
+  },
+  {
+    "name": "single letter alias works when explicit",
+    "text": "Project: A; Task: Review",
+    "expected": [
+      {
+        "projectName": "Apollo",
+        "target": "a",
+        "taskTitle": "Review"
+      }
+    ],
+    "projects": [
+      {
+        "id": "a",
+        "name": "Apollo",
+        "aliases": ["A"]
+      }
+    ]
+  },
+  {
+    "name": "two mentioned projects stay unresolved",
+    "text": "Coordinate Atlas and Meridian",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Coordinate Atlas and Meridian",
+        "matchCount": 2
+      }
+    ]
+  },
+  {
+    "name": "known alias prefix",
+    "text": "Atlas: Prepare the brief",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Prepare the brief"
+      }
+    ]
+  },
+  {
+    "name": "another project inside section triggers ambiguity",
+    "text": "Atlas:\n- Coordinate Meridian",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Coordinate Meridian",
+        "matchCount": 2,
+        "contextRows": [1]
+      }
+    ]
+  },
+  {
+    "name": "new project leaves unknown stage unset",
+    "text": "Project: New; Task: Review",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "stage": "unclassified",
+        "dueDate": null,
+        "owner": "Unassigned"
+      }
+    ]
+  },
+  {
+    "name": "plain unknown work goes to inbox",
+    "text": "整理下次讨论要点",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "整理下次讨论要点",
+        "dueDate": null,
+        "assignee": "Unassigned"
+      }
+    ]
+  },
+  {
+    "name": "unattached metadata remains reviewable",
+    "text": "Client: Acme",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Client: Acme"
+      }
+    ]
+  },
+  {
+    "name": "relative labeled date stays null",
+    "text": "Project: New; Task: Review; Due: tomorrow",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "dueDate": null,
+        "warningIncludes": "Date needs review"
+      }
+    ]
+  },
+  {
+    "name": "impossible date stays null",
+    "text": "Project: New; Task: Review; Due: 2026-02-30",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "dueDate": null,
+        "warningIncludes": "Date needs review"
+      }
+    ]
+  },
+  {
+    "name": "valid leap date preserved",
+    "text": "Project: New; Task: Review; Due: 2028-02-29",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "dueDate": "2028-02-29"
+      }
+    ]
+  },
+  {
+    "name": "Chinese stage label",
+    "text": "项目：新门户；阶段：实施中；任务：评审",
+    "expected": [
+      {
+        "projectName": "新门户",
+        "target": "",
+        "taskTitle": "评审",
+        "stage": "implementation"
+      }
+    ]
+  },
+  {
+    "name": "known task status",
+    "text": "Project: New; Task: Review; Status: done",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "status": "done"
+      }
+    ]
+  },
+  {
+    "name": "unrecognized task status stays reviewable",
+    "text": "Project: New; Task: Review; Status: maybe",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "status": "todo",
+        "warningIncludes": "Unrecognized task status"
+      }
+    ]
+  },
+  {
+    "name": "multiline owner metadata",
+    "text": "Project: New\nOwner: Robin\n- Review",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "owner": "Robin",
+        "contextRows": [1, 2]
+      }
+    ]
+  },
+  {
+    "name": "conflicting multiline owners are not selected",
+    "text": "Project: New\nOwner: Robin\nOwner: Taylor\n- Review",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "owner": "Unassigned",
+        "warningIncludes": "Conflicting section",
+        "contextRows": [1, 2, 3]
+      }
+    ]
+  },
+  {
+    "name": "same owner repeated is retained",
+    "text": "Project: New\nOwner: Robin\nOwner: Robin\n- Review",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "owner": "Robin"
+      }
+    ]
+  },
+  {
+    "name": "conflicting inline owners remain unset",
+    "text": "Project: New; Owner: Robin; Owner: Taylor; Task: Review",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "owner": "Unassigned",
+        "warningIncludes": "Conflicting labels"
+      }
+    ]
+  },
+  {
+    "name": "conflicting client labels remain unset",
+    "text": "Project: New; Client: Acme; Client: Beta; Task: Review",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Review",
+        "client": "",
+        "warningIncludes": "Conflicting labels"
+      }
+    ]
+  },
+  {
+    "name": "multiple inline task labels",
+    "text": "Project: New; Task: One; Task: Two",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "One"
+      },
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": "Two"
+      }
+    ]
+  },
+  {
+    "name": "several explicit projects on one line",
+    "text": "项目：春河；任务：一；任务：二；项目：秋原；任务：三",
+    "expected": [
+      {
+        "projectName": "春河",
+        "target": "",
+        "taskTitle": "一"
+      },
+      {
+        "projectName": "春河",
+        "target": "",
+        "taskTitle": "二"
+      },
+      {
+        "projectName": "秋原",
+        "target": "",
+        "taskTitle": "三"
+      }
+    ]
+  },
+  {
+    "name": "mixed bullet markers",
+    "text": "Atlas:\n• First\n* Second",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "First"
+      },
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Second"
+      }
+    ]
+  },
+  {
+    "name": "heading alone creates a project draft",
+    "text": "Project: New",
+    "expected": [
+      {
+        "projectName": "New",
+        "target": "",
+        "taskTitle": null,
+        "owner": "Unassigned",
+        "stage": "unclassified"
+      }
+    ]
+  },
+  {
+    "name": "blank lines preserve section",
+    "text": "Atlas:\n\n- Review",
+    "expected": [
+      {
+        "projectName": "Atlas Customer Portal",
+        "target": "atlas",
+        "taskTitle": "Review",
+        "contextRows": [1]
+      }
+    ]
+  },
+  {
+    "name": "empty section retained before next heading",
+    "text": "Project: Empty\nProject: Full\n- Review",
+    "expected": [
+      {
+        "projectName": "Empty",
+        "target": "",
+        "taskTitle": null
+      },
+      {
+        "projectName": "Full",
+        "target": "",
+        "taskTitle": "Review"
+      }
+    ]
+  },
+  {
+    "name": "URL hostname is not an alias reference",
+    "text": "Check https://atlas.example.test/page",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Check https://atlas.example.test/page",
+        "matchCount": 0
+      }
+    ]
+  },
+  {
+    "name": "email local part is not an alias reference",
+    "text": "Send to atlas@example.test",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Send to atlas@example.test",
+        "matchCount": 0
+      }
+    ]
+  },
+  {
+    "name": "punctuated alias prefix",
+    "text": "Portal-v2: Review",
+    "expected": [
+      {
+        "projectName": "Portal Two",
+        "target": "p",
+        "taskTitle": "Review"
+      }
+    ],
+    "projects": [
+      {
+        "id": "p",
+        "name": "Portal Two",
+        "aliases": ["Portal-v2"]
+      }
+    ]
+  },
+  {
+    "name": "regex punctuation in alias is literal",
+    "text": "Review C++ integration",
+    "expected": [
+      {
+        "projectName": "Compiler",
+        "target": "c",
+        "taskTitle": "Review C++ integration"
+      }
+    ],
+    "projects": [
+      {
+        "id": "c",
+        "name": "Compiler",
+        "aliases": ["C++"]
+      }
+    ]
+  },
+  {
+    "name": "Chinese project mention",
+    "text": "完成星河门户文案评审",
+    "expected": [
+      {
+        "projectName": "星河门户",
+        "target": "star",
+        "taskTitle": "完成星河门户文案评审"
+      }
+    ],
+    "projects": [
+      {
+        "id": "star",
+        "name": "星河门户",
+        "aliases": ["星河"]
+      }
+    ]
+  },
+  {
+    "name": "long task title keeps full source",
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "warningIncludes": "shortened"
+      }
+    ]
+  },
+  {
+    "name": "two partial candidates stay unresolved",
+    "text": "Project: Orion; Task: Review",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Review",
+        "matchCount": 2
+      }
+    ],
+    "projects": [
+      {
+        "id": "a",
+        "name": "Orion Alpha"
+      },
+      {
+        "id": "b",
+        "name": "Orion Beta"
+      }
+    ]
+  },
+  {
+    "name": "unlabeled semicolon notes stay separate",
+    "text": "Prepare draft; Schedule review",
+    "expected": [
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Prepare draft"
+      },
+      {
+        "projectName": "Intake inbox",
+        "target": "",
+        "taskTitle": "Schedule review"
+      }
+    ]
+  }
+]
