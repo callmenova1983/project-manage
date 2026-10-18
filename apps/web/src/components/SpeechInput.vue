@@ -22,6 +22,53 @@ const elapsed = ref(0),
   error = ref(""),
   notice = ref("");
 const capabilities = ref<SpeechCapabilities>();
+const holding = ref(false),
+  cancelGesture = ref(false);
+let pointerId: number | undefined,
+  startY = 0,
+  suppressClickUntil = 0;
+function pointerDown(event: PointerEvent) {
+  if (
+    event.pointerType === "mouse" ||
+    props.disabled ||
+    !["idle", "failed"].includes(state.value)
+  )
+    return;
+  event.preventDefault();
+  suppressClickUntil = Date.now() + 1500;
+  pointerId = event.pointerId;
+  startY = event.clientY;
+  holding.value = true;
+  cancelGesture.value = false;
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  void start();
+}
+function pointerMove(event: PointerEvent) {
+  if (event.pointerId === pointerId)
+    cancelGesture.value = startY - event.clientY > 60;
+}
+function pointerEnd(event: PointerEvent) {
+  if (event.pointerId !== pointerId) return;
+  event.preventDefault();
+  suppressClickUntil = Date.now() + 700;
+  const discard = cancelGesture.value || event.type === "pointercancel";
+  pointerId = undefined;
+  holding.value = false;
+  cancelGesture.value = false;
+  if (discard || state.value === "permission") cancel();
+  else void stop();
+}
+function clickVoice(event: MouseEvent) {
+  if (event.detail !== 0 && Date.now() < suppressClickUntil) return;
+  // Touch uses the captured hold gesture; keyboard activation remains available.
+  if (
+    (event as PointerEvent).pointerType &&
+    (event as PointerEvent).pointerType !== "mouse"
+  )
+    return;
+  if (state.value === "recording") void stop();
+  else void start();
+}
 let recorder: VoiceRecorder | undefined,
   timer: ReturnType<typeof setInterval> | undefined,
   recording: Blob | undefined;
@@ -55,21 +102,24 @@ async function start() {
     ["permission", "recording", "transcribing"].includes(state.value)
   )
     return;
+  state.value = "permission";
   error.value = "";
   notice.value = "";
   recording = undefined;
   elapsed.value = 0;
   level.value = 0;
+  const current = ++generation;
   if (!capabilities.value?.enabled) {
     await refresh();
+    if (current !== generation || disposed) return;
     if (!capabilities.value?.enabled) {
+      state.value = "idle";
       error.value =
         capabilities.value?.reason || t("语音服务暂时无法连接，请稍后重试。");
       return;
     }
   }
   state.value = "permission";
-  const current = ++generation;
   recorder = new VoiceRecorder();
   try {
     await recorder.start(
@@ -149,6 +199,9 @@ async function transcribe(retry = false) {
 }
 function cancel() {
   generation++;
+  holding.value = false;
+  cancelGesture.value = false;
+  pointerId = undefined;
   clearInterval(timer);
   recorder?.cancel();
   recorder = undefined;
@@ -173,19 +226,35 @@ onBeforeUnmount(() => {
 <template>
   <div class="speech-input">
     <button
-      v-if="state === 'idle' || state === 'failed'"
+      v-if="state !== 'transcribing'"
       type="button"
       class="text-button voice-start"
       :disabled="disabled"
-      :aria-label="t('语音录入')"
+      :aria-label="state === 'recording' ? t('结束录音并识别') : t('语音录入')"
+      :class="{ recording: state === 'recording', cancelling: cancelGesture }"
       :title="
         t('语音转文字 · {p0}', { p0: capabilities?.model || 'qwen3-asr-flash' })
       "
-      @click="start"
+      @pointerdown="pointerDown"
+      @pointermove="pointerMove"
+      @pointerup="pointerEnd"
+      @pointercancel="pointerEnd"
+      @lostpointercapture="pointerEnd"
+      @contextmenu.prevent
+      @click="clickVoice"
     >
-      <PhMicrophone :size="16" /><span>{{ t("说话") }}</span>
+      <PhStop v-if="state === 'recording' && !holding" :size="18" />
+      <PhMicrophone v-else :size="18" />
+      <span class="voice-label">{{
+        state === "recording" ? t("完成") : t("说话")
+      }}</span>
     </button>
-    <div v-else class="speech-progress" role="status">
+    <div
+      v-if="['permission', 'recording', 'transcribing'].includes(state)"
+      class="speech-progress"
+      role="status"
+      aria-live="polite"
+    >
       <PhSpinnerGap
         v-if="state !== 'recording'"
         :size="15"
@@ -201,6 +270,9 @@ onBeforeUnmount(() => {
                 p1: String(elapsed % 60).padStart(2, "0"),
               })
       }}</span>
+      <span v-if="holding">{{
+        cancelGesture ? t("松开取消") : t("松开识别 · 上滑取消")
+      }}</span>
       <meter
         v-if="state === 'recording'"
         :value="level"
@@ -208,15 +280,6 @@ onBeforeUnmount(() => {
         max="1"
         :aria-label="t('麦克风音量')"
       />
-      <button
-        v-if="state === 'recording'"
-        type="button"
-        class="text-button"
-        :aria-label="t('结束录音并识别')"
-        @click="stop"
-      >
-        <PhStop :size="15" />{{ t("完成") }}
-      </button>
       <button
         v-if="state !== 'transcribing'"
         type="button"
@@ -261,6 +324,16 @@ onBeforeUnmount(() => {
 .voice-start {
   display: inline-flex;
   gap: 5px;
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.voice-start.recording {
+  color: var(--accent);
+  background: var(--surface);
+}
+.voice-start.cancelling {
+  color: #c03945;
 }
 .speech-progress {
   display: flex;

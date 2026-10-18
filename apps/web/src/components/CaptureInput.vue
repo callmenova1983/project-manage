@@ -486,7 +486,7 @@ defineExpose({
         }}</small>
       </div>
     </div>
-    <div class="capture-tools">
+    <div class="capture-tools" :class="{ 'chat-tools': referenceMode }">
       <span v-if="busy" role="status">{{ t("正在读取内容…") }}</span>
       <span v-else class="capture-hint"
         ><PhImage :size="14" />{{ t("直接粘贴文字、截图、表格或文件") }}</span
@@ -655,6 +655,29 @@ defineExpose({
   min-height: 26px;
   font-size: 11px;
   color: var(--muted);
+}
+.chat-tools {
+  justify-content: flex-start;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+  margin-top: 0;
+}
+.chat-tools .capture-hint {
+  margin-right: auto;
+}
+.capture-input:has(.chat-tools) textarea {
+  border-radius: 10px 10px 0 0;
+}
+@media (max-width: 760px) {
+  .chat-tools .capture-hint {
+    display: none;
+  }
+  .chat-tools {
+    justify-content: flex-end;
+    min-height: 48px;
+  }
 }
 .capture-materials {
   display: flex;
