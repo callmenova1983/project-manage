@@ -222,7 +222,7 @@ for (const width of [375, 390]) {
         fullPage: true,
       });
     });
-    test("meeting ambiguity, source review, overwrite confirmation and cancellation", async ({
+    test("meeting ambiguity is answered in one composer without an intermediate form", async ({
       page,
     }) => {
       await page
@@ -231,42 +231,22 @@ for (const width of [375, 390]) {
       await page
         .getByRole("textbox", { name: "Meeting notes", exact: true })
         .fill("Atlas and Meridian: mobile review completed ✓");
-      await page
-        .getByRole("button", { name: "Review suggestions", exact: true })
-        .tap();
-      await expect(page.getByText(/Ambiguous:/)).toBeVisible();
-      await page
-        .getByLabel("Project for suggestion 1")
-        .selectOption("project-1");
-      await page.getByLabel("Action for suggestion 1").selectOption("update");
-      await page.getByLabel("Confirm suggestion 1").check();
+      await page.getByRole("button", { name: "完成", exact: true }).tap();
       await expect(
-        page.getByRole("button", { name: "Apply 1 confirmed changes" }),
-      ).toBeDisabled();
-      await page
-        .getByLabel("I reviewed and confirm replacing this update")
-        .check();
-      await page
-        .getByRole("button", { name: "Apply 1 confirmed changes" })
-        .tap();
-      await expect(
-        page.getByRole("heading", { name: "Reviewed and recorded" }),
+        page.getByRole("textbox", { name: "回复", exact: true }),
       ).toBeVisible();
-      await noOverflow(page);
-      await page.getByRole("button", { name: "Review more notes" }).tap();
       await page
-        .getByRole("textbox", { name: "Meeting notes", exact: true })
-        .fill("Atlas: unsaved suggestion");
-      await page
-        .getByRole("button", { name: "Review suggestions", exact: true })
-        .tap();
-      page.once("dialog", (d) => d.accept());
-      await page
-        .getByRole("button", { name: "Cancel review", exact: true })
-        .tap();
+        .getByRole("textbox", { name: "回复", exact: true })
+        .fill("Atlas");
+      await page.getByRole("button", { name: "回复并完成", exact: true }).tap();
       await expect(
-        page.getByRole("textbox", { name: "Meeting notes", exact: true }),
-      ).toHaveValue("");
+        page.getByText("已完成：新增 1 项任务。", { exact: true }),
+      ).toBeVisible();
+      await expect(page.locator(".meeting-conversation textarea")).toHaveCount(
+        1,
+      );
+      await expect(page.locator(".suggestion-card")).toHaveCount(0);
+      await noOverflow(page);
     });
   });
 }

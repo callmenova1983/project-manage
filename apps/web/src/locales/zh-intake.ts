@@ -72,6 +72,7 @@ export const intakeZh: Record<string, string> = {
   Client: "客户",
   "Original source": "原始内容",
   "Quick intake": "快速录入",
+  "AI intake": "AI 录入",
   "Create items": "创建",
   "Paste text or upload a file": "粘贴文字或上传表格",
   "Fix the details below before creating": "有几处信息需要确认，请修改后创建。",

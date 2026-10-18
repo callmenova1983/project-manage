@@ -1,14 +1,14 @@
+import "./services/browser-crypto";
 import { createApp, h } from "vue";
 import { createPinia } from "pinia";
 import { createRouter, createWebHistory, RouterLink } from "vue-router";
 import { t } from "./locales";
 import { routerBase } from "./services/mode";
 import App from "./App.vue";
-import ProjectsView from "./views/ProjectsView.vue";
+import ProjectHomeView from "./views/ProjectHomeView.vue";
 import ProjectDetail from "./views/ProjectDetail.vue";
 import TasksView from "./views/TasksView.vue";
 import ActivityView from "./views/ActivityView.vue";
-import MeetingsView from "./views/MeetingsView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import AdminView from "./views/AdminView.vue";
 import "@fontsource/inter/latin-400.css";
@@ -20,11 +20,22 @@ const router = createRouter({
   history: createWebHistory(routerBase),
   routes: [
     { path: "/", redirect: "/projects" },
-    { path: "/projects", component: ProjectsView },
+    { path: "/projects", component: ProjectHomeView },
+    {
+      path: "/project-map",
+      component: () => import("./views/ProjectMapView.vue"),
+    },
     { path: "/projects/:id", component: ProjectDetail },
     { path: "/tasks", component: TasksView },
+    {
+      path: "/messages/:id",
+      component: () => import("./components/NotificationLanding.vue"),
+    },
     { path: "/activity", component: ActivityView },
-    { path: "/meetings", component: MeetingsView },
+    {
+      path: "/meetings",
+      redirect: { path: "/projects", query: { intake: "1" } },
+    },
     { path: "/settings", component: SettingsView },
     {
       path: "/intake",
@@ -33,7 +44,7 @@ const router = createRouter({
     { path: "/admin", component: AdminView },
     {
       path: "/directory",
-      component: () => import("./views/DirectoryView.vue"),
+      component: () => import("./views/TeamView.vue"),
     },
     {
       path: "/:pathMatch(.*)*",
@@ -46,12 +57,14 @@ const router = createRouter({
       },
     },
   ],
-  scrollBehavior: (to, _from, savedPosition) =>
-    savedPosition ??
-    (to.hash.startsWith("#activity-")
+  scrollBehavior: (to, from, savedPosition) =>
+    to.path === from.path && to.query.intake !== from.query.intake
       ? false
-      : to.hash
-        ? { el: to.hash, top: 72 }
-        : { top: 0 }),
+      : (savedPosition ??
+        (to.hash.startsWith("#activity-")
+          ? false
+          : to.hash
+            ? { el: to.hash, top: 72 }
+            : { top: 0 })),
 });
 createApp(App).use(createPinia()).use(router).mount("#app");

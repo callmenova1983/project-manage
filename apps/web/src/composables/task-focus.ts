@@ -1,9 +1,9 @@
-import { memberName } from "../../../../packages/domain/members";
+import {
+  createTaskViewIndex,
+  type TaskViewQuery,
+} from "../../../../packages/domain/task-view";
 import type { Member } from "../../../../packages/domain/types";
 import {
-  dayKey,
-  weekKey,
-  leafTasks,
   statuses,
   type Status,
   type Task,
@@ -13,13 +13,16 @@ export const taskScopes = ["today", "week", "all"] as const;
 export const taskFocuses = ["all", "open", "done"] as const;
 export type TaskScope = (typeof taskScopes)[number];
 export type TaskFocus = (typeof taskFocuses)[number];
-export interface TaskFilters {
-  scope: TaskScope;
-  status: Status | "";
-  project: string;
-  query: string;
-  focus: TaskFocus;
-}
+export const taskStates = [
+  "all",
+  "open",
+  "todo",
+  "in_progress",
+  "blocked",
+  "done",
+] as const;
+export type TaskState = (typeof taskStates)[number];
+export type TaskFilters = TaskViewQuery;
 
 function queryString(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -30,16 +33,70 @@ export function readTaskFilters(query: Record<string, unknown>): TaskFilters {
   const scope = queryString(query.scope);
   const status = queryString(query.status);
   const focus = queryString(query.focus);
+  const selectedStatus = statuses.includes(status as Status)
+    ? (status as Status)
+    : "";
   return {
     scope: taskScopes.includes(scope as TaskScope)
       ? (scope as TaskScope)
       : "week",
-    status: statuses.includes(status as Status) ? (status as Status) : "",
+    status: selectedStatus,
     project: queryString(query.project),
+    ...(query.projects !== undefined
+      ? {
+          projects:
+            (Array.isArray(query.projects)
+              ? query.projects
+              : [query.projects]
+            ).every(
+              (value) =>
+                typeof value === "string" &&
+                value.length > 0 &&
+                value.length <= 100,
+            ) &&
+            (Array.isArray(query.projects) ? query.projects.length : 1) <= 1000
+              ? [
+                  ...new Set(
+                    (Array.isArray(query.projects)
+                      ? query.projects
+                      : [query.projects]) as string[],
+                  ),
+                ]
+              : [],
+        }
+      : {}),
     query: queryString(query.q),
-    focus: taskFocuses.includes(focus as TaskFocus)
-      ? (focus as TaskFocus)
-      : "all",
+    ...(query.assignee !== undefined
+      ? { assignee: queryString(query.assignee) || "invalid:assignee" }
+      : {}),
+    ...(query.risk !== undefined
+      ? { risk: queryString(query.risk) || "invalid:risk" }
+      : {}),
+    // Older links can contain both filters. Explicit status is the specific intent.
+    focus: selectedStatus
+      ? "all"
+      : taskFocuses.includes(focus as TaskFocus)
+        ? (focus as TaskFocus)
+        : "all",
+  };
+}
+export function selectedTaskState(filters: TaskFilters): TaskState {
+  return filters.status || (filters.focus === "done" ? "done" : filters.focus);
+}
+
+/** Project route identity wins over any project field carried by a copied URL. */
+export function readProjectTaskFilters(
+  query: Record<string, unknown>,
+  projectId: string,
+): TaskFilters {
+  return { ...readTaskFilters({ scope: "all", ...query }), project: projectId };
+}
+export function taskStateFilter(
+  state: TaskState,
+): Pick<TaskFilters, "status" | "focus"> {
+  return {
+    status: statuses.includes(state as Status) ? (state as Status) : "",
+    focus: state === "open" ? "open" : "all",
   };
 }
 
@@ -50,23 +107,9 @@ export function filterTaskWork(
   now = new Date(),
   members: readonly Member[] = [],
   timeZone = "UTC",
+  actorId?: string,
 ): Task[] {
-  const query = filters.query.trim().toLocaleLowerCase();
-  return leafTasks(tasks).filter(
-    (task) =>
-      (filters.scope === "all" ||
-        (filters.scope === "today"
-          ? task.workDates.includes(dayKey(now, timeZone))
-          : task.workWeek === weekKey(now, timeZone))) &&
-      (!filters.status || task.status === filters.status) &&
-      (!filters.project || task.projectId === filters.project) &&
-      (filters.focus === "all" ||
-        (filters.focus === "done"
-          ? task.status === "done"
-          : task.status !== "done")) &&
-      (!query ||
-        `${task.title} ${memberName(task.assigneeId, task.assignee, members)}`
-          .toLocaleLowerCase()
-          .includes(query)),
+  return createTaskViewIndex(tasks, { now, members, timeZone, actorId }).select(
+    filters,
   );
 }

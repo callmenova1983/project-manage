@@ -8,6 +8,7 @@ import {
   catalogsInput,
   modelSettingsInput,
   modelCredentialInput,
+  modelAllowanceInput,
   defaultModelSettings,
   defaultCatalogs,
   checkCatalogs,
@@ -24,6 +25,7 @@ import type { QwenCredentialStore } from "./ai/credentials.js";
 import { Repository, HttpError } from "./database.js";
 import { hashToken, passwordHash } from "./auth.js";
 import type { Mutate } from "./intake.js";
+import { readModelUsage } from "./ai/usage.js";
 function username(
   repo: Repository,
   name: string,
@@ -91,12 +93,12 @@ export function workspaceQwen(
   if (
     !s.enabled ||
     s.secretRef !== "server-default" ||
-    s.region !== base.region ||
-    s.model !== base.model
+    s.region !== base.region
   )
     return;
   return {
     ...base,
+    model: s.model,
     timeoutMs: Math.min(s.timeoutMs, base.timeoutMs),
     maxTokens: Math.min(s.maxTokens, base.maxTokens),
   };
@@ -122,8 +124,10 @@ export function modelAdminState(
       base!.expiresAt > Date.now() &&
       attempts < base!.maxRequests,
     approvedRegion: base?.region ?? null,
-    approvedModel: base?.model ?? null,
+    approvedModel: base ? settings.model : null,
     remainingAttempts: base ? Math.max(0, base.maxRequests - attempts) : 0,
+    maxRequests: base?.maxRequests ?? null,
+    usedAttempts: attempts,
     expiresAt: base ? new Date(base.expiresAt).toISOString() : null,
   };
 }
@@ -170,6 +174,7 @@ export function registerAdminRoutes(
   const state = (ws: string) => ({
     ...modelAdminState(repo, ws, runtime(ws)),
     credentialEditable: !base && !!credentials,
+    allowanceEditable: !base && !!credentials?.read(ws),
   });
   const requireAdmin = (req: FastifyRequest) => adminActor(repo, actor(req));
   const serializeUser = (row: Record<string, unknown>): ManagedUser => ({
@@ -407,6 +412,52 @@ export function registerAdminRoutes(
     }),
   );
   app.get("/api/admin/model", (req) => state(requireAdmin(req).workspaceId));
+  app.put("/api/admin/model/allowance", (req) =>
+    mutate(req, (a) => {
+      adminActor(repo, a);
+      if (base || !credentials)
+        throw new HttpError(
+          403,
+          "This allowance is managed by the server operator",
+        );
+      const input = modelAllowanceInput.parse(req.body);
+      const current = runtime(a.workspaceId);
+      if (!current)
+        throw new HttpError(
+          409,
+          "Configure the model credential before approving an allowance",
+        );
+      const old = readModelSettings(repo, a.workspaceId, current);
+      if (input.version !== old.version)
+        throw new HttpError(
+          409,
+          "Model settings changed. Reload before saving.",
+        );
+      const used = Number(
+        repo.db
+          .prepare("SELECT count(*) AS n FROM ai_attempts WHERE budget_id=?")
+          .get(current.budgetId)!.n,
+      );
+      if (input.maxRequests < used)
+        throw new HttpError(400, "总调用上限不能少于已经使用的次数。");
+      credentials.updateAllowance(a.workspaceId, input);
+      repo.db
+        .prepare(
+          "INSERT INTO model_settings(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
+        )
+        .run(
+          a.workspaceId,
+          JSON.stringify({ ...old, version: old.version + 1 }),
+        );
+      adminAudit(
+        repo,
+        a,
+        "Updated model request allowance",
+        `Total ${input.maxRequests}; expires ${input.expiresAt}`,
+      );
+      return state(a.workspaceId);
+    }),
+  );
   app.put("/api/admin/model/credential", (req) =>
     mutate(req, (a) => {
       adminActor(repo, a);
@@ -473,8 +524,7 @@ export function registerAdminRoutes(
         next.enabled &&
         (!base ||
           next.secretRef !== "server-default" ||
-          next.region !== base.region ||
-          next.model !== base.model)
+          next.region !== base.region)
       )
         throw new HttpError(
           400,
@@ -494,6 +544,10 @@ export function registerAdminRoutes(
       adminAudit(repo, a, "Updated model settings", a.workspaceId);
       return state(a.workspaceId);
     }),
+  );
+  // Aggregate counters only; model logs, actors and provider errors remain admin-only.
+  app.get("/api/ai/usage", (req) =>
+    readModelUsage(repo, actor(req).workspaceId),
   );
   app.get("/api/admin/model/logs", (req) =>
     repo.db

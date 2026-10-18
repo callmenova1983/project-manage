@@ -1,12 +1,25 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, useId, watch } from "vue";
+import {
+  computed,
+  inject,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+  ref,
+  useId,
+  watch,
+} from "vue";
 import { PhMagnifyingGlass, PhCheck, PhX, PhUser } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
 import {
   peopleChoices,
+  assignmentChoices,
   searchPeople,
 } from "../../../../packages/domain/people-search";
 import { t } from "../locales";
+import { dialogContextKey } from "../composables/dialog-context";
+const dialogContext = inject(dialogContextKey, undefined);
+const teleportTarget = computed(() => dialogContext?.target.value ?? "body");
 const props = defineProps<{
   modelValue: string;
   projectId?: string;
@@ -14,15 +27,61 @@ const props = defineProps<{
   disabled?: boolean;
   autoOpen?: boolean;
   compact?: boolean;
+  linkMembers?: boolean;
+  memberId?: string | null;
 }>();
 const emit = defineEmits<{
   "update:modelValue": [string];
   select: [string];
+  selectIdentity: [string | null];
   cancel: [];
 }>();
 const store = useWorkspace(),
   id = useId();
 const search = ref<HTMLInputElement>();
+const root = ref<HTMLElement>(),
+  panel = ref<HTMLElement>(),
+  open = ref(false),
+  placement = ref<Record<string, string>>({});
+function position() {
+  if (!open.value || !search.value) return;
+  const rect = search.value.getBoundingClientRect(),
+    width = Math.min(Math.max(240, rect.width), innerWidth - 16);
+  const viewport = window.visualViewport,
+    top = viewport?.offsetTop ?? 0,
+    bottom = top + (viewport?.height ?? innerHeight);
+  const below = bottom - rect.bottom - 12,
+    above = rect.top - top - 12,
+    useAbove = below < 160 && above > below;
+  placement.value = {
+    left: `${Math.max(8, Math.min(rect.left, innerWidth - width - 8))}px`,
+    width: `${width}px`,
+    maxHeight: `${Math.min(280, Math.max(100, useAbove ? above : below))}px`,
+    ...(useAbove
+      ? { bottom: `${innerHeight - rect.top + 5}px` }
+      : { top: `${rect.bottom + 5}px` }),
+  };
+}
+function show() {
+  if (!props.disabled) {
+    open.value = true;
+    position();
+  }
+}
+function close() {
+  open.value = false;
+}
+function outside(event: PointerEvent) {
+  if (
+    open.value &&
+    !root.value?.contains(event.target as Node) &&
+    !panel.value?.contains(event.target as Node)
+  ) {
+    close();
+    if (props.autoOpen) emit("cancel");
+  }
+}
+
 const normalized = (value: string) => (value === "Unassigned" ? "" : value);
 const query = ref(normalized(props.modelValue)),
   active = ref(0);
@@ -33,7 +92,12 @@ watch(
   },
 );
 const matches = computed(() =>
-  searchPeople(peopleChoices(store.data, props.projectId), query.value),
+  searchPeople(
+    props.linkMembers
+      ? assignmentChoices(store.data, props.projectId, props.memberId)
+      : peopleChoices(store.data, props.projectId),
+    query.value,
+  ),
 );
 const ordered = computed(() => matches.value.slice(0, props.compact ? 4 : 6));
 const custom = computed(
@@ -42,14 +106,17 @@ const custom = computed(
     !matches.value.some((p) => p.name === query.value.trim()),
 );
 const count = computed(() => ordered.value.length + (custom.value ? 1 : 0));
-function choose(name: string) {
+function choose(name: string, memberId: string | null = null) {
   if (props.disabled) return;
   query.value = name;
+  close();
   emit("update:modelValue", name);
+  emit("selectIdentity", memberId);
   emit("select", name);
 }
 function input() {
   active.value = 0;
+  show();
   // This is also the editable name field: typed names can be saved directly.
   emit("update:modelValue", query.value);
 }
@@ -57,9 +124,14 @@ async function key(event: KeyboardEvent) {
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
+    close();
     emit("cancel");
   } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
+    if (!open.value) {
+      show();
+      return;
+    }
     if (count.value)
       active.value =
         (active.value + (event.key === "ArrowDown" ? 1 : -1) + count.value) %
@@ -71,16 +143,44 @@ async function key(event: KeyboardEvent) {
   } else if (event.key === "Enter") {
     event.preventDefault();
     event.stopPropagation();
-    choose(ordered.value[active.value]?.name ?? query.value.trim());
+    const selected = ordered.value[active.value];
+    choose(selected?.name ?? query.value.trim(), selected?.memberId ?? null);
   }
 }
+watch(
+  () => dialogContext?.active.value,
+  (active) => {
+    if (active === false) close();
+  },
+);
+watch(
+  () => props.disabled,
+  (value) => {
+    if (value) close();
+  },
+);
 onMounted(() => {
-  if (props.autoOpen) search.value?.focus();
+  document.addEventListener("pointerdown", outside);
+  window.addEventListener("resize", position);
+  window.addEventListener("scroll", position, true);
+  window.visualViewport?.addEventListener("resize", position);
+  window.visualViewport?.addEventListener("scroll", position);
+  if (props.autoOpen) {
+    search.value?.focus();
+    show();
+  }
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", outside);
+  window.removeEventListener("resize", position);
+  window.removeEventListener("scroll", position, true);
+  window.visualViewport?.removeEventListener("resize", position);
+  window.visualViewport?.removeEventListener("scroll", position);
 });
 defineExpose({ focus: () => search.value?.focus() });
 </script>
 <template>
-  <div class="person-picker" :class="{ compact }">
+  <div ref="root" class="person-picker" :class="{ compact }">
     <div class="person-search">
       <PhMagnifyingGlass :size="15" />
       <input
@@ -95,9 +195,14 @@ defineExpose({ focus: () => search.value?.focus() });
         maxlength="80"
         role="combobox"
         :aria-controls="`${id}-list`"
-        :aria-expanded="count > 0"
+        :aria-expanded="open"
         aria-autocomplete="list"
-        :aria-activedescendant="count ? `${id}-option-${active}` : undefined"
+        :aria-activedescendant="
+          open && count ? `${id}-option-${active}` : undefined
+        "
+        @focus="show"
+        @click="show"
+        @keydown.tab="close"
         @input="input"
         @keydown="key"
       />
@@ -112,60 +217,75 @@ defineExpose({ focus: () => search.value?.focus() });
         <PhX :size="13" />
       </button>
     </div>
-    <div
-      :id="`${id}-list`"
-      class="person-results"
-      role="listbox"
-      :aria-label="label || t('Assignee')"
-    >
-      <button
-        v-for="(person, index) in ordered"
-        :id="`${id}-option-${index}`"
-        :key="person.name"
-        type="button"
-        class="person-option"
-        role="option"
-        :disabled="disabled"
-        :aria-selected="modelValue === person.name"
-        :class="{ highlight: active === index }"
-        @pointerdown.prevent
-        @mouseenter="active = index"
-        @click="choose(person.name)"
-      >
-        <span class="person-initial">{{ person.name.slice(0, 1) }}</span>
-        <span class="person-info"
-          ><strong>{{ person.name }}</strong
-          ><small>{{
-            [person.department, person.position, person.employeeNo]
-              .filter(Boolean)
-              .join(" · ") || t("Existing project participant")
-          }}</small></span
+    <Teleport :to="teleportTarget">
+      <div v-if="open" ref="panel" class="person-popover" :style="placement">
+        <div
+          :id="`${id}-list`"
+          class="person-results"
+          role="listbox"
+          :aria-label="label || t('Assignee')"
         >
-        <span v-if="person.reasons.length" class="person-reason">{{
-          t(person.reasons[0]!)
-        }}</span>
-        <PhCheck v-if="modelValue === person.name" :size="14" />
-      </button>
-      <button
-        v-if="custom"
-        :id="`${id}-option-${ordered.length}`"
-        type="button"
-        class="person-option custom-person"
-        role="option"
-        aria-selected="false"
-        :disabled="disabled"
-        :class="{ highlight: active === ordered.length }"
-        @pointerdown.prevent
-        @mouseenter="active = ordered.length"
-        @click="choose(query.trim())"
-      >
-        <PhUser :size="16" />{{ t("Use “{name}”", { name: query.trim() }) }}
-        <small>{{ t("Person outside the directory") }}</small>
-      </button>
-    </div>
-    <small v-if="matches.length > ordered.length" class="person-hint"
-      >输入姓名、拼音或工号缩小范围</small
-    >
+          <button
+            v-for="(person, index) in ordered"
+            :id="`${id}-option-${index}`"
+            :key="person.key ?? person.name"
+            type="button"
+            class="person-option"
+            role="option"
+            :disabled="disabled"
+            :aria-selected="
+              linkMembers
+                ? !!person.memberId && memberId === person.memberId
+                : modelValue === person.name
+            "
+            :class="{ highlight: active === index }"
+            @pointerdown.prevent
+            @mouseenter="active = index"
+            @click="choose(person.name, person.memberId ?? null)"
+          >
+            <span class="person-initial">{{ person.name.slice(0, 1) }}</span>
+            <span class="person-info"
+              ><strong>{{ person.name }}</strong
+              ><small>{{
+                [person.department, person.position, person.employeeNo]
+                  .filter(Boolean)
+                  .join(" · ") || t("Existing project participant")
+              }}</small></span
+            >
+            <span v-if="person.reasons.length" class="person-reason">{{
+              t(person.reasons[0]!)
+            }}</span>
+            <PhCheck
+              v-if="
+                linkMembers
+                  ? !!person.memberId && memberId === person.memberId
+                  : modelValue === person.name
+              "
+              :size="14"
+            />
+          </button>
+          <button
+            v-if="custom"
+            :id="`${id}-option-${ordered.length}`"
+            type="button"
+            class="person-option custom-person"
+            role="option"
+            aria-selected="false"
+            :disabled="disabled"
+            :class="{ highlight: active === ordered.length }"
+            @pointerdown.prevent
+            @mouseenter="active = ordered.length"
+            @click="choose(query.trim())"
+          >
+            <PhUser :size="16" />{{ t("Use “{name}”", { name: query.trim() }) }}
+            <small>{{ t("Person outside the directory") }}</small>
+          </button>
+        </div>
+        <small v-if="matches.length > ordered.length" class="person-hint">{{
+          t("输入姓名、拼音或工号缩小范围")
+        }}</small>
+      </div>
+    </Teleport>
   </div>
 </template>
 <style scoped>
@@ -201,11 +321,23 @@ defineExpose({ focus: () => search.value?.focus() });
   min-height: 30px;
   color: var(--muted);
 }
+.person-popover {
+  position: fixed;
+  z-index: 3500;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: var(--shadow-popover, 0 8px 24px rgb(0 0 0 / 16%));
+}
 .person-results {
-  max-height: 150px;
+  min-height: 0;
+  max-height: 248px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  margin-top: 4px;
+  margin-top: 0;
 }
 .person-option {
   display: flex;
@@ -294,5 +426,10 @@ defineExpose({ focus: () => search.value?.focus() });
 }
 .compact .person-results {
   max-height: 120px;
+}
+@media (max-width: 600px) {
+  .person-option {
+    min-height: 44px;
+  }
 }
 </style>

@@ -1,10 +1,22 @@
+import type { TaskDependency } from "../../../../packages/domain/task-dependencies";
+import type { TaskMoveInput } from "../../../../packages/domain/task-move";
+import type { TaskBulkUpdate } from "../../../../packages/domain/task-bulk-update";
+import type {
+  TaskSchedulePatch,
+  TaskScheduleBatch,
+} from "../../../../packages/domain/task-schedule-write";
 import type { TaskReview } from "../../../../packages/domain/task-review";
+import type {
+  NotificationActionInput,
+  NotificationPreferences,
+  NotificationResponse,
+} from "../../../../packages/domain/notifications";
 import { workspaceTimeZone } from "../composables/calendar";
 import { setCatalogs } from "../composables/catalogs";
 import { defineStore } from "pinia";
 import { ref, computed, nextTick, watch } from "vue";
 import { accountStorageKey } from "../services/account-storage";
-import { readFollowing, writeFollowing } from "../services/project-following";
+import { readFollowing } from "../services/project-following";
 import {
   clearAccountEditorDrafts,
   editorDraftPrefix,
@@ -47,6 +59,14 @@ export const useWorkspace = defineStore("workspace", () => {
   const followedIds = ref<string[]>([]),
     preferenceError = ref("");
   const following = computed(() => new Set(followedIds.value));
+  const notifications = ref<NotificationResponse | null>(null);
+  const notificationLoading = ref(false);
+  const notificationBusy = ref(false);
+  const notificationError = ref("");
+  const followingBusy = ref(false);
+  let notificationRequest = 0;
+  let legacyFollowingIds: string[] = [];
+  let followingMigrationKey = "";
   watch(
     user,
     (actor) => {
@@ -54,33 +74,151 @@ export const useWorkspace = defineStore("workspace", () => {
         ? readFollowing(accountStorageKey("following", api.mode, actor))
         : { ids: [], unavailable: false };
       followedIds.value = loaded.ids;
+      legacyFollowingIds = loaded.ids;
+      followingMigrationKey = actor
+        ? accountStorageKey("following-migrated", api.mode, actor)
+        : "";
+      notifications.value = null;
+      notificationError.value = "";
+      notificationLoading.value = false;
+      notificationBusy.value = false;
+      followingBusy.value = false;
+      notificationRequest++;
       preferenceError.value = loaded.unavailable
         ? "Following preferences are unavailable in this browser. You can still view every project."
         : "";
     },
     { flush: "sync" },
   );
-  function toggleFollowing(id: string) {
-    if (!user.value || !data.value.projects.some((p) => p.id === id)) return;
+  function receiveNotifications(result: NotificationResponse) {
+    notifications.value = result;
+    followedIds.value = result.followingIds;
+    notificationError.value = "";
+  }
+  async function refreshNotifications(quiet = false) {
+    if (!user.value || notificationBusy.value || followingBusy.value) return;
+    const generation = sessionGeneration;
+    const request = ++notificationRequest;
+    if (!quiet || !notifications.value) notificationLoading.value = true;
+    try {
+      let result = await api.notifications();
+      let migrated = false;
+      try {
+        migrated = localStorage.getItem(followingMigrationKey) === "1";
+      } catch {
+        // A failed browser cache must not prevent server-backed preferences.
+      }
+      if (generation !== sessionGeneration || request !== notificationRequest)
+        return;
+      if (!migrated && legacyFollowingIds.length) {
+        const ids = legacyFollowingIds.filter((id) =>
+          data.value.projects.some((project) => project.id === id),
+        );
+        if (ids.length)
+          result = await api.saveNotificationFollowing({
+            projectIds: ids,
+            mode: "merge",
+          });
+      }
+      if (generation !== sessionGeneration || request !== notificationRequest)
+        return;
+      try {
+        localStorage.setItem(followingMigrationKey, "1");
+      } catch {
+        // Merge is idempotent if browser storage is unavailable next time.
+      }
+      legacyFollowingIds = [];
+      receiveNotifications(result);
+      preferenceError.value = "";
+    } catch (reason) {
+      if (generation === sessionGeneration && request === notificationRequest)
+        notificationError.value = (reason as Error).message;
+    } finally {
+      if (generation === sessionGeneration && request === notificationRequest)
+        notificationLoading.value = false;
+    }
+  }
+  async function toggleFollowing(id: string) {
+    if (
+      !user.value ||
+      followingBusy.value ||
+      !data.value.projects.some((p) => p.id === id)
+    )
+      return;
+    const generation = sessionGeneration;
+    const wasFollowing = following.value.has(id);
     const next = following.value.has(id)
       ? followedIds.value.filter((value) => value !== id)
       : [...followedIds.value, id];
-    if (
-      !writeFollowing(
-        accountStorageKey("following", api.mode, user.value),
-        next,
-      )
-    ) {
-      preferenceError.value =
-        "Could not save following preferences in this browser. Try again; your selection is unchanged.";
-      return;
-    }
     followedIds.value = next;
-    preferenceError.value = "";
+    followingBusy.value = true;
+    notificationRequest++;
+    try {
+      // Read the current account subscriptions before replacing them so this
+      // browser does not overwrite another device's older unseen additions.
+      const current = await api.notifications();
+      const ids = new Set(current.followingIds);
+      if (wasFollowing) ids.delete(id);
+      else ids.add(id);
+      const result = await api.saveNotificationFollowing({
+        projectIds: [...ids],
+        mode: "replace",
+      });
+      if (generation !== sessionGeneration) return;
+      receiveNotifications(result);
+      preferenceError.value = "";
+    } catch (reason) {
+      if (generation !== sessionGeneration) return;
+      followedIds.value = wasFollowing
+        ? [...new Set([...followedIds.value, id])]
+        : followedIds.value.filter((value) => value !== id);
+      preferenceError.value = `关注未保存，请重试。${(reason as Error).message}`;
+    } finally {
+      if (generation === sessionGeneration) followingBusy.value = false;
+    }
+  }
+  async function changeNotifications(input: NotificationActionInput) {
+    if (!user.value || notificationBusy.value) return false;
+    const generation = sessionGeneration;
+    notificationBusy.value = true;
+    notificationRequest++;
+    try {
+      const result = await api.notificationAction(input);
+      if (generation !== sessionGeneration) return false;
+      receiveNotifications(result);
+      return true;
+    } catch (reason) {
+      if (generation === sessionGeneration)
+        notificationError.value = (reason as Error).message;
+      return false;
+    } finally {
+      if (generation === sessionGeneration) notificationBusy.value = false;
+    }
+  }
+  async function saveNotificationPreferences(input: NotificationPreferences) {
+    if (!user.value || notificationBusy.value) return false;
+    const generation = sessionGeneration;
+    notificationBusy.value = true;
+    notificationRequest++;
+    try {
+      const result = await api.saveNotificationPreferences(input);
+      if (generation !== sessionGeneration) return false;
+      receiveNotifications(result);
+      return true;
+    } catch (reason) {
+      if (generation === sessionGeneration)
+        notificationError.value = (reason as Error).message;
+      return false;
+    } finally {
+      if (generation === sessionGeneration) notificationBusy.value = false;
+    }
   }
   const taskFeedback = ref<{
+    kind?: "status" | "assignee";
     task: Task;
     previousStatus: Status;
+    previousAssignee?: string;
+    previousAssigneeId?: string | null;
     undone: boolean;
   } | null>(null);
   const taskFeedbackError = ref("");
@@ -95,7 +233,11 @@ export const useWorkspace = defineStore("workspace", () => {
             event.after?.version === receipt.task.version &&
             event.before &&
             "status" in event.before &&
-            event.before.status === receipt.previousStatus,
+            (receipt.kind === "assignee"
+              ? event.before.assignee === receipt.previousAssignee &&
+                (event.before.assigneeId ?? null) ===
+                  (receipt.previousAssigneeId ?? null)
+              : event.before.status === receipt.previousStatus),
         )
       : undefined;
   });
@@ -172,6 +314,8 @@ export const useWorkspace = defineStore("workspace", () => {
   function clearWorkspace() {
     sessionGeneration++;
     snapshotRequest++;
+    busy.value = false;
+    changingTaskId.value = "";
     projectNavigation.value = initialProjectNavigation();
     dismissTaskFeedback();
     taskReviews.value = {};
@@ -187,6 +331,8 @@ export const useWorkspace = defineStore("workspace", () => {
     setCatalogs();
     workspaceTimeZone.value = "UTC";
     lastSynced.value = null;
+    toast.value = "";
+    clearTimeout(toastTimer);
     error.value = "";
     loading.value = false;
   }
@@ -219,6 +365,7 @@ export const useWorkspace = defineStore("workspace", () => {
       data.value = snapshot;
       setCatalogs(snapshot.catalogs);
       workspaceTimeZone.value = snapshot.settings?.timeZone ?? "UTC";
+      void refreshNotifications(true);
       lastSynced.value = new Date();
       error.value = "";
       return true;
@@ -282,24 +429,92 @@ export const useWorkspace = defineStore("workspace", () => {
     if (busy.value)
       throw new ApiError("Another change is being saved. Please wait.");
     busy.value = true;
+    const generation = sessionGeneration;
     try {
       const result = await fn();
+      if (generation !== sessionGeneration) return result;
       await refresh(true);
-      notify(message);
+      if (generation === sessionGeneration) notify(message);
       return result;
     } finally {
-      busy.value = false;
+      if (generation === sessionGeneration) busy.value = false;
     }
   }
-  const saveProject = (input: ProjectInput, p?: Project) =>
-    operation(
-      () => api.saveProject(input, p?.id, p?.version),
+  function saveProject(input: ProjectInput, p?: Project) {
+    const generation = sessionGeneration;
+    return operation(
+      async () => {
+        const saved = await api.saveProject(input, p?.id, p?.version);
+        if (generation === sessionGeneration) {
+          snapshotRequest++;
+          const current = data.value.projects.find(
+            (project) => project.id === saved.id,
+          );
+          if (!current) data.value.projects.push(saved);
+          else if (current.version <= saved.version)
+            data.value.projects = data.value.projects.map((project) =>
+              project.id === saved.id ? saved : project,
+            );
+        }
+        return saved;
+      },
       p ? "Project updated" : "Project created",
     );
+  }
+  async function saveTaskDependencies(
+    task: Task,
+    dependencies: TaskDependency[],
+  ) {
+    const generation = sessionGeneration;
+    return operation(async () => {
+      const saved = await api.saveTaskDependencies(task.id, {
+        version: task.version,
+        dependencies,
+      });
+      if (generation === sessionGeneration) acceptTask(saved);
+      return saved;
+    }, "Task dependencies updated");
+  }
+  async function saveTaskSchedule(
+    task: Task,
+    patch: Omit<TaskSchedulePatch, "version">,
+  ) {
+    const generation = sessionGeneration;
+    return operation(async () => {
+      const saved = await api.saveTaskSchedule(task.id, {
+        ...patch,
+        version: task.version,
+      });
+      if (generation === sessionGeneration) acceptTask(saved);
+      return saved;
+    }, "Task schedule updated");
+  }
+  async function saveTaskScheduleBatch(input: TaskScheduleBatch) {
+    const generation = sessionGeneration;
+    return operation(async () => {
+      const saved = await api.saveTaskScheduleBatch(input);
+      if (generation === sessionGeneration)
+        for (const task of saved) acceptTask(task);
+      return saved;
+    }, "Task schedules updated");
+  }
+  async function bulkUpdateTasks(input: TaskBulkUpdate) {
+    const generation = sessionGeneration;
+    return operation(async () => {
+      const saved = await api.bulkUpdateTasks(input);
+      if (generation === sessionGeneration)
+        for (const task of saved) acceptTask(task);
+      return saved;
+    }, "Selected tasks updated");
+  }
   async function saveTask(input: TaskInput, task?: Task) {
     const generation = sessionGeneration;
     const result = await operation(
-      () => api.saveTask(input, task?.id, task?.version),
+      async () => {
+        const saved = await api.saveTask(input, task?.id, task?.version);
+        if (generation === sessionGeneration) acceptTask(saved);
+        return saved;
+      },
       task ? "Task updated" : "Task created",
     );
     if (
@@ -311,10 +526,31 @@ export const useWorkspace = defineStore("workspace", () => {
       queueTaskReview(result);
     return result;
   }
+  async function moveTask(
+    task: Task,
+    placement: Omit<TaskMoveInput, "version">,
+  ) {
+    const generation = sessionGeneration;
+    return operation(async () => {
+      const saved = await api.moveTask(task.id, {
+        ...placement,
+        version: task.version,
+      });
+      if (generation === sessionGeneration)
+        for (const item of saved) acceptTask(item);
+      return saved;
+    }, "Task moved");
+  }
   function acceptTask(task: Task) {
     // Acknowledged writes can update all task summaries even if the following
     // snapshot fails. History is only shown after it is read from the API.
     snapshotRequest++;
+    const current = data.value.tasks.find((old) => old.id === task.id);
+    if (!current) {
+      data.value.tasks.push(task);
+      return;
+    }
+    if (current.version > task.version) return;
     data.value.tasks = data.value.tasks.map((old) =>
       old.id === task.id ? task : old,
     );
@@ -343,8 +579,50 @@ export const useWorkspace = defineStore("workspace", () => {
         return saved;
       }, "");
     } finally {
-      changingTaskId.value = "";
+      if (generation === sessionGeneration) changingTaskId.value = "";
     }
+  }
+  async function copyTaskAssignee(
+    sourceId: string,
+    sourceVersion: number,
+    targetId: string,
+    targetVersion: number,
+  ) {
+    if (busy.value) return;
+    const source = data.value.tasks.find((task) => task.id === sourceId);
+    const target = data.value.tasks.find((task) => task.id === targetId);
+    if (
+      !source ||
+      !target ||
+      source.version !== sourceVersion ||
+      target.version !== targetVersion
+    )
+      throw new ApiError("人员或任务已更新，请重新拖拽。", 409);
+    const generation = sessionGeneration;
+    return operation(async () => {
+      const result = await api.copyTaskField({
+        sourceId,
+        sourceVersion,
+        field: "assignee",
+        targets: [{ id: targetId, version: targetVersion }],
+        overwriteConfirmed: true,
+        acrossProjects: true,
+      });
+      const saved = result.find((task) => task.id === targetId);
+      if (saved && generation === sessionGeneration) {
+        acceptTask(saved);
+        taskFeedback.value = {
+          kind: "assignee",
+          task: saved,
+          previousStatus: target.status,
+          previousAssignee: target.assignee,
+          previousAssigneeId: target.assigneeId ?? null,
+          undone: false,
+        };
+        taskFeedbackError.value = "";
+      }
+      return saved;
+    }, "");
   }
   async function undoTaskStatus() {
     if (busy.value || !taskFeedback.value || taskFeedback.value.undone) return;
@@ -375,7 +653,15 @@ export const useWorkspace = defineStore("workspace", () => {
   }
   return {
     following,
+    followingBusy,
     toggleFollowing,
+    notifications,
+    notificationLoading,
+    notificationBusy,
+    notificationError,
+    refreshNotifications,
+    changeNotifications,
+    saveNotificationPreferences,
     preferenceError,
     data,
     user,
@@ -392,6 +678,7 @@ export const useWorkspace = defineStore("workspace", () => {
     undoState,
     changeTaskStatus,
     undoTaskStatus,
+    copyTaskAssignee,
     dismissTaskFeedback,
     total,
     week,
@@ -406,6 +693,11 @@ export const useWorkspace = defineStore("workspace", () => {
     operation,
     saveProject,
     saveTask,
+    moveTask,
+    saveTaskSchedule,
+    saveTaskDependencies,
+    saveTaskScheduleBatch,
+    bulkUpdateTasks,
     taskReviews,
     queueTaskReview,
     dismissTaskReview,

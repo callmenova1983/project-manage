@@ -33,11 +33,14 @@ const candidate = z.object({
     .optional()
     .transform(() => false),
   sourceText: z.string().max(200000),
+  requestedChannel: z.string().max(120).optional(),
   selected: z.boolean(),
   project: projectInput.extend({
     name: z.string().max(120),
     client: z.string().max(120),
     owner: z.string().max(80),
+    channelId: z.string().max(50).optional(),
+    stage: z.string().max(50),
   }),
   task: taskInput
     .omit({ projectId: true })

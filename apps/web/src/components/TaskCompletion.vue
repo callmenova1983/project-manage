@@ -4,7 +4,7 @@ import { PhSquare, PhCheckSquare, PhSpinnerGap } from "@phosphor-icons/vue";
 import type { Task } from "../../../../packages/domain/types";
 import { useWorkspace } from "../stores/workspace";
 import { t } from "../locales";
-const props = defineProps<{ task: Task }>();
+const props = defineProps<{ task: Task; compact?: boolean }>();
 const emit = defineEmits<{ error: [message: string] }>();
 const store = useWorkspace();
 const button = ref<HTMLButtonElement | null>(null);
@@ -36,7 +36,7 @@ async function toggle() {
     :disabled="store.busy"
     :aria-label="t('Complete {title}', { title: task.title })"
     :aria-busy="store.changingTaskId === task.id"
-    :class="{ completed: task.status === 'done' }"
+    :class="{ completed: task.status === 'done', compact }"
     @click="toggle"
   >
     <PhSpinnerGap
@@ -68,6 +68,13 @@ async function toggle() {
 .completion-toggle.completed {
   color: var(--status-done);
 }
+.completion-toggle.compact {
+  min-width: 26px;
+  min-height: 26px;
+  width: 26px;
+  height: 26px;
+  padding: 2px;
+}
 .completion-toggle:hover {
   background: var(--surface-hover);
 }
@@ -80,6 +87,12 @@ async function toggle() {
 @media (prefers-reduced-motion: reduce) {
   .completion-toggle {
     transition: none;
+  }
+}
+@media (pointer: coarse) {
+  .completion-toggle.compact {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 </style>

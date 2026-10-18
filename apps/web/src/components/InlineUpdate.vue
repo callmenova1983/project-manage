@@ -6,7 +6,16 @@ import { useWorkspace } from "../stores/workspace";
 import { useUnsaved } from "../composables/unsaved";
 import { api, ApiError } from "../services/api";
 import { clipboardContent, fileBase64 } from "../services/progress-clipboard";
-import type { ProgressMaterial } from "../../../../packages/domain/progress-material";
+import type {
+  ProgressMaterial,
+  ProgressAnalysis,
+} from "../../../../packages/domain/progress-material";
+import {
+  assembleCaptureText,
+  type CaptureRecognitionDepth,
+} from "../../../../packages/domain/capture";
+import CaptureDepthSelect from "./CaptureDepthSelect.vue";
+import { captureErrorMessage } from "../services/capture-error";
 import { t } from "../locales";
 const props = defineProps<{ project: Project; compact?: boolean }>();
 const store = useWorkspace();
@@ -17,12 +26,27 @@ const editing = ref(false),
 const field = ref<HTMLTextAreaElement>();
 const error = ref("");
 const originalMaterialIds = ref<string[]>([]);
+const recognitionDepth = ref<CaptureRecognitionDepth>("text");
+const actualRecognitionDepth = ref<CaptureRecognitionDepth>();
+const recognitionCache = new Map<string, ProgressAnalysis>();
 const materials = ref<ProgressMaterial[]>([]),
   rawText = ref(""),
   recognizedText = ref(""),
   model = ref(""),
   uncertainties = ref<string[]>([]);
 const sourceReady = ref(true);
+const imageCount = computed(() =>
+  materials.value.reduce((count, item) => count + item.imageCount, 0),
+);
+function updateSourceNotes() {
+  if (model.value) return;
+  let notes = draft.value;
+  for (const material of materials.value) {
+    if (!material.text.trim()) continue;
+    notes = notes.replace(assembleCaptureText("", [material]), "");
+  }
+  rawText.value = notes.trim();
+}
 const processing = ref(false),
   capabilities = ref<{ enabled: boolean; model: string | null } | null>(null),
   upload = ref<HTMLInputElement>();
@@ -30,9 +54,44 @@ let generation = 0;
 onBeforeUnmount(() => generation++);
 const materialUrl = (id: string) =>
   `/api/projects/${props.project.id}/materials/${id}`;
+function applyRecognition(
+  result: ProgressAnalysis,
+  depth: CaptureRecognitionDepth,
+) {
+  draft.value = result.summary;
+  model.value = result.model;
+  actualRecognitionDepth.value = depth;
+  recognizedText.value = result.recognizedText;
+  uncertainties.value = [...result.uncertainties];
+}
 async function recognize() {
   if (processing.value || (!draft.value.trim() && !materials.value.length))
     return false;
+  updateSourceNotes();
+  if (
+    recognitionDepth.value === "text" &&
+    !assembleCaptureText(rawText.value, materials.value).trim()
+  ) {
+    error.value = t(
+      "附件暂未提取到文字，请切换为“识别图中文字”后点击识别，或直接填写进展。",
+    );
+    return false;
+  }
+  const requestedDepth = recognitionDepth.value;
+  const request = {
+    text: rawText.value,
+    materialIds: materials.value.map((m) => m.id),
+    version: original.value.version,
+    recognitionDepth: requestedDepth,
+    externalProcessingConfirmed: true as const,
+  };
+  const key = JSON.stringify(request);
+  const cached = recognitionCache.get(key);
+  if (cached) {
+    error.value = "";
+    applyRecognition(cached, requestedDepth);
+    return true;
+  }
   if (!capabilities.value?.enabled) {
     error.value = t(
       "AI is not enabled. Configure the model in workspace settings.",
@@ -42,25 +101,16 @@ async function recognize() {
   const current = generation;
   processing.value = true;
   error.value = "";
-  if (!model.value && !rawText.value) rawText.value = draft.value;
   try {
-    const result = await api.analyzeProgress(props.project.id, {
-      text: rawText.value,
-      materialIds: materials.value.map((m) => m.id),
-      version: original.value.version,
-      externalProcessingConfirmed: true,
-    });
+    const result = await api.analyzeProgress(props.project.id, request);
     if (current !== generation) return false;
-    draft.value = result.summary;
-    model.value = result.model;
-    recognizedText.value = result.recognizedText;
-    uncertainties.value = result.uncertainties;
+    if (recognitionCache.size >= 12)
+      recognitionCache.delete(recognitionCache.keys().next().value!);
+    recognitionCache.set(key, result);
+    applyRecognition(result, requestedDepth);
     return true;
   } catch (e) {
-    if (current === generation)
-      error.value = t(
-        e instanceof Error ? e.message : "Changes could not be saved",
-      );
+    if (current === generation) error.value = t(captureErrorMessage(e));
     return false;
   } finally {
     if (current === generation) processing.value = false;
@@ -77,6 +127,7 @@ async function addFiles(files: File[]) {
     return;
   }
   const current = generation;
+  updateSourceNotes();
   processing.value = true;
   error.value = "";
   try {
@@ -88,9 +139,12 @@ async function addFiles(files: File[]) {
       );
       if (current !== generation) return;
       materials.value.push(result);
+      draft.value = assembleCaptureText(draft.value, [result]);
+      model.value = "";
+      actualRecognitionDepth.value = undefined;
+      recognizedText.value = "";
+      uncertainties.value = [];
     }
-    if (!rawText.value) rawText.value = draft.value;
-    model.value = "";
   } catch (e) {
     if (current === generation)
       error.value = t(
@@ -100,8 +154,6 @@ async function addFiles(files: File[]) {
     if (current === generation) processing.value = false;
     if (upload.value) upload.value.value = "";
   }
-  if (current === generation && !error.value && capabilities.value?.enabled)
-    await recognize();
 }
 async function paste(event: ClipboardEvent) {
   if (!event.clipboardData || processing.value) return;
@@ -111,24 +163,29 @@ async function paste(event: ClipboardEvent) {
   const input = field.value;
   const start = input?.selectionStart ?? draft.value.length,
     end = input?.selectionEnd ?? start;
-  const hadModel = !!model.value;
   draft.value =
     draft.value.slice(0, start) + content.text + draft.value.slice(end);
   model.value = "";
-  rawText.value = hadModel ? rawText.value + "\n" + content.text : draft.value;
+  actualRecognitionDepth.value = undefined;
+  updateSourceNotes();
   if (content.remoteImages)
     error.value = t(
       "Linked pictures cannot be copied automatically. Paste a screenshot or attach the original file.",
     );
   if (content.files.length) await addFiles(content.files);
-  else if (capabilities.value?.enabled && !content.remoteImages)
-    await recognize();
 }
 function removeFile(id: string) {
+  const material = materials.value.find((item) => item.id === id);
+  if (!model.value && material?.text.trim())
+    draft.value = draft.value
+      .replace(assembleCaptureText("", [material]), "")
+      .trim();
   materials.value = materials.value.filter((m) => m.id !== id);
   model.value = "";
+  actualRecognitionDepth.value = undefined;
   recognizedText.value = "";
   uncertainties.value = [];
+  updateSourceNotes();
 }
 
 const dirty = computed(
@@ -149,6 +206,9 @@ async function edit(value: "new" | "correct" = "new") {
   originalMaterialIds.value = [];
   model.value = "";
   rawText.value = "";
+  actualRecognitionDepth.value = undefined;
+  recognitionCache.clear();
+  recognitionDepth.value = "text";
   recognizedText.value = "";
   uncertainties.value = [];
   original.value = props.project;
@@ -170,6 +230,8 @@ async function edit(value: "new" | "correct" = "new") {
       const source = entries[0]?.originalSource;
       if (source && current === generation) {
         rawText.value = source.text;
+        recognitionDepth.value = source.recognitionDepth ?? "text";
+        actualRecognitionDepth.value = source.recognitionDepth;
         model.value = source.model ?? "";
         recognizedText.value = source.recognizedText ?? "";
         uncertainties.value = source.uncertainties ?? [];
@@ -204,17 +266,23 @@ function cancel() {
 }
 async function save() {
   if (store.busy || processing.value || !sourceReady.value) return;
+  updateSourceNotes();
   if (!dirty.value) {
     cancel();
     return;
   }
-  if (capabilities.value?.enabled && !model.value && mode.value === "new") {
-    await recognize();
+  if (!draft.value.trim()) {
+    error.value =
+      imageCount.value && recognitionDepth.value === "text"
+        ? t(
+            "附件暂未提取到文字，请切换为“识别图中文字”后点击识别，或直接填写进展。",
+          )
+        : t("Recognize the source or enter a progress summary before saving.");
     return;
   }
-  if (!draft.value.trim()) {
+  if (draft.value.length > 4000) {
     error.value = t(
-      "Recognize the source or enter a progress summary before saving.",
+      "进展内容最多 4000 字。请精简内容，或点击“AI 识别并整理”生成摘要；原始附件会保留。",
     );
     return;
   }
@@ -227,8 +295,15 @@ async function save() {
           version: original.value.version,
           mode: mode.value,
           originalSource: {
-            text: rawText.value || draft.value,
+            text: materials.value.length
+              ? rawText.value
+              : rawText.value || draft.value,
             materialIds: materials.value.map((m) => m.id),
+            ...(model.value
+              ? actualRecognitionDepth.value
+                ? { recognitionDepth: actualRecognitionDepth.value }
+                : {}
+              : { recognitionDepth: "text" as const }),
             ...(model.value
               ? {
                   model: model.value,
@@ -250,6 +325,7 @@ async function save() {
         : t(e instanceof Error ? e.message : "Changes could not be saved");
   }
 }
+defineExpose({ edit });
 </script>
 <template>
   <div class="inline-update" :class="{ compact, editing }">
@@ -300,12 +376,12 @@ async function save() {
         :aria-label="t('Latest reported update')"
         :placeholder="
           t(
-            'Paste text, pictures or attach Excel / Word. AI will organize the progress.',
+            'Paste text, pictures or attach Excel / Word / PDF. Files are read as text by default; AI recognition is optional.',
           )
         "
         :disabled="store.busy || processing"
         @paste="paste"
-        @input="if (!model) rawText = draft;"
+        @input="updateSourceNotes"
         @keydown.enter="
           if ($event.ctrlKey || $event.metaKey) {
             $event.preventDefault();
@@ -335,12 +411,16 @@ async function save() {
         </div>
       </div>
       <div class="source-tools">
+        <CaptureDepthSelect
+          v-model="recognitionDepth"
+          :disabled="processing || store.busy"
+        />
         <input
           ref="upload"
           type="file"
           hidden
           multiple
-          accept=".png,.jpg,.jpeg,.webp,.xlsx,.xls,.docx,.doc,.txt,.csv,.tsv"
+          accept=".png,.jpg,.jpeg,.webp,.xlsx,.xls,.docx,.doc,.pdf,.txt,.csv,.tsv"
           @change="
             addFiles(
               Array.from(($event.target as HTMLInputElement).files ?? []),
@@ -352,7 +432,7 @@ async function save() {
           :disabled="processing || store.busy"
           @click="upload?.click()"
         >
-          {{ t("Attach pictures / Excel / Word") }}
+          {{ t("添加附件") }}
         </button>
         <button
           type="button"
@@ -374,10 +454,18 @@ async function save() {
         t("AI result is editable. Original sources are retained with the log.")
       }}</small>
       <small v-else class="ai-result-note">{{
-        t(
-          "Recognition sends this entry’s text and pictures to the configured model.",
-        )
+        recognitionDepth === "text"
+          ? t(
+              "默认只读取文件文字，图片原件保留。点击 AI 识别并整理才会调用模型。",
+            )
+          : t("点击 AI 识别并整理后，才会将文字及图片发送给已配置的模型。")
       }}</small>
+      <small
+        v-if="imageCount && recognitionDepth === 'text'"
+        class="ai-result-note"
+        >{{ imageCount }}
+        {{ t("张图片暂不识别；需要读取图片时可切换识别深度。") }}</small
+      >
       <p v-if="capabilities && !capabilities.enabled" class="ai-result-note">
         {{ t("AI is not enabled. Configure the model in workspace settings.") }}
       </p>
@@ -392,7 +480,7 @@ async function save() {
         <p>{{ rawText }}</p>
         <p>{{ recognizedText }}</p>
       </details>
-      <p v-if="error" class="error-box" role="alert">{{ error }}</p>
+      <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
       <div class="update-actions">
         <small>{{ t("Ctrl / ⌘ + Enter to save") }}</small
         ><button
@@ -406,15 +494,7 @@ async function save() {
           type="submit"
           :disabled="store.busy || processing || !sourceReady || !dirty"
         >
-          <PhCheck :size="13" />{{
-            t(
-              store.busy
-                ? "Saving…"
-                : capabilities?.enabled && !model && mode === "new"
-                  ? "AI organize and preview"
-                  : "Save",
-            )
-          }}
+          <PhCheck :size="13" />{{ t(store.busy ? "Saving…" : "Save") }}
         </button>
       </div>
     </form>

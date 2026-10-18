@@ -6,14 +6,22 @@ import { currentWeek, currentDay } from "../composables/calendar";
 import { useUnsaved } from "../composables/unsaved";
 import { t } from "../locales";
 import TaskEditor from "./TaskEditor.vue";
+import TaskPlanningImpact from "./TaskPlanningImpact.vue";
+import { taskPlanningImpact } from "../../../../packages/domain/task-planning-impact";
 const props = defineProps<{
   projectId: string;
   parentId?: string;
   scope?: "week" | "today";
   compact?: boolean;
+  unscheduled?: boolean;
 }>();
 const emit = defineEmits<{ close: [] }>();
 const store = useWorkspace();
+const planningBlocked = computed(
+  () =>
+    !!props.parentId &&
+    taskPlanningImpact(store.data.tasks, props.parentId).blocksParent,
+);
 const title = ref(""),
   error = ref(""),
   advanced = ref(false),
@@ -21,7 +29,7 @@ const title = ref(""),
 useUnsaved(computed(() => !advanced.value && !!title.value.trim()));
 onMounted(() => input.value?.focus());
 async function add() {
-  if (!title.value.trim() || store.busy) return;
+  if (!title.value.trim() || store.busy || planningBlocked.value) return;
   error.value = "";
   try {
     await store.saveTask({
@@ -32,7 +40,7 @@ async function add() {
       status: "todo",
       assignee: "",
       dueDate: null,
-      workWeek: currentWeek(),
+      workWeek: props.unscheduled && !props.scope ? null : currentWeek(),
       workDates: props.scope === "today" ? [currentDay()] : [],
     });
     title.value = "";
@@ -49,6 +57,9 @@ async function add() {
     :projectId="projectId"
     :parentId="parentId"
     :initialTitle="title"
+    :initial-dates="
+      unscheduled ? { dueDate: null, workWeek: null, workDates: [] } : undefined
+    "
     @close="advanced = false"
     @saved="
       title = '';
@@ -56,6 +67,7 @@ async function add() {
     "
   />
   <div v-else class="quick-task-add" :class="{ subtask: parentId, compact }">
+    <TaskPlanningImpact v-if="parentId" :task-id="parentId" mode="parent" />
     <form
       :aria-label="t(parentId ? 'Quick add subtask' : 'Quick add task')"
       @submit.prevent="add"
@@ -79,7 +91,7 @@ async function add() {
       <button
         class="primary"
         type="submit"
-        :disabled="store.busy || !title.trim()"
+        :disabled="store.busy || !title.trim() || planningBlocked"
       >
         {{ t("Add") }}
       </button>
@@ -102,7 +114,7 @@ async function add() {
         <PhX :size="16" />
       </button>
     </form>
-    <small v-if="!compact" class="muted">{{
+    <small v-if="!compact && !unscheduled" class="muted">{{
       t("先保存原文，再后台分析；有必要时提示补全负责人或时间。")
     }}</small>
     <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>

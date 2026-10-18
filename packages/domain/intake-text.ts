@@ -8,7 +8,18 @@ export function normalizeName(value: string) {
     .replace(/\s+/g, " ");
 }
 export const fieldAliases: Record<Exclude<IntakeField, "ignore">, string[]> = {
-  project: ["project", "project name", "name", "项目", "项目名称"],
+  project: [
+    "project",
+    "project name",
+    "name",
+    "项目",
+    "项目名称",
+    "新建项目",
+    "创建项目",
+  ],
+  channel: ["channel", "渠道", "项目渠道", "渠道方"],
+  shortName: ["short name", "shortname", "简称", "项目简称"],
+  aliases: ["aliases", "alias", "别名", "项目别名"],
   client: ["client", "customer", "客户", "客户名称"],
   owner: ["owner", "project owner", "负责人", "项目负责人"],
   stage: ["stage", "phase", "阶段", "项目阶段"],
@@ -25,13 +36,43 @@ const labelKeys = Object.values(fieldAliases)
   .sort((a, b) => b.length - a.length)
   .map(escape)
   .join("|");
+export function normalizeCreationText(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) =>
+      line
+        .trim()
+        .replace(
+          /^(?:[-*•]\s*|\d+[.)、]\s*)(?=(?:请|帮我)?(?:新建|创建|新增|建立))/,
+          "",
+        )
+        .replace(
+          /^(?:请|帮我)?(?:新建|创建|新增|建立)(?:一个|个)?项目\s*[:：\s]+/,
+          "项目：",
+        )
+        .replace(
+          /^(?:请|帮我)?(?:新建|创建|新增|建立)(.{1,100}?项目)(?=[，,;；。.!！\s]|$)/,
+          "项目：$1",
+        ),
+    )
+    .join("\n");
+}
+export function captureTextFields(
+  line: string,
+  warnings: string[] = [],
+): TextFields {
+  return labeled(normalizeCreationText(line), warnings);
+}
 function labeled(line: string, warnings: string[] = []): TextFields {
   const fields: TextFields = {},
     conflicts = new Set<IntakeField>();
   let firstLabel = -1;
   const labels = [
     ...line.matchAll(
-      new RegExp(`(?:^|[;；，,]\\s*)(${labelKeys})\\s*[:：]\\s*`, "gi"),
+      new RegExp(
+        `(?:^|[;；，,]\\s*|\\s+)(${labelKeys})\\s*(?:[:：]|是|为)\\s*`,
+        "gi",
+      ),
     ),
   ];
   for (const [index, m] of labels.entries()) {
@@ -110,7 +151,9 @@ export function textFragments(
     context = undefined;
   }
   for (const [index, raw] of lines.entries()) {
-    const line = raw.trim().replace(/^(?:[-*•]\s+|\d+[.)、]\s*)/, "");
+    const line = normalizeCreationText(
+      raw.trim().replace(/^(?:[-*•]\s+|\d+[.)、]\s*)/, ""),
+    );
     if (!line) continue;
     const headingWarnings: string[] = [];
     let heading = labeled(line, headingWarnings);
@@ -148,7 +191,15 @@ export function textFragments(
       !context.used &&
       metadata.length &&
       metadata.every((key) =>
-        ["client", "owner", "stage", "description"].includes(key),
+        [
+          "client",
+          "owner",
+          "stage",
+          "description",
+          "channel",
+          "shortName",
+          "aliases",
+        ].includes(key),
       )
     ) {
       context.warnings.push(...headingWarnings);

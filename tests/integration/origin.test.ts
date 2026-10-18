@@ -442,3 +442,44 @@ describe("opt-in Codespaces proxy rewrite", () => {
     }
   });
 });
+
+it("allows explicit LAN and loopback origins while rejecting mismatched and foreign origins", async () => {
+  const { app } = await buildApp({
+    databasePath: ":memory:",
+    origin: "http://localhost:4173",
+    additionalOrigins: ["http://192.168.110.4:4173", "http://127.0.0.1:4173"],
+  });
+  try {
+    for (const origin of [
+      "http://localhost:4173",
+      "http://192.168.110.4:4173",
+      "http://127.0.0.1:4173",
+    ]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        headers: { origin, referer: origin + "/" },
+        payload: {},
+      });
+      expect(response.statusCode).toBe(400);
+    }
+    for (const headers of [
+      { origin: "http://evil.test" },
+      { origin: "http://192.168.110.5:4173" },
+      {
+        origin: "http://192.168.110.4:4173",
+        referer: "http://localhost:4173/",
+      },
+    ]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        headers,
+        payload: {},
+      });
+      expect(response.statusCode).toBe(403);
+    }
+  } finally {
+    await app.close();
+  }
+});

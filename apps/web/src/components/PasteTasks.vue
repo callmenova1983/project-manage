@@ -6,15 +6,26 @@ import { parsePaste, taskInput } from "../../../../packages/domain/types";
 import { api } from "../services/api";
 import { useWorkspace } from "../stores/workspace";
 import { useUnsaved } from "../composables/unsaved";
-const props = defineProps<{ projectId: string }>();
+import CaptureInput from "./CaptureInput.vue";
+const capture = ref<InstanceType<typeof CaptureInput>>();
+const props = defineProps<{ projectId: string; unscheduled?: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 const store = useWorkspace();
 const text = ref(""),
   error = ref(""),
   review = ref(false);
-const dirty = computed(() => !!text.value);
+const dirty = computed(() => !!text.value || !!capture.value?.hasFiles);
 const discard = useUnsaved(dirty);
 const rows = computed(() => parsePaste(text.value));
+async function preview() {
+  error.value = "";
+  try {
+    if (capture.value) text.value = (await capture.value.resolveSource()).text;
+    review.value = true;
+  } catch (e) {
+    error.value = (e as Error).message;
+  }
+}
 async function save() {
   error.value = "";
   try {
@@ -27,7 +38,7 @@ async function save() {
         parentId: null,
         status: "todo",
         description: "",
-        workWeek: currentWeek(),
+        workWeek: props.unscheduled ? null : currentWeek(),
         workDates: [],
       }),
     );
@@ -52,15 +63,17 @@ async function save() {
         )
       }}
     </p>
-    <label
-      >{{ t("Source text")
-      }}<textarea
-        v-model="text"
-        rows="5"
-        maxlength="20000"
-        @input="review = false"
-      ></textarea>
-    </label>
+    <CaptureInput
+      ref="capture"
+      v-model="text"
+      :rows="5"
+      :label="t('Source text')"
+      :disabled="store.busy"
+      :maxlength="20000"
+      @update:model-value="review = false"
+      @change="review = false"
+      @submit="review ? save() : preview()"
+    />
     <div v-if="review" class="paste-preview">
       <h4>
         {{ t("{count} tasks to create", { count: formatNumber(rows.length) }) }}
@@ -89,8 +102,8 @@ async function save() {
       ><button
         v-if="!review"
         class="primary"
-        :disabled="!rows.length"
-        @click="review = true"
+        :disabled="(!rows.length && !capture?.hasFiles) || !!capture?.busy"
+        @click="preview"
       >
         {{
           t("Review {count} tasks", { count: formatNumber(rows.length) })

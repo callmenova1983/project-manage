@@ -50,6 +50,7 @@ import { useWorkspace } from "../stores/workspace";
 import { api } from "../services/api";
 import {
   directorySchema,
+  type WecomConfiguration,
   emptyDirectory,
   type CompanyDirectory,
   type Department,
@@ -93,11 +94,31 @@ const orgDraft = ref<CompanyDirectory>(emptyDirectory()),
   newDepartment = ref("");
 let employeeBaseline = "",
   organizationBaseline = "";
+const wecomOpen = ref(false),
+  wecomLoading = ref(false),
+  wecomError = ref("");
+const wecomSyncError = ref("");
+const wecomSyncSucceeded = ref(false);
+const wecomConfiguration = ref<WecomConfiguration | null>(null);
+const wecomDraft = ref({ corpId: "", secret: "" });
+let wecomBaseline = "",
+  wecomGeneration = 0;
+const wecomDirty = computed(
+  () => wecomOpen.value && JSON.stringify(wecomDraft.value) !== wecomBaseline,
+);
+watch(wecomOpen, (open) => {
+  if (!open) {
+    wecomGeneration++;
+    wecomDraft.value.secret = "";
+    wecomError.value = "";
+  }
+});
 const canManage = computed(
   () => store.mode === "local" || store.user?.role === "admin",
 );
 const dirty = computed(
   () =>
+    wecomDirty.value ||
     (employeeOpen.value &&
       JSON.stringify(employeeDraft.value) !== employeeBaseline) ||
     (organizationOpen.value &&
@@ -333,20 +354,73 @@ async function saveOrganization() {
     error.value = message(e);
   }
 }
+async function openWecomConfiguration() {
+  if (store.busy || !discard()) return;
+  const generation = ++wecomGeneration;
+  wecomConfiguration.value = null;
+  wecomDraft.value = { corpId: "", secret: "" };
+  wecomBaseline = JSON.stringify(wecomDraft.value);
+  wecomError.value = "";
+  wecomOpen.value = true;
+  if (!canManage.value) return;
+  wecomLoading.value = true;
+  try {
+    const state = await api.wecomConfiguration();
+    if (!wecomOpen.value || generation !== wecomGeneration) return;
+    wecomConfiguration.value = state;
+    wecomDraft.value = { corpId: state.corpId, secret: "" };
+    wecomBaseline = JSON.stringify(wecomDraft.value);
+  } catch (e) {
+    if (generation === wecomGeneration && wecomOpen.value)
+      wecomError.value = message(e);
+  } finally {
+    if (generation === wecomGeneration) wecomLoading.value = false;
+  }
+}
+async function saveWecomConfiguration() {
+  if (!wecomConfiguration.value || !canManage.value || store.mode === "local")
+    return;
+  wecomError.value = "";
+  try {
+    const result = await store.operation(
+      () =>
+        api.saveWecomConfiguration({
+          version: wecomConfiguration.value!.version,
+          corpId: wecomDraft.value.corpId,
+          secret: wecomDraft.value.secret,
+        }),
+      t("企业微信配置已保存"),
+    );
+    wecomConfiguration.value = result;
+    wecomDraft.value.secret = "";
+    wecomBaseline = JSON.stringify(wecomDraft.value);
+    sync.value = { ...sync.value, configured: result.secretConfigured };
+    wecomSyncError.value = "";
+    wecomSyncSucceeded.value = false;
+    error.value = "";
+    wecomOpen.value = false;
+  } catch (e) {
+    wecomError.value = message(e);
+  }
+}
 async function synchronize() {
   if (dirty.value) {
     error.value = t("Save directory changes before syncing.");
     return;
   }
   error.value = "";
+  wecomSyncError.value = "";
+  wecomSyncSucceeded.value = false;
   try {
     directory.value = await store.operation(
       () => api.syncWecom(directory.value.version),
       t("Company directory synced"),
     );
+    wecomSyncSucceeded.value = true;
     sync.value = await api.wecomSyncState();
   } catch (e) {
     error.value = message(e);
+    wecomSyncError.value = error.value;
   }
 }
 </script>
@@ -398,14 +472,37 @@ async function synchronize() {
           }}</span>
         </div>
         <div class="company-connection">
-          <ElTag :type="sync.configured ? 'success' : 'info'" effect="plain"
-            ><PhLink :size="13" />{{
-              t(
-                sync.configured
-                  ? "Enterprise connection configured"
-                  : "Enterprise connection not configured",
-              )
-            }}</ElTag
+          <button
+            type="button"
+            class="wecom-config-trigger"
+            :aria-label="t('企业微信配置')"
+            :title="t('查看或编辑企业微信配置')"
+            aria-haspopup="dialog"
+            :aria-expanded="wecomOpen"
+            :disabled="store.busy"
+            @click="openWecomConfiguration"
+          >
+            <ElTag
+              :type="
+                wecomSyncError
+                  ? 'danger'
+                  : wecomSyncSucceeded
+                    ? 'success'
+                    : 'info'
+              "
+              effect="plain"
+              ><PhLink :size="13" />{{
+                t(
+                  wecomSyncError
+                    ? "Enterprise sync failed"
+                    : wecomSyncSucceeded
+                      ? "Company directory synced"
+                      : sync.configured
+                        ? "Enterprise credentials saved"
+                        : "Enterprise connection not configured",
+                )
+              }}</ElTag
+            ></button
           ><span>{{
             t("{count} linked", { count: formatNumber(linkedCount) })
           }}</span
@@ -422,11 +519,11 @@ async function synchronize() {
         </div>
       </div>
       <p
-        v-if="error && !employeeOpen && !organizationOpen"
+        v-if="error && !employeeOpen && !organizationOpen && !wecomOpen"
         class="error-box"
         role="alert"
       >
-        {{ error }}
+        {{ t(error) }}
       </p>
       <div class="directory-layout">
         <aside
@@ -684,6 +781,101 @@ async function synchronize() {
         </div>
       </div>
       <ElDialog
+        v-model="wecomOpen"
+        :title="t('企业微信配置')"
+        width="min(520px, calc(100vw - 28px))"
+        :close-on-click-modal="false"
+        :close-on-press-escape="!store.busy"
+        :show-close="!store.busy"
+        destroy-on-close
+      >
+        <p v-if="wecomLoading" role="status">{{ t("正在读取配置…") }}</p>
+        <p v-else-if="!canManage">
+          {{
+            sync.configured
+              ? t("企业微信凭据已保存。")
+              : t("企业微信尚未配置。")
+          }}{{ t("配置由管理员维护。") }}
+        </p>
+        <ElForm
+          v-else-if="wecomConfiguration"
+          label-position="top"
+          :disabled="store.busy"
+          @submit.prevent="saveWecomConfiguration"
+        >
+          <p class="muted">
+            {{
+              wecomConfiguration.source === "environment"
+                ? t("当前使用服务端配置；保存后此工作区将使用更新的配置。")
+                : wecomConfiguration.source === "local"
+                  ? t("演示工作区不保存企业微信凭据。")
+                  : t("配置用于同步企业微信可见范围内的成员和部门。")
+            }}
+          </p>
+          <p v-if="wecomSyncError" class="error-box" role="alert">
+            {{ t(wecomSyncError) }}
+          </p>
+          <ElFormItem :label="t('企业 ID（CorpID）')"
+            ><ElInput
+              v-model="wecomDraft.corpId"
+              :disabled="store.mode === 'local'"
+              :aria-label="t('企业 ID（CorpID）')"
+              maxlength="128"
+              autocomplete="off"
+          /></ElFormItem>
+          <ElFormItem :label="t('通讯录 Secret')"
+            ><ElInput
+              v-model="wecomDraft.secret"
+              :disabled="store.mode === 'local'"
+              type="password"
+              :aria-label="t('通讯录 Secret')"
+              :placeholder="
+                wecomConfiguration.secretConfigured
+                  ? t('已保存，留空保持不变')
+                  : t('填写用于读取成员和部门的 Secret')
+              "
+              maxlength="1024"
+              autocomplete="new-password"
+          /></ElFormItem>
+          <p class="muted">
+            {{
+              wecomConfiguration.secretConfigured
+                ? t("Secret 已保存，不会明文回显。")
+                : t("尚未保存 Secret。")
+            }}
+            {{
+              t(
+                "请填写企业微信管理后台的 Secret；access_token 由系统自动获取。",
+              )
+            }}
+          </p>
+          <p v-if="wecomError" class="error-box" role="alert">
+            {{ t(wecomError) }}
+          </p>
+          <div class="directory-dialog-actions">
+            <ElButton :disabled="store.busy" @click="wecomOpen = false">{{
+              t("取消")
+            }}</ElButton
+            ><ElButton
+              type="primary"
+              native-type="submit"
+              :disabled="
+                store.busy ||
+                store.mode === 'local' ||
+                !wecomDirty ||
+                !wecomDraft.corpId.trim() ||
+                (!wecomConfiguration.secretConfigured &&
+                  !wecomDraft.secret.trim())
+              "
+              >{{ t("保存配置") }}</ElButton
+            >
+          </div>
+        </ElForm>
+        <p v-else-if="wecomError" class="error-box" role="alert">
+          {{ t(wecomError) }}
+        </p>
+      </ElDialog>
+      <ElDialog
         v-model="employeeOpen"
         class="directory-person-dialog"
         :title="
@@ -777,7 +969,7 @@ async function synchronize() {
               :active-text="t('Enabled')"
               :inactive-text="t('Disabled')"
           /></ElFormItem>
-          <p v-if="error" class="error-box" role="alert">{{ error }}</p>
+          <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
           <div class="directory-dialog-actions">
             <ElButton :disabled="store.busy" @click="cancelEmployee">{{
               t("Cancel")
@@ -851,7 +1043,7 @@ async function synchronize() {
               ><PhPlus :size="14" />{{ t("Add department") }}</ElButton
             >
           </div>
-          <p v-if="error" class="error-box" role="alert">{{ error }}</p>
+          <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
           <div class="directory-dialog-actions">
             <ElButton
               :disabled="store.busy"
@@ -874,6 +1066,16 @@ async function synchronize() {
 </template>
 
 <style scoped>
+.wecom-config-trigger {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.wecom-config-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 .directory-page {
   --el-color-primary: var(--primary);
   --el-color-primary-light-9: color-mix(
@@ -897,7 +1099,7 @@ async function synchronize() {
   --el-border-color: var(--border);
   --el-border-color-light: var(--border);
   --el-border-color-lighter: var(--border);
-  padding: 22px 24px;
+  padding-block: 22px;
 }
 .directory-heading {
   display: flex;
@@ -1272,7 +1474,7 @@ async function synchronize() {
 }
 @media (max-width: 800px) {
   .directory-page {
-    padding: 18px 14px;
+    padding-block: 18px;
   }
   .directory-heading {
     align-items: start;

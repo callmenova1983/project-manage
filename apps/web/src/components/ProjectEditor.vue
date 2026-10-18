@@ -5,7 +5,14 @@ import {
 } from "../../../../packages/domain/channels";
 import { catalogs, catalogLabel } from "../composables/catalogs";
 import { t } from "../locales";
-import { ref, computed } from "vue";
+import { ref, computed, useId } from "vue";
+import {
+  locationKey,
+  locationLabel,
+  locationPrecisionLabel,
+  resolveLocationText,
+  type ProjectLocation,
+} from "../../../../packages/domain/project-location";
 import {
   projectInput,
   disciplines,
@@ -44,6 +51,29 @@ const draft = ref<ProjectInput>(
 draft.value.categoryIds ??= [];
 draft.value.participantIds ??= [];
 draft.value.channelId ??= "company";
+const locationInputId = useId();
+const locationInput = ref<HTMLInputElement>();
+const locationTextValue = (location: ProjectInput["location"]) =>
+  !location
+    ? ""
+    : location.precision === "point"
+      ? `${location.longitude}, ${location.latitude}`
+      : locationLabel(location);
+const locationText = ref(locationTextValue(draft.value.location));
+const locationPending = ref(false);
+const locationMatches = computed(() => resolveLocationText(locationText.value));
+function chooseLocation(location: ProjectLocation) {
+  draft.value.location = { ...location, confirmed: true };
+  locationText.value = locationTextValue(draft.value.location);
+  locationPending.value = false;
+  error.value = null;
+}
+function clearLocation() {
+  draft.value.location = null;
+  locationText.value = "";
+  locationPending.value = false;
+  error.value = null;
+}
 const channels = computed(() =>
   channelEntries(catalogs.value).filter(
     (c) =>
@@ -72,14 +102,20 @@ let baseline = JSON.stringify(draft.value);
 const dirty = computed(
   () =>
     JSON.stringify(draft.value) !== baseline ||
-    aliases.value !== draft.value.aliases.join(", "),
+    aliases.value !== draft.value.aliases.join(", ") ||
+    locationPending.value,
 );
 const persisted = useEditorDraft({
   kind: "project",
   projectId: props.project?.id ?? "",
   entityId: props.project?.id ?? "",
   schema: projectEditorDraft,
-  value: computed(() => ({ fields: draft.value, aliases: aliases.value })),
+  value: computed(() => ({
+    fields: draft.value,
+    aliases: aliases.value,
+    locationText: locationText.value,
+    locationPending: locationPending.value,
+  })),
   dirty,
   baseVersion: () => original.value?.version ?? null,
   currentVersion: () =>
@@ -93,6 +129,9 @@ const persisted = useEditorDraft({
       );
     draft.value = value.fields;
     aliases.value = value.aliases;
+    locationText.value =
+      value.locationText ?? locationTextValue(value.fields.location);
+    locationPending.value = value.locationPending ?? false;
   },
 });
 const mayDiscard = useUnsaved(dirty, () =>
@@ -115,12 +154,28 @@ function discardSavedDraft() {
   draft.value.participantIds ??= [];
   draft.value.channelId ??= "company";
   aliases.value = draft.value.aliases.join(", ");
+  locationText.value = locationTextValue(draft.value.location);
+  locationPending.value = false;
   baseline = JSON.stringify(draft.value);
   error.value = null;
 }
 async function save() {
   error.value = null;
   try {
+    if (locationPending.value) {
+      const match = locationMatches.value;
+      if (match.status !== "matched" || !match.location) {
+        locationInput.value?.focus();
+        throw new Error(
+          t(
+            locationText.value.trim()
+              ? "Choose a supported location or enter coordinates before saving. The existing location has not changed."
+              : "Use Clear location to remove the existing location, or enter an address.",
+          ),
+        );
+      }
+      chooseLocation(match.location);
+    }
     draft.value.aliases = aliases.value
       .split(",")
       .map((x) => x.trim())
@@ -142,6 +197,8 @@ function reload() {
   draft.value.participantIds ??= [];
   draft.value.channelId ??= "company";
   aliases.value = current.aliases.join(", ");
+  locationText.value = locationTextValue(draft.value.location);
+  locationPending.value = false;
   baseline = JSON.stringify(draft.value);
   error.value = null;
   persisted.discard();
@@ -177,15 +234,16 @@ function reload() {
           }}<input v-model="draft.shortName" maxlength="80"
         /></label>
         <label
-          >渠道<select v-model="draft.channelId" aria-label="渠道">
+          >{{ t("渠道")
+          }}<select v-model="draft.channelId" :aria-label="t('渠道')">
             <option
               v-for="channel in channels"
               :key="channel.id"
               :value="channel.id"
             >
               {{ channel.shortName
-              }}{{ channel.id === "company" ? "（默认）" : ""
-              }}{{ channel.archived ? "（已停用）" : "" }}
+              }}{{ channel.id === "company" ? t("（默认）") : ""
+              }}{{ channel.archived ? t("（已停用）") : "" }}
             </option>
           </select></label
         >
@@ -194,8 +252,118 @@ function reload() {
           }}<input
             v-model="draft.client"
             maxlength="120"
-            :placeholder="t('Organization name')" /></label
-        ><label
+            :placeholder="t('Organization name')"
+        /></label>
+        <div class="full project-city-field">
+          <label :for="locationInputId">{{
+            t("Address / city / district")
+          }}</label>
+          <div class="project-city-input">
+            <input
+              :id="locationInputId"
+              ref="locationInput"
+              v-model="locationText"
+              name="project-city"
+              maxlength="400"
+              autocomplete="off"
+              :placeholder="
+                t(
+                  'For example: Ningbo Beilun District, Yunhe County, or 121.8, 29.9',
+                )
+              "
+              :aria-describedby="`${locationInputId}-help`"
+              :aria-invalid="
+                locationPending && locationMatches.status !== 'matched'
+              "
+              @input="
+                locationPending = true;
+                error = null;
+              "
+            />
+            <button
+              v-if="draft.location || locationText || locationPending"
+              type="button"
+              @click="clearLocation"
+            >
+              {{ t("Clear location") }}
+            </button>
+          </div>
+          <small :id="`${locationInputId}-help`" class="muted">{{
+            t(
+              "Districts take priority over cities. Area matches use their centres; enter longitude, latitude to save a coordinate point. Its accuracy depends on the coordinates you provide.",
+            )
+          }}</small>
+          <div
+            v-if="locationPending"
+            class="project-city-candidates"
+            aria-live="polite"
+          >
+            <p v-if="locationMatches.status === 'matched'" class="muted">
+              {{
+                t(
+                  "Location identified. Saving confirms the location and precision shown below.",
+                )
+              }}
+            </p>
+            <p
+              v-else-if="locationMatches.status === 'ambiguous'"
+              class="city-warning"
+            >
+              {{
+                t("Several locations matched. Choose the project's location.")
+              }}
+            </p>
+            <p v-else class="city-warning">
+              {{
+                t(
+                  "No reliable location matched. Enter a city, district or coordinates. The existing location is retained.",
+                )
+              }}
+            </p>
+            <p v-if="locationMatches.location" class="project-city-current">
+              {{ locationLabel(locationMatches.location) }} ·
+              {{ t(locationPrecisionLabel(locationMatches.location)) }}
+            </p>
+            <div v-if="locationMatches.candidates.length" class="city-choices">
+              <button
+                v-for="candidate in locationMatches.candidates"
+                :key="locationKey(candidate.location)"
+                type="button"
+                @click="chooseLocation(candidate.location)"
+              >
+                {{
+                  t("Use {location}", {
+                    location: locationLabel(candidate.location),
+                  })
+                }}
+                · {{ t(locationPrecisionLabel(candidate.location)) }}
+              </button>
+            </div>
+          </div>
+          <p v-else-if="draft.location" class="project-city-current">
+            <span
+              >{{
+                t(
+                  draft.location.confirmed
+                    ? "Location confirmed"
+                    : "Location confirmation pending",
+                )
+              }}
+              · {{ locationLabel(draft.location) }} ·
+              {{ t(locationPrecisionLabel(draft.location)) }}</span
+            >
+            <button
+              v-if="!draft.location.confirmed"
+              type="button"
+              class="text-button"
+              @click="chooseLocation(draft.location)"
+            >
+              {{ t("Confirm this location") }}
+            </button>
+          </p>
+          <small v-else class="muted">{{ t("No location set") }}</small>
+        </div>
+        <label
           >{{ t("Stage")
           }}<select v-model="draft.stage">
             <option value="unclassified">{{ stageLabels.unclassified }}</option>
@@ -322,5 +490,37 @@ function reload() {
 }
 .category-options small {
   color: var(--muted);
+}
+.project-city-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.project-city-input,
+.city-choices,
+.project-city-current {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.project-city-input input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.project-city-input button,
+.city-choices button {
+  flex: none;
+}
+.project-city-candidates p,
+.project-city-current {
+  margin: 0;
+  font-size: 12px;
+}
+.city-choices {
+  margin-top: 6px;
+}
+.city-warning {
+  color: var(--warning, #956819);
 }
 </style>

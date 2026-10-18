@@ -140,7 +140,13 @@ function plannedLabel(date: string | null) {
           query: {
             scope,
             focus: 'open',
-            ...(projects.length === 1 ? { project: projects[0]!.id } : {}),
+            ...(projects.length === 1
+              ? { project: projects[0]!.id }
+              : {
+                  projects: projects.length
+                    ? projects.map((project) => project.id)
+                    : [''],
+                }),
           },
         }"
         >{{ t("View planned tasks") }}<PhArrowUpRight :size="14"
@@ -214,8 +220,9 @@ function plannedLabel(date: string | null) {
           <div>
             <RouterLink
               :to="{
-                path: '/tasks',
-                query: { project: task.projectId, scope, focus: 'open' },
+                path: `/projects/${task.projectId}`,
+                query: { scope, focus: 'open' },
+                hash: `#task-${encodeURIComponent(task.id)}`,
               }"
               >{{ task.title }}</RouterLink
             >

@@ -11,6 +11,8 @@ import {
 import type { Actor } from "../../../packages/domain/types.js";
 import { checkProjectCatalog } from "../../../packages/domain/admin.js";
 import { Repository, HttpError } from "./database.js";
+import { CAPTURE_SCOPE } from "../../../packages/domain/capture.js";
+import { readMaterial } from "./progress-materials.js";
 export type Mutate = <T>(request: FastifyRequest, fn: (actor: Actor) => T) => T;
 export function registerIntakeRoutes(
   app: FastifyInstance,
@@ -28,8 +30,11 @@ export function registerIntakeRoutes(
   );
   app.post("/api/intakes", (req) =>
     mutate(req, (a) => {
+      const input = intakeInput.parse(req.body);
+      for (const id of input.source.originalSource?.materialIds ?? [])
+        readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, id);
       const batch = planIntake(
-        intakeInput.parse(req.body),
+        input,
         repo.snapshot(a.workspaceId),
         a.name,
         randomUUID,

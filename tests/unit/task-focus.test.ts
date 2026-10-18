@@ -4,11 +4,78 @@ import { leafTasks, statistics } from "../../packages/domain/types";
 import {
   filterTaskWork,
   readTaskFilters,
+  readProjectTaskFilters,
+  selectedTaskState,
+  taskStateFilter,
+  taskStates,
 } from "../../apps/web/src/composables/task-focus";
 
 const now = new Date("2026-10-10T12:00:00Z");
 
 describe("task focus and shareable filters", () => {
+  it("scopes project views to the route project even when a copied link names another project", () => {
+    const seed = createSeed(now);
+    const project = seed.projects[0]!;
+    const other = seed.projects[1]!;
+    const filters = readProjectTaskFilters({ project: other.id }, project.id);
+    expect(filters.scope).toBe("all");
+    const matched = filterTaskWork(seed.tasks, filters, now);
+    expect(matched.length).toBeGreaterThan(0);
+    expect(matched.every((task) => task.projectId === project.id)).toBe(true);
+    expect(
+      filterTaskWork(
+        seed.tasks,
+        readProjectTaskFilters({ projects: [other.id] }, project.id),
+        now,
+      ),
+    ).toEqual([]);
+    expect(
+      readProjectTaskFilters(
+        { scope: "today", status: "done", q: "review", view: "board" },
+        project.id,
+      ),
+    ).toMatchObject({
+      scope: "today",
+      status: "done",
+      query: "review",
+      project: project.id,
+    });
+  });
+  it("retains identity and risk intent in links without widening invalid values", () => {
+    const seed = createSeed(now);
+    const leaf = leafTasks(seed.tasks)[0]!;
+    leaf.assigneeId = "member-a";
+    const filters = readTaskFilters({
+      scope: "all",
+      assignee: "member:member-a",
+    });
+    expect(
+      filterTaskWork(seed.tasks, filters, now).map((task) => task.id),
+    ).toEqual([leaf.id]);
+    for (const query of [
+      { assignee: ["me", "none"] },
+      { risk: ["overdue"] },
+      { risk: "unknown" },
+    ]) {
+      expect(
+        filterTaskWork(
+          seed.tasks,
+          readTaskFilters({ scope: "all", ...query }),
+          now,
+        ),
+      ).toEqual([]);
+    }
+    expect(
+      filterTaskWork(
+        seed.tasks,
+        readTaskFilters({ scope: "all", assignee: "me" }),
+        now,
+        [],
+        "UTC",
+        "member-a",
+      ).map((task) => task.id),
+    ).toEqual([leaf.id]);
+  });
   it("defaults to the current week with all work visible", () => {
     const seed = createSeed(now);
     const filters = readTaskFilters({});
@@ -43,7 +110,7 @@ describe("task focus and shareable filters", () => {
       status: "todo",
       project: "project-1",
       query: "scope",
-      focus: "open",
+      focus: "all",
     });
     expect(readTaskFilters({ scope: "all", focus: "done" })).toEqual({
       scope: "all",
@@ -98,7 +165,7 @@ describe("task focus and shareable filters", () => {
     expect(open.every((task) => !done.includes(task))).toBe(true);
   });
 
-  it("intersects focus with status and project without overriding contradictory choices", () => {
+  it("uses the explicit status in legacy links instead of retaining a contradictory hidden focus", () => {
     const seed = createSeed(now);
     expect(
       filterTaskWork(
@@ -106,7 +173,13 @@ describe("task focus and shareable filters", () => {
         readTaskFilters({ scope: "all", status: "done", focus: "open" }),
         now,
       ),
-    ).toEqual([]);
+    ).toEqual(
+      filterTaskWork(
+        seed.tasks,
+        readTaskFilters({ scope: "all", status: "done" }),
+        now,
+      ),
+    );
     const selected = filterTaskWork(
       seed.tasks,
       readTaskFilters({
@@ -123,6 +196,18 @@ describe("task focus and shareable filters", () => {
         (task) => task.status === "todo" && task.projectId === "project-1",
       ),
     ).toBe(true);
+  });
+  it("represents each visible state as one mutually exclusive choice", () => {
+    for (const state of taskStates) {
+      const filters = {
+        ...readTaskFilters({ scope: "all" }),
+        ...taskStateFilter(state),
+      };
+      expect(selectedTaskState(filters)).toBe(state);
+      expect(filters.status && filters.focus !== "all").toBeFalsy();
+    }
+    expect(selectedTaskState(readTaskFilters({ focus: "done" }))).toBe("done");
+    expect(selectedTaskState(readTaskFilters({ focus: "open" }))).toBe("open");
   });
 
   it("keeps work scope independent of due dates and never invents plans for undated tasks", () => {

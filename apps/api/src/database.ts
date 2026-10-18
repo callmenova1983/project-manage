@@ -1,3 +1,5 @@
+import { retainTaskSchedule } from "../../../packages/domain/task-schedule.js";
+import { nextTaskSortOrder } from "../../../packages/domain/task-move.js";
 import { assignLoginName } from "./login-name.js";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, mkdirSync, readdirSync } from "node:fs";
@@ -151,7 +153,7 @@ export class Repository {
       .get(workspaceId);
     if (!row) throw new HttpError(404, "Workspace not found");
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       catalogs: this.catalogs(workspaceId),
       settings: this.settings(workspaceId),
       members: this.members(workspaceId),
@@ -320,18 +322,44 @@ export class Repository {
       )
       .run(p.id, ws, p.version, JSON.stringify(p));
   }
-  putTask(ws: string, t: Task, retained?: Task) {
+  putTask(
+    ws: string,
+    t: Task,
+    retained?: Task,
+    options: { preserveAssignment?: boolean } = {},
+  ) {
     const previous = this.db
       .prepare("SELECT data FROM tasks WHERE workspace_id=? AND id=?")
       .get(ws, t.id);
+    const old: Task | undefined = previous
+      ? JSON.parse(String(previous.data))
+      : undefined;
+    t.sortOrder ??=
+      old?.projectId === t.projectId && old.parentId === t.parentId
+        ? old.sortOrder
+        : undefined;
+    t.sortOrder ??= nextTaskSortOrder(
+      this.read<Task>("tasks", ws),
+      t.projectId,
+      t.parentId,
+    );
     Object.assign(
       t,
-      taskMember(
+      retainTaskSchedule(
         t,
-        this.members(ws),
-        retained ?? (previous ? JSON.parse(String(previous.data)) : undefined),
+        previous ? JSON.parse(String(previous.data)) : undefined,
       ),
     );
+    if (!options.preserveAssignment)
+      Object.assign(
+        t,
+        taskMember(
+          t,
+          this.members(ws),
+          retained ??
+            (previous ? JSON.parse(String(previous.data)) : undefined),
+        ),
+      );
     this.db
       .prepare(
         "INSERT INTO tasks(id,workspace_id,project_id,version,data) VALUES(?,?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET version=excluded.version,data=excluded.data,project_id=excluded.project_id",

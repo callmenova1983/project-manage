@@ -6,7 +6,12 @@ import {
   type ReviewChoice,
 } from "../../../../packages/domain/task-review";
 import { useWorkspace } from "../stores/workspace";
-const props = defineProps<{ task: Task }>();
+import { useUnsaved } from "../composables/unsaved";
+import { reminderInstant } from "../../../../packages/domain/time-zone";
+import { formatDate, t } from "../locales";
+const props = withDefaults(defineProps<{ task: Task; showTimes?: boolean }>(), {
+  showTimes: true,
+});
 const store = useWorkspace();
 const state = computed(() => {
   const entry = store.taskReviews[props.task.id];
@@ -17,6 +22,28 @@ const error = ref("");
 const manual = ref(false);
 const field = ref<ReviewChoice["field"]>("estimatedDate");
 const value = ref("");
+const reminderZone = ref(store.timeZone);
+const mayDiscard = useUnsaved(
+  computed(() => manual.value && !!value.value.trim()),
+);
+const hasReview = computed(
+  () =>
+    state.value?.status === "pending" ||
+    state.value?.status === "failed" ||
+    !!question.value ||
+    manual.value ||
+    !!error.value,
+);
+function toggleManual() {
+  if (manual.value) {
+    if (!mayDiscard()) return;
+    manual.value = false;
+    value.value = "";
+  } else {
+    reminderZone.value = store.timeZone;
+    manual.value = true;
+  }
+}
 async function apply(choice: ReviewChoice) {
   error.value = "";
   const before = state.value;
@@ -24,7 +51,11 @@ async function apply(choice: ReviewChoice) {
   try {
     reviewChoice.parse(choice);
     const saved = await store.saveTask(
-      { ...taskInput.strip().parse(original), [choice.field]: choice.value },
+      {
+        ...taskInput.strip().parse(original),
+        ...(choice.field === "assignee" ? { assigneeId: null } : {}),
+        [choice.field]: choice.value,
+      },
       original,
     );
     if (before?.result) {
@@ -38,66 +69,82 @@ async function apply(choice: ReviewChoice) {
     manual.value = false;
     value.value = "";
   } catch {
-    error.value = "补全未保存，请检查时间或刷新后重试。";
+    error.value = t("补全未保存，请检查时间或刷新后重试。");
   }
 }
 function skip() {
+  if (!mayDiscard()) return;
   if (state.value?.result) state.value.result.questions.shift();
   manual.value = false;
+  value.value = "";
 }
 function saveManual() {
-  let selected = value.value;
-  if (field.value === "reminderAt" && selected) selected += ":00+08:00";
-  void apply({ label: "手动补全", field: field.value, value: selected });
+  error.value = "";
+  try {
+    const selected =
+      field.value === "reminderAt"
+        ? reminderInstant(value.value, reminderZone.value)
+        : value.value;
+    void apply({ label: t("手动补全"), field: field.value, value: selected });
+  } catch (reason) {
+    error.value = t((reason as Error).message);
+  }
 }
 function reminderLabel(time: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
+  return formatDate(time, {
+    timeZone: store.timeZone,
     month: "numeric",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(time));
+  });
 }
 </script>
 <template>
   <div
-    v-if="state || task.estimatedDate || task.reminderAt"
+    v-if="hasReview || (showTimes && (task.estimatedDate || task.reminderAt))"
     class="task-review"
     aria-live="polite"
   >
-    <div v-if="task.estimatedDate || task.reminderAt" class="time-details">
-      <span v-if="task.estimatedDate">预计 {{ task.estimatedDate }}</span>
+    <div
+      v-if="showTimes && (task.estimatedDate || task.reminderAt)"
+      class="time-details"
+    >
+      <span v-if="task.estimatedDate"
+        >{{ t("Estimated date") }} {{ formatDate(task.estimatedDate) }}</span
+      >
       <span v-if="task.reminderAt"
-        >提醒 {{ reminderLabel(task.reminderAt) }}（北京时间）</span
+        >{{ t("Reminder") }} {{ reminderLabel(task.reminderAt) }} ({{
+          store.timeZone
+        }})</span
       >
     </div>
-    <small v-if="state?.status === 'pending'" class="muted"
-      >已保存 · 正在分析是否需要补全…</small
-    >
+    <small v-if="state?.status === 'pending'" class="muted">{{
+      t("已保存 · 正在分析是否需要补全…")
+    }}</small>
     <div v-else-if="state?.status === 'failed'" class="review-message">
-      <small class="muted">已保存 · 暂未完成智能分析</small>
+      <small class="muted">{{ t("已保存 · 暂未完成智能分析") }}</small>
       <button
         type="button"
         class="text-button"
         @click="store.queueTaskReview(task)"
       >
-        重新分析
+        {{ t("重新分析") }}
       </button>
-      <button type="button" class="text-button" @click="manual = !manual">
-        手动补全
+      <button type="button" class="text-button" @click="toggleManual">
+        {{ t("手动补全") }}
       </button>
       <button
         type="button"
         class="text-button"
         @click="store.dismissTaskReview(task.id)"
       >
-        忽略
+        {{ t("忽略") }}
       </button>
     </div>
     <div v-else-if="question" class="review-message">
       <small>{{ question.question }}</small>
-      <span class="muted evidence">原文：{{ question.quote }}</span>
+      <span class="muted evidence">{{ t("原文：") }}{{ question.quote }}</span>
       <button
         v-for="(choice, index) in question.choices"
         :key="index"
@@ -107,17 +154,25 @@ function reminderLabel(time: string) {
       >
         {{ choice.label }}
       </button>
-      <button type="button" class="text-button" @click="manual = !manual">
-        手动补全
+      <button type="button" class="text-button" @click="toggleManual">
+        {{ t("手动补全") }}
       </button>
-      <button type="button" class="text-button" @click="skip">暂不补全</button>
+      <button type="button" class="text-button" @click="skip">
+        {{ t("暂不补全") }}
+      </button>
     </div>
     <form v-if="manual" class="manual-details" @submit.prevent="saveManual">
-      <select v-model="field" aria-label="补全信息类型" @change="value = ''">
-        <option value="estimatedDate">预计时间</option>
-        <option value="dueDate">任务截止时间</option>
-        <option value="reminderAt">提醒时间（北京时间）</option>
-        <option value="assignee">负责人</option>
+      <select
+        v-model="field"
+        :aria-label="t('补全信息类型')"
+        @change="value = ''"
+      >
+        <option value="estimatedDate">{{ t("预计时间") }}</option>
+        <option value="dueDate">{{ t("任务截止时间") }}</option>
+        <option value="reminderAt">
+          {{ t("Reminder") }} ({{ reminderZone }})
+        </option>
+        <option value="assignee">{{ t("负责人") }}</option>
       </select>
       <input
         v-model="value"
@@ -128,15 +183,15 @@ function reminderLabel(time: string) {
               ? 'datetime-local'
               : 'date'
         "
-        aria-label="补全信息"
+        :aria-label="t('补全信息')"
         required
       />
-      <button type="submit" :disabled="store.busy">确认补全</button>
-      <button type="button" class="text-button" @click="manual = false">
-        取消
+      <button type="submit" :disabled="store.busy">{{ t("确认补全") }}</button>
+      <button type="button" class="text-button" @click="toggleManual">
+        {{ t("取消") }}
       </button>
     </form>
-    <small v-if="error" class="error-box" role="alert">{{ error }}</small>
+    <small v-if="error" class="error-box" role="alert">{{ t(error) }}</small>
   </div>
 </template>
 <style scoped>
@@ -176,5 +231,16 @@ function reminderLabel(time: string) {
   font-size: 11px;
   padding: 3px 5px;
   height: 30px;
+}
+@media (max-width: 600px) {
+  .review-message button,
+  .manual-details button {
+    min-height: 44px;
+  }
+  .manual-details input,
+  .manual-details select {
+    min-height: 44px;
+    font-size: 16px;
+  }
 }
 </style>

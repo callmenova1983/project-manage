@@ -28,8 +28,8 @@ export const workspaceZh: Record<string, string> = {
   "Copied task assignee": "复制了任务负责人",
   "Copied task due date": "复制了任务截止日期",
   "Task field copy": "任务字段复制",
-  "Paste text, pictures or attach Excel / Word. AI will organize the progress.":
-    "直接粘贴文字、截图，或添加 Excel / Word，AI 整理为进展日志",
+  "Paste text, pictures or attach Excel / Word / PDF. AI will organize the progress.":
+    "直接粘贴文字、截图，或添加 Excel / Word / PDF，AI 整理为进展日志",
   "Attach pictures / Excel / Word": "添加图片 / Excel / Word",
   "AI recognize and organize": "AI 识别整理",
   "Reading and organizing…": "正在读取并整理…",
@@ -48,6 +48,14 @@ export const workspaceZh: Record<string, string> = {
     "请先识别图文或填写日志摘要，再保存。",
   "Legacy Office text was extracted. To recognize embedded pictures, save as XLSX/DOCX or paste their screenshots.":
     "已提取旧版 Office 文字。内嵌图片请另存为 XLSX/DOCX，或粘贴截图进行识别。",
+  "Some embedded pictures use an unsupported format and were not recognized. Readable text and supported pictures were kept; the original attachment is preserved.":
+    "部分内嵌图片的格式暂不支持识别，已读取文字和支持的图片，原附件完整保留。",
+  "Only the first 6 embedded pictures were recognized. Readable text and the original attachment were preserved.":
+    "已读取文字和前 6 张内嵌图片，其余图片未参与识别，原附件完整保留。",
+  "No readable content was found. Paste a screenshot of the document.":
+    "未找到可读取的文字或图片，请粘贴文档截图。",
+  "Use PNG, JPEG, WebP, XLS, XLSX, DOC, DOCX, PDF, TXT, CSV or TSV.":
+    "支持 PNG、JPEG、WebP、XLS、XLSX、DOC、DOCX、PDF、TXT、CSV 或 TSV 文件。",
   "Original sources": "原始图文与附件",
   "Source file not found": "找不到原始附件",
   "File processing requires the server workspace. Your file was not sent.":
@@ -146,6 +154,17 @@ export const workspaceZh: Record<string, string> = {
   "Rename {name}": "修改 {name} 名称",
   "Merge {name}": "合并 {name}",
   "Merge projects": "合并项目",
+  "Select duplicate projects to combine. All work and history will be kept.":
+    "选择要合入的项目，任务、资料和历史记录都会保留。",
+  "{count} selected": "已选 {count} 个",
+  "Search project, client or channel": "搜索项目、客户或渠道",
+  "Selected projects": "已选项目",
+  "Deselect {name}": "取消选择 {name}",
+  "Name after merging": "合并后名称",
+  "Change (optional)": "修改（可选）",
+  "Select at least one project above to merge.":
+    "请在上方选择至少一个要合入的项目。",
+  "Merge into {name}": "合并到：{name}",
   "Short name": "简称",
   "Short name (optional)": "简称（可选）",
   "Shown in the project list": "项目列表优先显示简称",
@@ -231,6 +250,8 @@ export const workspaceZh: Record<string, string> = {
     "企业微信拒绝了服务器 IP（60020）。请在企业微信应用的企业可信 IP 中添加服务器公网出口 IP，再重新同步。本地通讯录未改变。",
   "Enterprise directory returned an invalid response.":
     "企业微信返回的数据格式无效。",
+  "Enterprise WeChat rejected the CorpID and Secret when obtaining an access token (40001). Check the Secret for this CorpID in the enterprise admin console; enter the Secret, not an access_token. No local data was changed.":
+    "企业微信在获取令牌时拒绝了当前 CorpID 和 Secret（40001）。请在企业微信管理后台核对该企业对应的 Secret；这里填写 Secret，不能填写 access_token。本地团队数据未改变。",
   "Enterprise directory returned invalid data. No local data was changed.":
     "企业微信返回的数据无效，本地通讯录未改变。",
   "Editors join automatically": "参与编辑后自动加入",
@@ -257,6 +278,8 @@ export const workspaceZh: Record<string, string> = {
   "{count} enabled people": "{count} 位可用成员",
   "{count} linked": "已关联 {count} 人",
   "Enterprise connection configured": "企业微信已配置",
+  "Enterprise credentials saved": "企业微信凭据已保存",
+  "Enterprise sync failed": "企业微信同步失败",
   "Enterprise connection not configured": "企业微信未配置",
   "Filter availability": "筛选人员状态",
   "Filter enterprise association": "筛选企业微信关联",

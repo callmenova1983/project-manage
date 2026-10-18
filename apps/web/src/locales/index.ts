@@ -1,4 +1,11 @@
+import { uiEnglish } from "./ui-en";
+import { workbenchZh } from "./zh-workbench";
+import { projectDetailZh } from "./zh-project-detail";
+import { taskExperienceZh } from "./zh-task-experience";
+import { projectMapZh } from "./zh-project-map";
+import { projectLocationZh } from "./zh-project-location";
 import { timeZoneZh } from "./zh-time-zone";
+import { multiViewZh } from "./zh-multi-view";
 import { personalWorkZh } from "./zh-personal-work";
 import { workspaceTimeZone } from "../composables/calendar";
 import { ref, watch } from "vue";
@@ -50,7 +57,72 @@ const chinese: Record<string, string> = {
   ...intakeZh,
   ...adminZh,
   ...workspaceZh,
+  ...multiViewZh,
+  ...projectDetailZh,
+  ...projectMapZh,
+  ...projectLocationZh,
+  ...taskExperienceZh,
+  ...workbenchZh,
 };
+// Support both existing English keys and explicitly registered Chinese UI keys.
+// UI translation is opt-in at each call site; no data or DOM text is rewritten.
+const english: Record<string, string> = Object.fromEntries(
+  Object.entries(chinese).map(([key, value]) => [value, key]),
+);
+Object.assign(english, uiEnglish);
+for (const [zh, en] of Object.entries(uiEnglish)) {
+  chinese[en] ??= zh;
+}
+
+// Match only complete, registered system messages, including interpolated
+// errors returned by services. Inserted project names and source text stay intact.
+const uiPatterns = Object.entries(uiEnglish).flatMap(([zh, en]) => {
+  if (
+    !/\{\w+\}/.test(zh) ||
+    (zh.replace(/\{\w+\}/g, "").match(/[\p{Script=Han}]/gu)?.length ?? 0) < 4
+  )
+    return [];
+  return [
+    [zh, en],
+    [en, zh],
+  ].map(([source, target], direction) => {
+    const names: string[] = [];
+    const parts = source!.split(/(\{\w+\})/g);
+    const pattern = parts
+      .map((part) => {
+        if (/^\{\w+\}$/.test(part)) {
+          names.push(part.slice(1, -1));
+          return "([\\s\\S]*?)";
+        }
+        return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      })
+      .join("");
+    return {
+      language: direction === 0 ? "en" : "zh-CN",
+      pattern: new RegExp("^" + pattern + "$"),
+      names,
+      target: target!,
+      prefix: parts[0]!,
+    };
+  });
+});
+function systemMessage(key: string): string | undefined {
+  for (const entry of uiPatterns) {
+    if (entry.language !== locale.value || !key.startsWith(entry.prefix))
+      continue;
+    const match = entry.pattern.exec(key);
+    if (!match) continue;
+    const values = Object.fromEntries(
+      entry.names.map((name, i) => [name, match[i + 1]!]),
+    );
+    return entry.target.replace(
+      /\{(\w+)\}/g,
+      (placeholder, name: string) => values[name] ?? placeholder,
+    );
+  }
+  return undefined;
+}
+
 // Format configuration only: never retain project/task values or rendered strings.
 const numberFormats = new Map<string, Intl.NumberFormat>();
 const dateFormats = new Map<string, Intl.DateTimeFormat>();
@@ -73,7 +145,13 @@ export function t(
   key: string,
   params: Record<string, string | number> = {},
 ): string {
-  const message = locale.value === "zh-CN" ? (chinese[key] ?? key) : key;
+  const message =
+    locale.value === "zh-CN"
+      ? (chinese[key] ?? systemMessage(key) ?? key)
+      : (english[key] ??
+        english[key.replace(/\s+/g, " ").trim()] ??
+        systemMessage(key) ??
+        key);
   return message.replace(/\{(\w+)\}/g, (placeholder, name: string) => {
     const value = params[name];
     return value === undefined

@@ -6,9 +6,13 @@ import { api } from "../services/api";
 import { t, formatDate } from "../locales";
 import type { Project } from "../../../../packages/domain/types";
 import type { ProgressEntry } from "../../../../packages/domain/progress";
-const props = defineProps<{ project: Project }>();
+const props = defineProps<{
+  project: Project;
+  expanded?: boolean;
+  active?: boolean;
+}>();
 const route = useRoute(),
-  open = ref(false),
+  open = ref(!!props.expanded),
   loading = ref(false),
   error = ref("");
 const entries = ref<ProgressEntry[]>([]);
@@ -21,9 +25,9 @@ watch(
   { immediate: true },
 );
 watch(
-  () => [open.value, props.project.id, props.project.version],
+  () => [open.value, props.project.id, props.project.version, props.active],
   async () => {
-    if (!open.value) return;
+    if (!open.value || props.active === false) return;
     const current = ++request;
     loading.value = true;
     error.value = "";
@@ -54,7 +58,7 @@ watch(
       }}<span>{{ t("Every report and correction is retained") }}</span>
     </summary>
     <p v-if="loading" class="muted">{{ t("Loading…") }}</p>
-    <p v-if="error" class="error-box" role="alert">{{ error }}</p>
+    <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
     <ol v-if="!loading" class="progress-timeline">
       <li v-for="entry in entries" :key="entry.id">
         <div class="entry-meta">
@@ -72,6 +76,9 @@ watch(
               : t("Report time unavailable")
           }}</time>
         </div>
+        <p v-if="entry.originalSource?.workDate" class="muted">
+          {{ t("工作日期：") }}{{ entry.originalSource.workDate }}
+        </p>
         <p>{{ entry.text }}</p>
         <ProgressSources
           v-if="entry.originalSource"

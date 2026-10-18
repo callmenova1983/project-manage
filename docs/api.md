@@ -16,17 +16,25 @@ All routes use `/api`. JSON responses. `/health` and `/auth/login` are public; e
 | GET | `/tasks` | `projectId`, `status`, `week`, `day`, `search` combined filters |
 | POST | `/tasks` | TaskInput; valid same-workspace project and parent |
 | POST | `/tasks/batch` | `{tasks:TaskInput[]}` 1–100, atomic paste |
-| PUT | `/tasks/:id` | TaskInput + expected `version`; no project moves |
+| POST | `/tasks/bulk-update` | `{targets:[{id,version}],change}`; 1–100 unique existing active leaves; one status/assignee/dueDate change, atomic |
+| PUT | `/tasks/:id` | TaskInput + expected `version`; moves must preserve full graph validity |
+| PATCH | `/tasks/:id/schedule` | Versioned scheduleStart/scheduleEnd/milestone patch; preserves other fields |
+| POST | `/tasks/schedule-batch` | `{revision,changes}`; 1–100 unique versioned targets; atomic |
+| PUT | `/tasks/:id/dependencies` | `{version,dependencies}`; replaces same-project leaf predecessor edges after full graph validation |
 | GET | `/activities` | Latest 500 audit events, newest first |
 | POST | `/activities/:id/restore` | `{version}`; restore before-value with conflict check and new audit |
 | GET | `/export` | Snapshot JSON; recent activity only |
-| POST | `/import` | `{schemaVersion:1,projects,tasks,revision,confirmed:true}` |
+| POST | `/import` | `{schemaVersion:1\|2\|3,projects,tasks,revision,confirmed:true}`; versions2/3 require catalogs |
 | POST | `/proposals` | `{source}` → immutable original source + rule suggestions |
 | GET | `/ai/capabilities` | Configured provider/model/region and remaining attempts; no key/endpoint, no connectivity claim |
 | POST | `/proposals/qwen` | `{source,externalProcessingConfirmed:true}` → source-backed model draft; disabled without approved server configuration |
 | POST | `/proposals/:id/apply` | Explicit reviewed suggestions, atomic, single application |
 
 Payload types and limits are authoritative in `packages/domain/types.ts`. Notes max 20,000 characters; imports/body max 2 MB; 1,000 projects and 10,000 task records; nesting max 20 levels. Import replaces project/task sets but keeps audit history and increases versions. Create/update timestamps and IDs are generated server-side. Text is rendered as text, never executed as HTML.
+
+Schedule PATCH uses the same authenticated mutation/CSRF/idempotency boundary. Date ranges are closed natural-day intervals; milestones require one date. Dependencies are finish-to-start, at most100 per task, same-project leaves only, and are checked for duplicates, missing endpoints and cycles including voided tasks. Date conflicts warn without automatically changing schedules or status. Export/workspace snapshots now return schemaVersion3. Whole-workspace legacy imports clear planning fields; old-form omission and old historical omission preserve current planning values during ordinary editing/restoration. Feature rollback guidance: [planning compatibility](upgrade-intake-admin.md#planning-compatibility).
+
+Bulk update is separate from batch creation. `change` is one of `{field:"status",value:Status}`, `{field:"assignee",value:{assigneeId:string|null,assignee:string}}`, or `{field:"dueDate",value:date|null}`. Clearing uses an explicit empty assignee plus null identity, or null date. Names never imply account identity; linked names resolve from workspace members. All target versions and eligibility are checked before writing. Conflicts return409 with `conflicts:[{id,reason,currentVersion:number|null}]`; unavailable/foreign IDs reveal no entity or version. Unchanged values retain their versions and create no task audit. Changed items share a batch source and each has an individual history entry; there is no atomic whole-batch undo. The response includes every selected task in request order, including unchanged targets.
 
 Meeting apply sends `id`, `selectedProjectId`, `title`, `action` (`task`/`update`), `status`, `confirmed:true`, `overwriteConfirmed`; update requires `projectVersion`. Each selected item must match a line in the persisted source. Application does not delete or merge records and does not call a model. Only the separately configured `/proposals/qwen` generation route can contact Qwen.
 

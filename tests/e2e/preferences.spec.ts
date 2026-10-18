@@ -167,8 +167,11 @@ test("real local changes become weekly history, completion is auditable, task fo
   await page.goto("/demo/tasks?scope=week&focus=open&project=project-1");
   await expect(page.getByLabel("Filter task project")).toHaveValue("project-1");
   await expect(page.locator(".task-row")).toHaveCount(6);
-  await page.getByRole("button", { name: /Completed work/ }).click();
-  await expect(page).toHaveURL(/focus=done/);
+  await page
+    .getByRole("group", { name: "Filter task status" })
+    .getByRole("button", { name: /^Done/ })
+    .click();
+  await expect(page).toHaveURL(/status=done/);
   await expect(page.locator(".task-row")).toHaveCount(3);
   await page.goBack();
   await expect(page).toHaveURL(/focus=open/);

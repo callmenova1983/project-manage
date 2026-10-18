@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { existsSync } from "node:fs";
 import { buildApp } from "./app.js";
-import { readQwenConfig } from "./ai/config.js";
+import { readQwenConfig, readAiRuntime } from "./ai/config.js";
 import { readWecomConfig } from "./wecom.js";
 import { configuredAppOrigin, configuredCodespacesRewrite } from "./origin.js";
 const production = process.env.NODE_ENV === "production";
@@ -17,8 +17,12 @@ const codespacesOriginRewrite = configuredCodespacesRewrite(
 const { app } = await buildApp({
   databasePath: process.env.DATABASE_PATH ?? "./data/project-manage.sqlite",
   origin,
+  additionalOrigins: process.env.APP_ADDITIONAL_ORIGINS?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
   production,
   qwen: readQwenConfig(process.env),
+  aiRuntime: readAiRuntime(process.env),
   wecom: readWecomConfig(process.env),
   starterPassword: process.env.PM_DEFAULT_USER_PASSWORD,
   originDiagnostics: process.env.ORIGIN_DIAGNOSTICS === "1",

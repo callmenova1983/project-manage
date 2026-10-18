@@ -1,12 +1,12 @@
 # Qwen meeting-note suggestions
 
-The server has an adapter for `qwen3.6-35b-a3b`, **disabled by default**. No live provider request or credential verification was performed. Tests use synthetic responses. Configuration is not evidence of connectivity. The private browser-only Site continues to use the local rules adapter and cannot call Qwen.
+The server has a Qwen adapter, defaulting to `qwen3.8-max` and selectable in the administrator settings, **disabled by default**. No live provider request or credential verification was performed. Tests use synthetic responses. Configuration is not evidence of connectivity. The private browser-only Site continues to use the local rules adapter and cannot call Qwen.
 
 ## Verified provider and endpoints
 
 Official documentation checked on 2026-10-10 UTC:
 
-- [Model information](https://help.aliyun.com/zh/model-studio/qwen3-6-35b-a3b): exact model identifier and Alibaba Cloud Model Studio (百炼) provider; model regions listed include Beijing, Singapore, Virginia and Frankfurt.
+- [Model information](https://help.aliyun.com/zh/model-studio/qwen3-8-max): exact model identifier and Alibaba Cloud Model Studio (百炼) provider; model regions listed include Beijing, Singapore, Virginia and Frankfurt.
 - [Base URL overview](https://www.alibabacloud.com/help/en/model-studio/base-url): region and billing-plan-specific endpoints, shared and workspace domains.
 - [Chinese compatibility documentation](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope): OpenAI-compatible Chat Completions; keys must match endpoint region.
 - [Structured output](https://help.aliyun.com/zh/model-studio/qwen-structured-output): Qwen3.6 open models support JSON Object in non-thinking mode. This model is not listed for strict JSON Schema. We request JSON Object with `enable_thinking: false` and validate independently with Zod.
@@ -29,13 +29,25 @@ The administrator UI now provides a dedicated **Model settings → Qwen API key*
 1. Revoke any credential pasted in a conversation and create a replacement through the provider console. Do not put it in chat, issues, PRs, screenshots, repository files or browser forms. This implementation never reads conversation credentials.
 2. Confirm Model Studio pay-as-you-go provider, region, endpoint, model access and a finite test allowance. Confirm the monetary ceiling in the provider's own controls: application attempt limits are not a currency billing cap. Do not assume budget alerts stop billing. Identify a backend runtime/secret manager that accepts the replacement securely; if none exists, stop before live calls.
 3. Inject `DASHSCOPE_API_KEY` into the backend runtime only. Never prefix it with `VITE_`, include it in frontend assets, localStorage or a static Site, or print it. Set non-secret `QWEN_REGION` and `QWEN_BASE_URL` from the console. `.env.example` contains only empty placeholders and disabled settings. Never commit a populated `.env`.
-4. Set `AI_PROVIDER=qwen`, `AI_CALLS_ENABLED=true`, `QWEN_MODEL=qwen3.6-35b-a3b`. Supply an approved `AI_BUDGET_ID`, `AI_MAX_REQUESTS` (1–1000, all outbound attempts) and future ISO-8601 `AI_BUDGET_EXPIRES_AT` with explicit timezone. Do not rotate the budget ID to bypass the allowance. Retain SQLite across restarts.
+4. Set `AI_PROVIDER=qwen`, `AI_CALLS_ENABLED=true`, `QWEN_MODEL=qwen3.8-max`. Supply an approved `AI_BUDGET_ID`, `AI_MAX_REQUESTS` (1–1000, all outbound attempts) and future ISO-8601 `AI_BUDGET_EXPIRES_AT` with explicit timezone. Do not rotate the budget ID to bypass the allowance. Retain SQLite across restarts.
 5. Keep `AI_MAX_RETRIES=0` for first validation. Defaults: 15-second timeout, 2048 output tokens. Allowed: timeout 1000–30000ms, output 512–4096 tokens, retries 0–1. Each retry consumes another attempt. Input is capped at 12000 characters, 100 lines and 64000 UTF-8 bytes including project context; response body at most 256000 bytes.
 6. Start the authenticated backend with that secret environment and use its server-backed frontend (without `VITE_DEMO_MODE=1`). Setup/start/build makes no automatic model call. Select Qwen in Meeting notes, approve sending the current source and project matching fields, then generate one synthetic review. Inspect sources/candidates, check provider billing and remaining attempts, and disable or continue only within the approved allowance.
 
 Live activation remains pending provider/region choice, secure replacement-secret handoff and a finite approved test allowance. Mock tests do not authorize live calls or deployment.
 
 ## Data flow and review boundary
+
+### Attachment recognition depth
+
+The unified AI entry distinguishes **归档资料** from **识别成事项**. Added or dropped files default to reference archiving: bytes are stored without extracting the document or images. Only filenames/titles and a short user description are used for a small classification request (quotation, proposal, contract, drawing, report, site photo, task evidence or other). The user selects the project and presses **归档资料**; category adjustment and optional task association stay collapsed. This flow never creates tasks, expands quotation rows, changes project stage or marks tasks complete. Generic photo filenames remain unclassified unless the user supplies context. If AI is unavailable, filename-based preliminary classification remains available and is explicitly labeled.
+
+Pasted screenshots default to **识别成事项**, which the user can switch back to archiving before submitting. This explicit processing flow extracts content only when submitted. Original attachments are not retained by default: recognized text is saved together with atomic cleanup of the uploader's temporary files. Failed text saves retain the files for retry; already-archived files, other users' files and files retained by earlier proposals cannot be discarded through this path. The optional **保留原附件** checkbox preserves the original source. Classification never requires image recognition; meeting screenshots and chat records use recognition only when requested.
+
+Within content recognition, **仅文字** (`text`) reads document and table text locally and skips images; screenshot processing selects `ocr`. Inline project progress and other explicit text/task import fields retain their text-only default. Text extraction consumes no model attempt; subsequent AI organization of the extracted text still consumes input/output tokens and attempts when enabled.
+
+**识别图中文字** (`ocr`) explicitly reads image text. **理解图表** (`deep`) additionally interprets visually supported chart, diagram and layout relationships and flags uncertain details. Image-based capture may use one model call for recognition and a second for structured project/task extraction; it is not one attempt per click. The depth is included in source metadata and request identity. An unchanged prepared source reuses its recognition result; changing depth requires explicit processing again. Pasting files and changing the selector do not invoke the model. Inline progress has a separate explicit organize button; saving does not trigger a hidden model call.
+
+The selected depth controls which content is processed, not a guaranteed token price or model reasoning budget. Long source text can still be expensive. Retention is separate from recognition depth: reference archives keep originals, while temporary recognition follows the user's retain-original choice. No allowance, credentials or attempt history is reset by this feature.
 
 Browser → authenticated same-origin `POST /api/proposals/qwen` → server-only adapter → validated draft → editable human review → existing transactional `POST /api/proposals/:id/apply`.
 

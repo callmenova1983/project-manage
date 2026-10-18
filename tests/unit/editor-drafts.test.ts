@@ -13,6 +13,11 @@ import {
 } from "../../apps/web/src/services/editor-drafts";
 import { createSeed as seed } from "../../packages/domain/seed";
 import { projectInput, taskInput } from "../../packages/domain/types";
+import {
+  cityLocation,
+  pointLocation,
+  resolveLocationText,
+} from "../../packages/domain/project-location";
 function memory() {
   const map = new Map<string, string>();
   return {
@@ -29,6 +34,83 @@ function memory() {
     },
   };
 }
+it("retains unresolved city text separately from the saved project location", () => {
+  const storage = memory();
+  const fields = {
+    ...projectInput.strip().parse(seed().projects[0]),
+    location: cityLocation("ningbo", "text", true),
+  };
+  const value = {
+    fields,
+    aliases: "",
+    locationText: "尚待确认的园区地址",
+    locationPending: true,
+  };
+  expect(
+    writeEditorDraft(
+      "city",
+      projectEditorDraft,
+      {
+        version: 1,
+        savedAt: 100000,
+        baseVersion: 1,
+        attempted: true,
+        value,
+      },
+      storage,
+    ),
+  ).toBe(true);
+  expect(
+    readEditorDraft("city", projectEditorDraft, 100001, storage),
+  ).toMatchObject({
+    kind: "ready",
+    draft: { value },
+  });
+  expect(projectInput.parse(fields)).not.toHaveProperty("locationText");
+  expect(
+    projectEditorDraft.parse({ fields, aliases: "" }).locationPending,
+  ).toBeUndefined();
+});
+it.each(["district", "point"])(
+  "recovers a %s location draft without changing its precision or confirmation",
+  (precision) => {
+    const storage = memory();
+    const location =
+      precision === "district"
+        ? resolveLocationText("云和县").location!
+        : pointLocation(29.9, 121.8, "text", "121.8, 29.9");
+    expect(location.precision).toBe(precision);
+    const value = {
+      fields: {
+        ...projectInput.strip().parse(seed().projects[0]),
+        location,
+      },
+      aliases: "",
+      locationText: "尚未确认的替代地址",
+      locationPending: true,
+    };
+    expect(
+      writeEditorDraft(
+        "location",
+        projectEditorDraft,
+        {
+          version: 1,
+          savedAt: 100000,
+          baseVersion: 1,
+          attempted: false,
+          value,
+        },
+        storage,
+      ),
+    ).toBe(true);
+    expect(
+      readEditorDraft("location", projectEditorDraft, 100001, storage),
+    ).toMatchObject({ kind: "ready", draft: { value } });
+    expect(projectEditorDraft.parse(value).fields.location?.confirmed).toBe(
+      false,
+    );
+  },
+);
 it("preserves incomplete fields, aliases, whitespace and version without confirming or saving", () => {
   const storage = memory(),
     fields = projectInput.strip().parse(seed().projects[0]);

@@ -53,7 +53,7 @@ beforeEach(async () => {
   });
   cookie = `pm_session=${login.cookies[0]!.value}`;
   csrf = login.json().csrf;
-  fetchMock.mockResolvedValue(
+  fetchMock.mockImplementation(async () =>
     Response.json({
       model: QWEN_MODEL,
       choices: [
@@ -98,6 +98,7 @@ it("sends images plus original text to the model, keeps editable output separate
     body = {
       text: "现场安装照片",
       materialIds: [material.id],
+      recognitionDepth: "ocr",
       version: p.version,
       externalProcessingConfirmed: true,
     };
@@ -129,6 +130,7 @@ it("sends images plus original text to the model, keeps editable output separate
   const source = {
     text: body.text,
     materialIds: body.materialIds,
+    recognitionDepth: "ocr" as const,
     model: analysis.model,
   };
   const saved = await request("POST", `/api/projects/${p.id}/progress`, {
@@ -322,15 +324,36 @@ it("reads all Excel sheets, handles legacy XLS and extracts Word text plus embed
         data: Buffer.from(doc).toString("base64"),
       })
     ).json<ProgressMaterial>();
-  await request("POST", `/api/projects/${p.id}/progress/analyze`, {
+  const body = {
     text: "",
     version: p.version,
     materialIds: [upload.id],
     externalProcessingConfirmed: true,
-  });
+  };
+  const textResult = await request(
+    "POST",
+    `/api/projects/${p.id}/progress/analyze`,
+    body,
+  );
+  expect(textResult.statusCode).toBe(200);
   const wire = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
   expect(wire.messages[1].content[0].text).toContain("现场设备安装完成");
-  expect(wire.messages[1].content[1].type).toBe("image_url");
+  expect(wire.messages[1].content).toHaveLength(1);
+  expect(wire.messages[0].content).toContain("Recognition depth: text only");
+  const deepResult = await request(
+    "POST",
+    `/api/projects/${p.id}/progress/analyze`,
+    {
+      ...body,
+      recognitionDepth: "deep",
+    },
+  );
+  expect(deepResult.statusCode).toBe(200);
+  const deepWire = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
+  expect(deepWire.messages[1].content[1].type).toBe("image_url");
+  expect(deepWire.messages[0].content).toContain(
+    "Recognition depth: full image understanding",
+  );
 });
 it("rejects corrupted Office, encrypted/signature mismatch, huge expansion and unsupported formats without model calls", async () => {
   await expect(parseMaterial("bad.docx", Buffer.from("bad"))).rejects.toThrow();

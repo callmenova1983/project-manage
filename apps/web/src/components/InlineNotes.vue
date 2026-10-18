@@ -13,13 +13,18 @@ import SaveError from "./SaveError.vue";
 import EditorDraftNotice from "./EditorDraftNotice.vue";
 import { useEditorDraft } from "../composables/editor-draft";
 import { notesEditorDraft } from "../services/editor-drafts";
+import CaptureInput from "./CaptureInput.vue";
+const capture = ref<InstanceType<typeof CaptureInput>>();
+const sourcesPrepared = ref(false);
 const props = defineProps<{ project: Project }>();
 const store = useWorkspace();
 const editing = ref(false);
 const original = ref(props.project),
   draft = ref(props.project.notes),
   error = ref<Error | ApiError | null>(null);
-const dirty = computed(() => draft.value !== original.value.notes);
+const dirty = computed(
+  () => draft.value !== original.value.notes || !!capture.value?.hasFiles,
+);
 const persisted = useEditorDraft({
   kind: "notes",
   projectId: props.project.id,
@@ -108,6 +113,11 @@ function reload() {
 async function save() {
   error.value = null;
   try {
+    if (capture.value?.hasFiles && !sourcesPrepared.value) {
+      draft.value = (await capture.value.resolveSource()).text;
+      sourcesPrepared.value = true;
+      return;
+    }
     if (!persisted.beforeSave()) return;
     const p = await store.saveProject(
       { ...projectInput.strip().parse(original.value), notes: draft.value },
@@ -203,23 +213,32 @@ async function applyDate(line: number) {
       {{ draft || t("No notes yet") }}
     </div>
     <form v-if="editing" @submit.prevent="save">
-      <textarea
+      <CaptureInput
+        ref="capture"
         v-model="draft"
         :disabled="persisted.pending.value || store.busy"
-        :aria-label="t('Original notes for {name}', { name: project.name })"
-        rows="5"
-        maxlength="20000"
+        :label="t('Original notes for {name}', { name: project.name })"
+        :rows="5"
+        :maxlength="20000"
         :placeholder="t('Capture what happened. Paste notes or a table here…')"
-        @input="resetReview"
-      ></textarea>
+        @update:model-value="resetReview"
+        @attachments-change="sourcesPrepared = false"
+        @submit="save"
+      />
       <div class="form-actions">
         <button type="button" :disabled="store.busy" @click="cancel">
           {{ t("Cancel notes") }}</button
         ><button
           class="primary"
-          :disabled="store.busy || !dirty || persisted.pending.value"
+          :disabled="
+            store.busy || !!capture?.busy || !dirty || persisted.pending.value
+          "
         >
-          {{ t("Save notes") }}
+          {{
+            capture?.hasFiles && !sourcesPrepared
+              ? t("读取并预览")
+              : t("Save notes")
+          }}
         </button>
       </div>
     </form>

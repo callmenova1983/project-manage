@@ -107,7 +107,12 @@ export const modelSettingsInput = z
     version: z.number().int().positive(),
     enabled: z.boolean(),
     provider: z.literal("qwen"),
-    model: z.literal("qwen3.6-35b-a3b"),
+    model: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .regex(/^qwen[a-z0-9._-]*$/),
     region: z.enum([
       "cn-beijing",
       "ap-southeast-1",
@@ -137,11 +142,17 @@ export const modelCredentialInput = z
   })
   .strict();
 export type ModelCredentialInput = z.infer<typeof modelCredentialInput>;
+export const modelAllowanceInput = modelCredentialInput.pick({
+  version: true,
+  maxRequests: true,
+  expiresAt: true,
+});
+export type ModelAllowanceInput = z.infer<typeof modelAllowanceInput>;
 export const defaultModelSettings: ModelSettings = {
   version: 1,
   enabled: false,
   provider: "qwen",
-  model: "qwen3.6-35b-a3b",
+  model: "qwen3.8-max",
   region: "cn-beijing",
   secretRef: "",
   timeoutMs: 15000,
@@ -149,6 +160,9 @@ export const defaultModelSettings: ModelSettings = {
 };
 export interface ModelAdminState {
   credentialEditable?: boolean;
+  allowanceEditable?: boolean;
+  maxRequests?: number | null;
+  usedAttempts?: number;
   settings: ModelSettings;
   credentialAvailable: boolean;
   runtimeEnabled: boolean;
@@ -158,6 +172,10 @@ export interface ModelAdminState {
   expiresAt: string | null;
 }
 export interface ModelLog {
+  purpose?: string;
+  instructionVersion?: number;
+  runtime?: "legacy" | "sdk";
+  audioSeconds?: number | null;
   id: string;
   createdAt: string;
   actor: string;
@@ -171,6 +189,28 @@ export interface ModelLog {
   cost: number | null;
   errorCode: string | null;
   attempts: number;
+  /** Final provider usage per real request, excluding unknown/unreported usage. */
+  callUsage?: {
+    attempt: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+  }[];
+  meteredAttempts?: number;
+}
+export interface ModelUsage {
+  speech?: { recordedSeconds: number; requests: number; unmeasuredRequests: number };
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  measuredRequests: number;
+  unmeasuredRequests: number;
+  pendingRequests: number;
+  last: {
+    createdAt: string;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    model: string | null;
+  } | null;
 }
 export interface AdminAudit {
   id: string;
@@ -268,12 +308,12 @@ export function validateCatalogReferences(
   }
 }
 export function importCatalogs(
-  input: { schemaVersion: 1 | 2; catalogs?: Catalogs; projects: Project[] },
+  input: { schemaVersion: 1 | 2 | 3; catalogs?: Catalogs; projects: Project[] },
   current: Catalogs,
   isAdmin: boolean,
 ): Catalogs {
-  if (input.schemaVersion === 2 && !input.catalogs)
-    throw new Error("Version 2 imports require a catalog");
+  if (input.schemaVersion >= 2 && !input.catalogs)
+    throw new Error(`Version ${input.schemaVersion} imports require a catalog`);
   const incoming = input.catalogs;
   let result = current;
   if (

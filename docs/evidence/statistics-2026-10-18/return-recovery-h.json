@@ -1,0 +1,164 @@
+{
+  "config": {
+    "argv": [
+      "/Users/yuanjiezheng/.nvm/versions/node/v22.20.0/bin/node",
+      "/Users/yuanjiezheng/develop/pm-system/node_modules/.bin/playwright",
+      "test",
+      "-c",
+      "playwright.multi-view.config.ts",
+      "statistics.spec.ts",
+      "--grep",
+      "network recovery"
+    ],
+    "configFile": "/Users/yuanjiezheng/develop/pm-system/playwright.multi-view.config.ts",
+    "rootDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/private/tmp/pm-statistics-functional-20261018-h/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "filteredProjects": [
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "/private/tmp/pm-statistics-functional-20261018-h/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "",
+        "testDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+        "snapshotDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+        "testIgnore": [],
+        "testMatch": "**/*.@(spec|test).?(c|m)[jt]s?(x)",
+        "timeout": 60000,
+        "use": {
+          "baseURL": "http://127.0.0.1:4197",
+          "headless": true,
+          "viewport": {
+            "width": 1536,
+            "height": 1000
+          },
+          "colorScheme": "light",
+          "trace": "retain-on-failure",
+          "screenshot": "only-on-failure",
+          "launchOptions": {
+            "executablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          }
+        },
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": ""
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/private/tmp/pm-statistics-functional-20261018-h/report.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "default",
+    "updateSourceMethod": "patch",
+    "version": "1.64.0",
+    "workers": 1,
+    "webServer": {
+      "command": "node --import tsx scripts/multi-view-e2e-server.ts",
+      "url": "http://127.0.0.1:4197/api/health",
+      "reuseExistingServer": false,
+      "timeout": 30000
+    }
+  },
+  "suites": [
+    {
+      "title": "statistics.spec.ts",
+      "file": "statistics.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "network recovery keeps successful data and explicit view navigation supports Back",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 810,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-18T01:11:34.164Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ce6a6ad83d45104d2631-67bf2d51c6d0927cc005",
+          "file": "statistics.spec.ts",
+          "line": 281,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-18T01:11:32.730Z",
+    "duration": 3499.4010000000003,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

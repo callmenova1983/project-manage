@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { normalizeImportedTaskPlanning } from "../../../../packages/domain/snapshot-schedule";
 import WorkspaceTimezone from "../components/WorkspaceTimezone.vue";
 import { t, formatNumber } from "../locales";
 import { ref, computed } from "vue";
@@ -15,6 +16,7 @@ import {
   leafTasks,
 } from "../../../../packages/domain/types";
 import { useUnsaved } from "../composables/unsaved";
+import { WORKSPACE_IMPORT_LIMIT } from "../../../../packages/domain/progress-material";
 import {
   defaultCatalogs,
   importCatalogs,
@@ -51,9 +53,17 @@ async function choose(e: Event) {
     file = input.files?.[0];
   if (!file) return;
   try {
-    if (file.size > 2 * 1024 * 1024)
-      throw new Error(t("Import files must be under 2 MB."));
-    const parsed = snapshotImport.parse(JSON.parse(await file.text()));
+    const limit =
+      store.mode === "local" ? 2 * 1024 * 1024 : WORKSPACE_IMPORT_LIMIT;
+    if (file.size > limit)
+      throw new Error(
+        t("Import files must be under {size} MB.", {
+          size: limit / 1024 / 1024,
+        }),
+      );
+    const parsed = normalizeImportedTaskPlanning(
+      snapshotImport.parse(JSON.parse(await file.text())),
+    );
     validateGraph(parsed.projects, parsed.tasks);
     importCatalogs(
       parsed,
@@ -180,6 +190,13 @@ async function importData() {
       /></label>
       <div v-if="pending" class="import-preview">
         <h3>{{ t("Review replacement") }}</h3>
+        <p v-if="pending.schemaVersion < 3" role="status">
+          {{
+            t(
+              "Legacy imports clear all existing schedule dates, milestones and dependencies.",
+            )
+          }}
+        </p>
         <p>
           {{
             t("{projects} projects · {tasks} leaf tasks", {

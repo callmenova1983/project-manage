@@ -1,7 +1,9 @@
-import { beforeEach, afterEach, it, expect } from "vitest";
+import { beforeEach, afterEach, it, expect, vi } from "vitest";
+vi.mock("../../apps/web/src/services/mode", () => ({ browserDemo: false }));
 import { randomBytes, randomUUID } from "node:crypto";
 import { buildApp } from "../../apps/api/src/app";
 import { createUser } from "../../apps/api/src/auth";
+import { HttpApi } from "../../apps/web/src/services/api";
 import {
   projectInput,
   taskInput,
@@ -49,6 +51,7 @@ beforeEach(async () => {
   csrf = login.json().csrf;
 });
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await ctx.app.close();
 });
 function request(
@@ -91,6 +94,48 @@ async function page(query: ActivityQuery) {
   expect(response.statusCode).toBe(200);
   return response.json<ActivityPage>();
 }
+it("recovers missing and rotated history tokens against the authenticated API without bypassing CSRF", async () => {
+  ctx.repo.audit("team", event("client-token-recovery"));
+  const responses: { url: string; status: number }[] = [];
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    const response = await ctx.app.inject({
+      method: init.method as "GET" | "POST",
+      url,
+      headers: {
+        ...Object.fromEntries(new Headers(init.headers)),
+        origin,
+        cookie,
+      },
+      payload: init.body as string | undefined,
+    });
+    responses.push({ url, status: response.statusCode });
+    return new Response(response.body, { status: response.statusCode });
+  });
+  const api = new HttpApi();
+  const query = { projectIds: ["project-1"], excludeSeed: true };
+  expect(
+    (await api.activityPage(query)).events.map((item) => item.id),
+  ).toContain("client-token-recovery");
+  expect(responses.slice(0, 2)).toEqual([
+    { url: "/api/auth/session", status: 200 },
+    { url: "/api/activity/query", status: 200 },
+  ]);
+  ctx.repo.db.prepare("UPDATE sessions SET csrf=?").run("rotated-test-token");
+  expect(
+    (await api.activityPage(query)).events.map((item) => item.id),
+  ).toContain("client-token-recovery");
+  expect(responses.slice(-3)).toEqual([
+    { url: "/api/activity/query", status: 403 },
+    { url: "/api/auth/session", status: 200 },
+    { url: "/api/activity/query", status: 200 },
+  ]);
+  expect(
+    (await api.exportActivity(query)).events.map((item) => item.id),
+  ).toContain("client-token-recovery");
+  expect((await request("POST", "/api/activity/query", query)).statusCode).toBe(
+    403,
+  );
+});
 it("queries all selected-week records beyond 500 with identical filtered totals and detail pages", async () => {
   ctx.repo.transaction(() => {
     for (let i = 0; i < 725; i++)

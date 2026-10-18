@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { createLocalApi } from "../../apps/web/src/services/local";
 import { projectInput, statistics } from "../../packages/domain/types";
+import { normalizeImportedTaskPlanning } from "../../packages/domain/snapshot-schedule";
 it("keeps local merge task trees, editors and order across reload without network calls", async () => {
   const api = createLocalApi(),
     initial = await api.snapshot(),
@@ -39,6 +40,31 @@ it("keeps local merge task trees, editors and order across reload without networ
   expect(fetch).not.toHaveBeenCalled();
 });
 const saved = new Map<string, string>();
+it("restores a pending assistant proposal and rejects duplicate application after reload", async () => {
+  const api = createLocalApi();
+  const proposal = await api.propose("Atlas: scope done");
+  await api.saveAssistantSession({ version: 0, state: { proposal } });
+  const reloaded = createLocalApi();
+  const snapshot = await reloaded.snapshot();
+  const reviewed = proposal.suggestions.map((s) => ({
+    ...s,
+    action: "update" as const,
+    confirmed: true,
+    overwriteConfirmed: true,
+    projectVersion: snapshot.projects.find((p) => p.id === s.selectedProjectId)!
+      .version,
+  }));
+  const result = await reloaded.applyProposal(proposal, reviewed);
+  expect(result.status).toBe("applied");
+  expect(
+    (await createLocalApi().assistantSession()).state.proposal,
+  ).toMatchObject({ status: "applied" });
+  const count = (await createLocalApi().snapshot()).activities.length;
+  await expect(
+    createLocalApi().applyProposal(proposal, reviewed),
+  ).rejects.toMatchObject({ status: 409 });
+  expect((await createLocalApi().snapshot()).activities).toHaveLength(count);
+});
 beforeEach(() => {
   saved.clear();
   vi.stubGlobal("localStorage", {
@@ -178,6 +204,39 @@ it("records history restoration distinctly from newly completed work", async () 
   });
   expect(isCompletionAction(restored.activities[0]!)).toBe(false);
 });
+it("restores a legacy text-only assignment without retaining the newly copied member identity", async () => {
+  const api = createLocalApi();
+  const member = (await api.adminUsers())[0]!;
+  const before = await api.snapshot();
+  const source = {
+    ...before.tasks[0]!,
+    assignee: member.name,
+    assigneeId: member.id,
+  };
+  const target = { ...before.tasks[1]!, assignee: member.name };
+  delete target.assigneeId;
+  const raw = JSON.parse(saved.get("project-manage-demo-v1")!);
+  raw.tasks = raw.tasks.map((task: { id: string }) =>
+    task.id === source.id ? source : task.id === target.id ? target : task,
+  );
+  saved.set("project-manage-demo-v1", JSON.stringify(raw));
+  await api.copyTaskField({
+    sourceId: source.id,
+    sourceVersion: source.version,
+    field: "assignee",
+    targets: [{ id: target.id, version: target.version }],
+    overwriteConfirmed: true,
+    acrossProjects: true,
+  });
+  const copied = await api.snapshot();
+  expect(copied.tasks.find((t) => t.id === target.id)?.assigneeId).toBe(
+    member.id,
+  );
+  await api.restore(copied.activities[0]!.id, target.version + 1);
+  expect(
+    (await api.snapshot()).tasks.find((t) => t.id === target.id),
+  ).toMatchObject({ assignee: member.name, assigneeId: null });
+});
 
 it("persists reviewed intake and undoes it after schema-normalized reload", async () => {
   const { intakeCandidates } = await import("../../packages/domain/intake");
@@ -274,7 +333,9 @@ it("persists shared timezone with explicit confirmation, tab conflicts and desti
     exported.revision,
   );
   expect((await first.snapshot()).settings?.timeZone).toBe("Asia/Shanghai");
-  expect((await first.snapshot()).tasks).toEqual(before.tasks);
+  expect((await first.snapshot()).tasks).toEqual(
+    normalizeImportedTaskPlanning(before).tasks,
+  );
   const query = { timeZone: "Asia/Shanghai", limit: 1 };
   const page = await first.activityPage(query);
   const history = await first.exportActivity({

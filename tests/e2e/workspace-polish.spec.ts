@@ -337,3 +337,77 @@ test("assignee searches pinyin and recommends project participants, saving in on
     page.getByRole("combobox", { name: "Assignee", exact: true }),
   ).toHaveCount(0);
 });
+
+test("people suggestions float under the input without changing the project form height", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("project-manage-locale", "en"),
+  );
+  await page.goto("/demo/projects");
+  await expect(page.locator(".project-record").first()).toBeVisible();
+  await page.evaluate(() => {
+    const key = "project-manage-demo-v1",
+      state = JSON.parse(localStorage.getItem(key)!);
+    state.directory = {
+      version: 1,
+      companyName: "Synthetic company",
+      departments: [],
+      lastSyncedAt: null,
+      employees: [
+        {
+          id: "zyj",
+          name: "郑元杰",
+          employeeNo: "TEST001",
+          position: "General manager",
+          departmentIds: [],
+          email: "",
+          wecomUserId: "",
+          userId: null,
+          source: "manual",
+          active: true,
+        },
+      ],
+    };
+    localStorage.setItem(key, JSON.stringify(state));
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "New project", exact: true }).click();
+  const editor = page.getByRole("form", {
+      name: "Project editor",
+      exact: true,
+    }),
+    owner = editor.getByRole("combobox", { name: "Owner", exact: true });
+  const before = (await editor.boundingBox())!;
+  const aliasesBefore = (await editor
+    .getByLabel("Aliases, comma separated", { exact: true })
+    .boundingBox())!;
+  await expect(page.locator(".person-popover")).toHaveCount(0);
+  await owner.click();
+  await expect(page.locator(".person-popover")).toBeVisible();
+  await expect(owner).toHaveAttribute("aria-expanded", "true");
+  const after = (await editor.boundingBox())!,
+    aliasesAfter = (await editor
+      .getByLabel("Aliases, comma separated", { exact: true })
+      .boundingBox())!;
+  expect(Math.abs(after.height - before.height)).toBeLessThan(1);
+  expect(Math.abs(aliasesAfter.y - aliasesBefore.y)).toBeLessThan(1);
+  expect(
+    await page
+      .locator(".person-popover")
+      .evaluate((e) => getComputedStyle(e).position),
+  ).toBe("fixed");
+  await owner.fill("ZYJ");
+  await expect(page.getByRole("option", { name: /郑元杰/ })).toBeVisible();
+  await editor
+    .getByRole("heading", { name: "New project", exact: true })
+    .click();
+  await expect(page.locator(".person-popover")).toHaveCount(0);
+  await owner.click();
+  await page.getByRole("option", { name: /郑元杰/ }).click();
+  await expect(owner).toHaveValue("郑元杰");
+  await expect(page.locator(".person-popover")).toHaveCount(0);
+  await owner.click();
+  await owner.press("Escape");
+  await expect(page.locator(".person-popover")).toHaveCount(0);
+});

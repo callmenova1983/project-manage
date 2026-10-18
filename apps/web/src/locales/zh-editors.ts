@@ -121,7 +121,43 @@ export const editorsZh: Record<string, string> = {
   "Review method": "审阅方式",
   "Rule-assisted · no external processing": "规则辅助 · 不向外部发送",
   "Qwen budget is exhausted or expired. Ask the server administrator to review it.":
-    "Qwen 调用额度已耗尽或过期，请联系服务管理员。",
+    "AI 调用授权已过期或本次调用次数已用完，请联系管理员更新额度后重试。",
+  "The approved AI attempt budget is exhausted or expired.":
+    "AI 调用授权已过期或本次调用次数已用完，请联系管理员更新额度后重试。",
+  "The approved AI allowance has expired. Ask an administrator to extend its validity.":
+    "AI 调用授权已过期，请联系管理员续期后重试。",
+  "The approved AI allowance has been used up. Ask an administrator to review the total request limit.":
+    "本次 AI 调用次数已用完，请联系管理员更新额度后重试。",
+  "The approved AI attempt limit has been reached. Ask an administrator to renew the allowance, then retry.":
+    "本次 AI 调用次数已用完，请联系管理员更新额度后重试。",
+  "The AI usage approval has expired. Ask an administrator to renew the allowance, then retry.":
+    "AI 调用授权已过期，请联系管理员续期后重试。",
+  "The AI usage approval has expired or its attempt limit has been reached. Ask an administrator to review the allowance, then retry.":
+    "AI 调用授权已过期或本次调用次数已用完，请联系管理员更新额度后重试。",
+  "AI recognition is not enabled. Ask an administrator to check the AI settings.":
+    "尚未启用 AI 识别，请联系管理员检查 AI 配置。",
+  "Another AI request is running in this workspace. Wait for it to finish, then retry.":
+    "工作区正在处理另一个 AI 请求，请等待完成后重试。",
+  "The previous AI request is pending or was interrupted. No duplicate request was sent. Ask an administrator to check its status before retrying.":
+    "上一次 AI 请求仍在处理或曾中断，未重复发送。请联系管理员确认处理状态后再重试。",
+  "AI recognition timed out or could not connect. This attempt may have been counted; check its status before retrying.":
+    "AI 识别超时或连接失败，本次可能已计入调用次数，请确认处理状态后再重试。",
+  "The AI service rejected the configuration. Ask an administrator to check the model and access settings.":
+    "AI 服务未接受当前配置，请联系管理员检查模型和访问权限。",
+  "The AI service is temporarily unavailable or rate-limited. Check the attempt allowance before retrying.":
+    "AI 服务暂时不可用或请求过多，请确认调用额度后再重试。",
+  "The AI result could not be read reliably. No recognition result was applied; review the input before retrying.":
+    "AI 返回的内容无法可靠识别，本次识别结果未应用，请检查输入后重试。",
+  "This content exceeds the AI recognition limit. Split it into smaller batches and retry.":
+    "内容超过 AI 单次识别上限，请分批录入后重试。",
+  "The workspace changed during AI recognition. Refresh the related information and review the input again.":
+    "AI 识别期间工作区内容已变化，请刷新相关信息后重新审阅输入。",
+  "AI recognition could not finish. Keep the input and ask an administrator to check the request before retrying.":
+    "AI 识别未能完成，请保留输入，联系管理员确认请求状态后再重试。",
+  "Your input and attachments remain here. Retry after the allowance is renewed.":
+    "输入内容和附件仍保留在此处，额度恢复后可直接重试。",
+  "Manage AI attempt allowance (opens a new tab)":
+    "管理 AI 调用额度（在新页面打开）",
   "Original wording is retained with line numbers.": "原文及行号将保留。",
   "Original source · version 1": "原始来源 · 版本 1",
   "No supported actions or updates were found. Cancel review to edit the notes or choose rule-assisted review.":
@@ -184,6 +220,7 @@ export const editorsZh: Record<string, string> = {
   "Add context for the team.": "为团队补充项目背景。",
   "Workspace exported": "工作区已导出",
   "Import files must be under 2 MB.": "导入文件必须小于 2 MB。",
+  "Import files must be under {size} MB.": "导入文件最大允许 {size} MB。",
   "Workspace imported": "工作区已导入",
   "Authenticated server · SQLite": "已认证服务器 · SQLite",
   "Local demo · this browser only": "本地演示 · 仅此浏览器",

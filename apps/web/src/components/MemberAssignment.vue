@@ -33,9 +33,7 @@ function select(event: Event) {
   emit(
     "update:modelValue",
     selected?.name ??
-      (id === "__unassigned"
-        ? "Unassigned"
-        : (member.value?.name ?? props.modelValue)),
+      (id === "__unassigned" ? "" : (member.value?.name ?? props.modelValue)),
   );
 }
 </script>
@@ -48,7 +46,10 @@ function select(event: Event) {
         :project-id="projectId"
         :label="t(label)"
         :disabled="store.busy"
+        link-members
+        :member-id="memberId"
         @update:model-value="updateName"
+        @select-identity="emit('update:memberId', $event)"
     /></label>
     <details class="member-link-options">
       <summary>{{ t("{field} member", { field: t(label) }) }}</summary>

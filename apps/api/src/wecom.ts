@@ -89,6 +89,10 @@ export async function syncWecomDirectory(
         "Enterprise directory returned an invalid response.",
       );
     }
+    if (path === "gettoken" && result.errcode === 40001)
+      throw new WecomError(
+        "Enterprise WeChat rejected the CorpID and Secret when obtaining an access token (40001). Check the Secret for this CorpID in the enterprise admin console; enter the Secret, not an access_token. No local data was changed.",
+      );
     if (result.errcode === 60020)
       throw new WecomError(
         "Enterprise WeChat rejected the server IP (60020). Add the server's public outbound IP to the application's trusted IP list, then sync again. No local data was changed.",
@@ -153,6 +157,7 @@ export async function syncWecomDirectory(
       );
   }
   const employees = structuredClone(current.employees);
+  const syncedAt = new Date().toISOString();
   for (const remote of remoteUsers.values()) {
     const email = remote.biz_mail || remote.email || "";
     let local = employees.find((e) => e.wecomUserId === remote.userid);
@@ -179,6 +184,8 @@ export async function syncWecomDirectory(
     }
     local.name = remote.name;
     local.wecomUserId = remote.userid;
+    local.wecomCorpId = config.corpId;
+    local.wecomSeenAt = syncedAt;
     local.email = email;
     local.departmentIds = remote.department
       .map((id) => remoteToLocal.get(id))
@@ -192,6 +199,6 @@ export async function syncWecomDirectory(
     departments,
     employees,
     version: current.version + 1,
-    lastSyncedAt: new Date().toISOString(),
+    lastSyncedAt: syncedAt,
   });
 }

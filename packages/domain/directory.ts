@@ -17,6 +17,8 @@ export const employeeSchema = z
     position: z.string().trim().max(120),
     email: z.union([z.literal(""), z.string().email().max(200)]),
     wecomUserId: z.string().trim().max(100),
+    wecomCorpId: z.string().max(128).optional(),
+    wecomSeenAt: z.string().datetime().optional(),
     userId: id.nullable(),
     active: z.boolean(),
     source: z.enum(["manual", "wecom"]),
@@ -98,4 +100,24 @@ export function emptyDirectory(): CompanyDirectory {
     employees: [],
     lastSyncedAt: null,
   };
+}
+
+export const wecomConfigInput = z
+  .object({
+    version: z.number().int().nonnegative(),
+    corpId: z.string().trim().min(1).max(128).regex(/^\S+$/),
+    secret: z
+      .string()
+      .trim()
+      .max(1024)
+      .refine((value) => !/\s/.test(value))
+      .optional(),
+  })
+  .strict();
+export type WecomConfigInput = z.infer<typeof wecomConfigInput>;
+export interface WecomConfiguration {
+  version: number;
+  corpId: string;
+  secretConfigured: boolean;
+  source: "environment" | "workspace" | "none" | "local";
 }

@@ -6,7 +6,10 @@ import {
   defaultCatalogs,
   defaultModelSettings,
 } from "../../packages/domain/admin";
-import { projectInput } from "../../packages/domain/types";
+import { projectInput, taskInput } from "../../packages/domain/types";
+import { writeModelLog } from "../../apps/api/src/admin";
+import { recordModelCallUsage } from "../../apps/api/src/ai/usage";
+import type { ModelLog } from "../../packages/domain/admin";
 let context: Awaited<ReturnType<typeof buildApp>>,
   password = "",
   cookie = "",
@@ -59,6 +62,173 @@ beforeEach(async () => {
 });
 afterEach(() => context.app.close());
 describe("workspace administration", () => {
+  it("distinguishes fully metered multi-call requests from partial and legacy retry logs", async () => {
+    const makeLog = (): ModelLog => ({
+      id: randomUUID(), createdAt: new Date().toISOString(), actor: "test",
+      provider: "qwen", model: "test", mode: "real", status: "succeeded",
+      durationMs: 1, inputTokens: null, outputTokens: null, cost: null,
+      errorCode: null, attempts: 1,
+    });
+    const complete = makeLog();
+    recordModelCallUsage(complete, { inputTokens: 10, outputTokens: 3 });
+    complete.attempts = 2;
+    recordModelCallUsage(complete, { inputTokens: 5, outputTokens: 2 });
+    writeModelLog(context.repo, "team", complete);
+    const partial = makeLog();
+    partial.attempts = 2;
+    recordModelCallUsage(partial, { inputTokens: 3, outputTokens: 1 });
+    writeModelLog(context.repo, "team", partial);
+    writeModelLog(context.repo, "team", { ...makeLog(), attempts: 2, inputTokens: 2, outputTokens: 1 });
+    expect((await request("GET", "/api/ai/usage")).json()).toMatchObject({
+      inputTokens: 20, outputTokens: 7, totalTokens: 27,
+      measuredRequests: 1, unmeasuredRequests: 2, pendingRequests: 0,
+    });
+  });
+  it("shows workspace token totals beyond 100 logs without exposing logs or estimating missing usage", async () => {
+    const log = (patch: Partial<ModelLog> = {}): ModelLog => ({
+      id: randomUUID(),
+      createdAt: "2026-10-17T01:00:00.000Z",
+      actor: "Synthetic actor",
+      provider: "qwen",
+      model: "synthetic-model",
+      mode: "real",
+      status: "succeeded",
+      durationMs: 10,
+      inputTokens: 10,
+      outputTokens: 2,
+      cost: null,
+      errorCode: null,
+      attempts: 1,
+      ...patch,
+    });
+    for (let i = 0; i < 101; i++) writeModelLog(context.repo, "team", log());
+    writeModelLog(context.repo, "team", log({ attempts: 2 }));
+    writeModelLog(
+      context.repo,
+      "team",
+      log({
+        status: "failed",
+        inputTokens: 7,
+        outputTokens: null,
+        createdAt: "2026-10-17T02:00:00.000Z",
+      }),
+    );
+    writeModelLog(
+      context.repo,
+      "team",
+      log({ status: "started", inputTokens: null, outputTokens: null }),
+    );
+    writeModelLog(
+      context.repo,
+      "team",
+      log({ mode: "simulated", inputTokens: 99999 }),
+    );
+    writeModelLog(context.repo, "other", log({ inputTokens: 99999 }));
+    ({ cookie, csrf } = await login("member@example.test"));
+    const result = await request("GET", "/api/ai/usage");
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toEqual({
+      inputTokens: 1027,
+      outputTokens: 204,
+      totalTokens: 1231,
+      measuredRequests: 101,
+      unmeasuredRequests: 2,
+      pendingRequests: 1,
+      last: {
+        createdAt: "2026-10-17T02:00:00.000Z",
+        inputTokens: 7,
+        outputTokens: null,
+        model: "synthetic-model",
+      },
+    });
+    expect(JSON.stringify(result.json())).not.toContain("Synthetic actor");
+    expect((await request("GET", "/api/admin/model/logs")).statusCode).toBe(
+      403,
+    );
+    ({ cookie, csrf } = await login("outside@example.test"));
+    expect((await request("GET", "/api/ai/usage")).json().inputTokens).toBe(
+      99999,
+    );
+    expect(
+      (await context.app.inject({ method: "GET", url: "/api/ai/usage" }))
+        .statusCode,
+    ).toBe(401);
+    expect(
+      context.repo.db
+        .prepare("SELECT count(*) AS total FROM ai_attempts")
+        .get()!.total,
+    ).toBe(0);
+  });
+  it("round-trips version 3 schedules and dependencies and rejects invalid imports atomically", async () => {
+    const initial = context.repo.snapshot("team");
+    const leaves = initial.tasks.filter(
+      (task) => !initial.tasks.some((child) => child.parentId === task.id),
+    );
+    const task = leaves[0]!;
+    const predecessor = leaves.find(
+      (item) => item.id !== task.id && item.projectId === task.projectId,
+    )!;
+    const planning = {
+      scheduleStart: "2027-01-10",
+      scheduleEnd: "2027-01-10",
+      milestone: true,
+      dependencies: [{ taskId: predecessor.id, type: "finish_to_start" }],
+    };
+    const changed = await request("PUT", `/api/tasks/${task.id}`, {
+      ...taskInput.strip().parse(task),
+      ...planning,
+      version: task.version,
+    });
+    expect(changed.statusCode, changed.body).toBe(200);
+    const exported = (await request("GET", "/api/export")).json();
+    expect(exported.schemaVersion).toBe(3);
+    const malformed = structuredClone(exported);
+    malformed.tasks.find(
+      (item: { id: string }) => item.id === task.id,
+    ).dependencies = [{ taskId: "missing-task", type: "finish_to_start" }];
+    const before = context.repo.snapshot("team");
+    expect(
+      (await request("POST", "/api/import", { ...malformed, confirmed: true }))
+        .statusCode,
+    ).toBe(400);
+    expect(context.repo.snapshot("team")).toEqual(before);
+    const missingCatalog = structuredClone(exported);
+    delete missingCatalog.catalogs;
+    expect(
+      (
+        await request("POST", "/api/import", {
+          ...missingCatalog,
+          confirmed: true,
+        })
+      ).statusCode,
+    ).toBe(400);
+    const imported = await request("POST", "/api/import", {
+      ...exported,
+      confirmed: true,
+    });
+    expect(imported.statusCode, imported.body).toBe(200);
+    expect(
+      context.repo.snapshot("team").tasks.find((item) => item.id === task.id),
+    ).toMatchObject(planning);
+    for (const schemaVersion of [1, 2]) {
+      const revision = context.repo.snapshot("team").revision;
+      const legacy = await request("POST", "/api/import", {
+        ...exported,
+        schemaVersion,
+        revision,
+        confirmed: true,
+      });
+      expect(legacy.statusCode, legacy.body).toBe(200);
+      expect(
+        context.repo.snapshot("team").tasks.find((item) => item.id === task.id),
+      ).toMatchObject({
+        scheduleStart: null,
+        scheduleEnd: null,
+        milestone: false,
+        dependencies: [],
+      });
+    }
+  });
   it("keeps project edits shared while denying non-admin reads/writes and cross-workspace user mutation", async () => {
     ({ cookie, csrf } = await login("member@example.test"));
     for (const url of [
@@ -328,9 +498,9 @@ describe("workspace administration", () => {
       ).statusCode,
     ).toBe(400);
   });
-  it("exports version 2, reads legacy imports and prevents members changing catalogs through import", async () => {
+  it("exports version 3, reads legacy imports and prevents members changing catalogs through import", async () => {
     const exported = (await request("GET", "/api/export")).json();
-    expect(exported.schemaVersion).toBe(2);
+    expect(exported.schemaVersion).toBe(3);
     expect(exported.catalogs.stages).toHaveLength(5);
     ({ cookie, csrf } = await login("member@example.test"));
     const changed = structuredClone(exported);

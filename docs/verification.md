@@ -244,3 +244,10 @@ The deployment worker separately reported successful origin handling on localhos
 ## Administration follow-up
 
 Added workspace user lifecycle, one-time activation, stage/category registry, constrained Qwen preferences, safe call metadata and management audit. Validation: lint/typecheck and 158 unit/API tests passed; targeted administration + intake browser suite 9/9 passed. The activation fragment is captured before router initialization; recipient activation removes the fragment, issues no session, then permits normal sign-in. Real provider transport was mocked; no actual Qwen request, real credential, real administrator grant, deployment or merge occurred. Full regression results are recorded in the delivery report/CI.
+
+## 2026-10-18 企业微信配置请求验证恢复
+
+- `HttpApi` 仅在认证入口明确返回403 `Invalid request token`时，获取当前会话凭据并重试一次。保留原请求体及幂等编号；普通权限错误、版本冲突、网络/不可读响应不自动重放。已有账号或工作区发生变化时停止恢复。
+- 客户端恢复、相关管理/错误处理测试25项通过；HTTP恢复与WeCom隔离集成组合21项通过。真实Fastify认证入口测试证明：拒绝时配置/审计/幂等表均未写入，恢复后只保存一个版本、一条审计，重复投递不会重复保存；未连接真实WeCom。
+- 隔离浏览器测试2项通过（`/private/tmp/pm-wecom-recovery-20261018-b/report.json`）：首次凭据拒绝后自动保存，二次拒绝后输入草稿保留。首轮因测试仅识别中文而实际界面为英文未找到按钮，已使用双语定位复测。构建、类型检查及涉及文件ESLint/Prettier通过。
+- 此修复不代表已联通真实企业微信权限，也没有新增群聊读取或汇报数据同步。AgentId用于应用消息等场景；日报表单读取需要另行确认汇报接口授权并开发对应同步入口。

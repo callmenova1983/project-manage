@@ -2,6 +2,8 @@ import { pinyin } from "pinyin-pro";
 import { suggestedLoginName } from "./login-name.js";
 import type { Snapshot } from "./types.js";
 export interface PersonChoice {
+  key?: string;
+  memberId?: string;
   name: string;
   employeeNo: string;
   department: string;
@@ -10,6 +12,119 @@ export interface PersonChoice {
   reasons: string[];
   tokens: string[];
   weight: number;
+}
+
+/** Selection identity is explicit; a matching name never links an account. */
+export function assignmentChoices(
+  snapshot: Snapshot,
+  projectId?: string,
+  retainedId?: string | null,
+): PersonChoice[] {
+  const members = snapshot.members ?? [];
+  const employeeByUser = new Map(
+    (snapshot.directory?.employees ?? [])
+      .filter((person) => person.userId)
+      .map((person) => [person.userId!, person]),
+  );
+  const departmentNames = new Map(
+    (snapshot.directory?.departments ?? []).map((department) => [
+      department.id,
+      department.name,
+    ]),
+  );
+  const projectMemberIds = new Set(
+    (snapshot.projectMembers ?? [])
+      .filter((person) => person.projectId === projectId)
+      .map((person) => person.userId),
+  );
+  const owner = snapshot.projects.find(
+    (project) => project.id === projectId,
+  )?.ownerId;
+  const result: PersonChoice[] = [];
+  for (const member of members) {
+    if (member.status !== "active" && member.id !== retainedId) continue;
+    const employee = employeeByUser.get(member.id);
+    const department =
+      employee?.departmentIds
+        .map((id) => departmentNames.get(id))
+        .filter(Boolean)
+        .join(" · ") ?? "";
+    result.push({
+      key: `member:${member.id}`,
+      memberId: member.id,
+      name: member.name,
+      employeeNo: employee?.employeeNo ?? "",
+      department,
+      position: employee?.position ?? "",
+      group:
+        projectMemberIds.has(member.id) || owner === member.id
+          ? "project"
+          : "company",
+      reasons: [
+        member.status !== "active"
+          ? "disabled"
+          : projectMemberIds.has(member.id)
+            ? "Project team"
+            : "Linked member",
+      ],
+      tokens: [
+        ...nameTokens(member.name),
+        member.email.toLowerCase(),
+        employee?.employeeNo.toLowerCase() ?? "",
+        department.toLowerCase(),
+      ],
+      weight: projectMemberIds.has(member.id)
+        ? 90
+        : owner === member.id
+          ? 80
+          : 20,
+    });
+    // Email is a visible disambiguator for same-name accounts without directory details.
+    if (!result[result.length - 1]!.position)
+      result[result.length - 1]!.position = member.email;
+  }
+  const memberIds = new Set(members.map((member) => member.id));
+  const knownNames = new Set(result.map((person) => person.name));
+  for (const employee of snapshot.directory?.employees ?? []) {
+    if (!employee.active || (employee.userId && memberIds.has(employee.userId)))
+      continue;
+    const department = employee.departmentIds
+      .map((id) => departmentNames.get(id))
+      .filter(Boolean)
+      .join(" · ");
+    result.push({
+      key: `employee:${employee.id}`,
+      name: employee.name,
+      employeeNo: employee.employeeNo,
+      department,
+      position: employee.position,
+      group: "company",
+      reasons: ["Text only; no member is linked."],
+      tokens: [
+        ...nameTokens(employee.name),
+        employee.employeeNo.toLowerCase(),
+        department.toLowerCase(),
+      ],
+      weight: 0,
+    });
+    knownNames.add(employee.name);
+  }
+  for (const person of peopleChoices(snapshot, projectId)) {
+    if (!knownNames.has(person.name)) {
+      result.push({
+        ...person,
+        key: `text:${person.name}`,
+        reasons: [...person.reasons, "Text only; no member is linked."],
+      });
+      knownNames.add(person.name);
+    }
+  }
+  return result.sort(
+    (a, b) =>
+      b.weight - a.weight ||
+      a.name.localeCompare(b.name, "zh-CN") ||
+      a.key!.localeCompare(b.key!),
+  );
 }
 const cache = new Map<string, string[]>();
 function nameTokens(name: string) {

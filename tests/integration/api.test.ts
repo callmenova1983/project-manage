@@ -559,3 +559,139 @@ describe("reported facts and exact provenance", () => {
     ).toBe(409);
   });
 });
+
+describe("direct meeting completion", () => {
+  it("saves clear items before clarification and prevents repeated writes across partial replies", async () => {
+    const before = await snapshot();
+    const source =
+      "Atlas: confirm scope\nAtlas and Meridian: review joint handoff";
+    const proposal = (
+      await request("POST", "/api/proposals", { source })
+    ).json();
+    const item = (index: number, projectId: string) => ({
+      id: proposal.suggestions[index].id,
+      selectedProjectId: projectId,
+      title: proposal.suggestions[index].title,
+      action: "task",
+      status: "todo",
+      confirmed: true,
+      overwriteConfirmed: false,
+    });
+    const first = await request("POST", `/api/proposals/${proposal.id}/apply`, {
+      suggestions: [item(0, "project-1")],
+      partial: true,
+      updateMode: "append",
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({
+      status: "draft",
+      appliedSuggestionIds: [proposal.suggestions[0].id],
+      source,
+    });
+    expect((await snapshot()).tasks).toHaveLength(before.tasks.length + 1);
+    expect(
+      (
+        await request("POST", `/api/proposals/${proposal.id}/apply`, {
+          suggestions: [item(0, "project-1")],
+          partial: true,
+        })
+      ).statusCode,
+    ).toBe(409);
+    expect((await snapshot()).tasks).toHaveLength(before.tasks.length + 1);
+    const second = await request(
+      "POST",
+      `/api/proposals/${proposal.id}/apply`,
+      { suggestions: [item(1, "project-2")], partial: true },
+    );
+    expect(second.statusCode).toBe(200);
+    expect(second.json().status).toBe("applied");
+    expect((await snapshot()).tasks).toHaveLength(before.tasks.length + 2);
+    expect((await snapshot()).activities[0]!.source).toContain(
+      "line 2: Atlas and Meridian",
+    );
+  });
+  it("records a new progress entry without a replacement confirmation and preserves the old report", async () => {
+    const before = (await snapshot()).projects[0]!;
+    const proposal = (
+      await request("POST", "/api/proposals", {
+        source: "Atlas: approval completed\nUnassigned follow-up",
+      })
+    ).json();
+    const result = await request(
+      "POST",
+      `/api/proposals/${proposal.id}/apply`,
+      {
+        partial: true,
+        updateMode: "append",
+        suggestions: [
+          {
+            id: proposal.suggestions[0].id,
+            selectedProjectId: before.id,
+            title: "Approval completed",
+            action: "update",
+            status: "done",
+            confirmed: true,
+            overwriteConfirmed: false,
+          },
+        ],
+      },
+    );
+    expect(result.statusCode).toBe(200);
+    const history = (
+      await request("GET", `/api/projects/${before.id}/progress`)
+    ).json();
+    expect(
+      history.some(
+        (entry: { text: string }) => entry.text === before.latestUpdate,
+      ),
+    ).toBe(true);
+    expect(
+      history.some(
+        (entry: { text: string }) => entry.text === "Approval completed",
+      ),
+    ).toBe(true);
+    const complete = await request(
+      "POST",
+      `/api/proposals/${proposal.id}/apply`,
+      {
+        partial: true,
+        suggestions: [],
+        skippedIds: [proposal.suggestions[1].id],
+      },
+    );
+    expect(complete.statusCode).toBe(200);
+    expect(complete.json().status).toBe("applied");
+    const repeated = (
+      await request("POST", "/api/proposals", {
+        source: "Atlas: approval completed again",
+      })
+    ).json();
+    expect(
+      (
+        await request("POST", `/api/proposals/${repeated.id}/apply`, {
+          partial: true,
+          updateMode: "append",
+          suggestions: [
+            {
+              id: repeated.suggestions[0].id,
+              selectedProjectId: before.id,
+              title: "Approval completed",
+              action: "update",
+              status: "done",
+              confirmed: true,
+              overwriteConfirmed: false,
+            },
+          ],
+        })
+      ).statusCode,
+    ).toBe(200);
+    const repeatedHistory = (
+      await request("GET", `/api/projects/${before.id}/progress`)
+    ).json();
+    expect(
+      repeatedHistory.filter(
+        (entry: { text: string }) => entry.text === "Approval completed",
+      ),
+    ).toHaveLength(2);
+  });
+});

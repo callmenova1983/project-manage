@@ -4,6 +4,11 @@ export const commonZh: Record<string, string> = {
   "Discard unsaved changes?": "放弃尚未保存的修改？",
   "Switch to light theme": "切换到浅色主题",
   "Switch to dark theme": "切换到深色主题",
+  "Enter fullscreen": "进入全屏",
+  "Exit fullscreen": "退出全屏",
+  "Fullscreen is unavailable in this browser": "当前浏览器不支持全屏",
+  "Could not enter or exit fullscreen. Try opening in a browser.":
+    "无法切换全屏，请尝试在浏览器中打开。",
   Projects: "项目",
   Tasks: "任务",
   "All tasks": "全部任务",
@@ -48,7 +53,7 @@ export const commonZh: Record<string, string> = {
   "Reporter unavailable": "汇报人未知",
   "Report time unavailable": "汇报时间未知",
   "Search projects": "搜索项目",
-  "Search projects, updates, people…": "搜索项目、进展、人员…",
+  "Search projects, updates, people…": "搜索项目、进展、人员（支持拼音）…",
   "Filter by stage": "按阶段筛选",
   "Filter by owner": "按负责人筛选",
   "Filter by responsibility": "按职责筛选",
@@ -165,6 +170,8 @@ export const commonZh: Record<string, string> = {
   "Email or password is incorrect": "邮箱或密码不正确",
   "Origin not allowed": "请求来源不允许，请联系工作区维护者检查站点配置",
   "Invalid request token": "请求验证已过期，请刷新后重试",
+  "Your session changed. Refresh the page before trying again.":
+    "登录账号已变更，请刷新页面后重试。",
   "Please check the submitted values": "请检查填写的内容",
   "The server could not save this change. Please retry.":
     "服务器未能保存修改，请重试。",

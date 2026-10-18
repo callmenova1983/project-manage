@@ -1,5 +1,65 @@
+import { registerSpeechRoutes } from "./ai/speech.js";
+import {
+  taskBulkUpdateInput,
+  planTaskBulkUpdate,
+  TaskBulkConflict,
+} from "../../../packages/domain/task-bulk-update.js";
+import { registerAssistantRoutes } from "./assistant.js";
+import { normalizeImportedTaskPlanning } from "../../../packages/domain/snapshot-schedule.js";
+import {
+  taskMoveInput,
+  planTaskMove,
+  TaskMoveConflict,
+} from "../../../packages/domain/task-move.js";
+import {
+  taskDependencyReplaceInput,
+  planTaskDependencies,
+  TaskDependencyConflict,
+} from "../../../packages/domain/task-dependencies.js";
+import {
+  taskSchedulePatchInput,
+  taskScheduleBatchInput,
+  planTaskSchedules,
+  TaskScheduleConflict,
+  type TaskScheduleChange,
+} from "../../../packages/domain/task-schedule-write.js";
+import { WecomCredentialStore } from "./wecom-credentials.js";
+import { NotificationCredentialStore } from "./notification-credentials.js";
+import {
+  NotificationService,
+  registerNotificationRoutes,
+} from "./notifications.js";
+import {
+  meetingNewProjectInput,
+  meetingNewProjectFields,
+  validateMeetingNewProjectSelection,
+  validateMeetingSelection,
+  settleMeetingProposal,
+} from "../../../packages/domain/meeting-completion.js";
 import { exportProgress, importProgress } from "./progress-export.js";
 import { registerProgressMaterials } from "./progress-materials.js";
+import { registerProjectFiles } from "./project-files.js";
+import { WORKSPACE_IMPORT_LIMIT } from "../../../packages/domain/progress-material.js";
+import {
+  attributedReportSuggestion,
+  matchingReportTask,
+  reportProgressKey,
+  reportProgressSource,
+  reportTaskAssignment,
+  reportWorkWeek,
+  saveReviewedReportSuggestion,
+} from "../../../packages/domain/report-attribution.js";
+import {
+  CAPTURE_SCOPE,
+  captureSourceSchema,
+} from "../../../packages/domain/capture.js";
+import { readMaterial } from "./progress-materials.js";
+import { channelEntries } from "../../../packages/domain/channels.js";
+import {
+  taskLifecycleInput,
+  planTaskLifecycle,
+  TaskLifecycleConflict,
+} from "../../../packages/domain/task-lifecycle.js";
 import {
   taskFieldCopyInput,
   planTaskFieldCopy,
@@ -50,6 +110,7 @@ import {
 import { safeOriginDiagnostic } from "./origin-diagnostics.js";
 import { registerAiRoutes } from "./ai/routes.js";
 import { AiError } from "./ai/provider.js";
+import { registerDailyLogs } from "./daily-logs.js";
 import { registerIntakeRoutes } from "./intake.js";
 import {
   registerAdminRoutes,
@@ -93,16 +154,27 @@ export async function buildApp(options: {
   starterPassword?: string;
   databasePath: string;
   origin: string;
+  additionalOrigins?: string[];
   production?: boolean;
   staticPath?: string;
   qwen?: QwenConfig;
+  aiRuntime?: "legacy" | "sdk";
   aiFetch?: typeof fetch;
   originDiagnostics?: boolean;
   codespacesOriginRewrite?: CodespacesOriginRewrite;
   wecom?: WecomConfig;
   wecomFetch?: typeof fetch;
+  notificationFetch?: typeof fetch;
+  notificationClock?: () => Date;
+  notificationIntervalMs?: number;
 }) {
   const allowedOrigin = validateAppOrigin(options.origin, !!options.production);
+  const allowedOrigins = [
+    allowedOrigin,
+    ...(options.additionalOrigins ?? []).map((value) =>
+      validateAppOrigin(value, !!options.production),
+    ),
+  ];
   const root = options.staticPath ?? resolve("dist/web");
   const entry = resolve(root, "index.html");
   if (
@@ -114,6 +186,19 @@ export async function buildApp(options: {
     );
   const repo = new Repository(options.databasePath);
   const credentials = new QwenCredentialStore(repo, options.databasePath);
+  const wecomCredentials = new WecomCredentialStore(repo, options.databasePath);
+  const notifications = new NotificationService(
+    repo,
+    new NotificationCredentialStore(repo, options.databasePath),
+    {
+      fetcher: options.notificationFetch,
+      clock: options.notificationClock,
+      intervalMs: options.notificationIntervalMs,
+      directoryCorpId: (ws) =>
+        wecomCredentials.read(ws)?.config.corpId ??
+        (options.wecom?.workspaceId === ws ? options.wecom.corpId : ""),
+    },
+  );
   const app = Fastify({
     logger: false,
     bodyLimit: 2 * 1024 * 1024,
@@ -134,16 +219,32 @@ export async function buildApp(options: {
             defaultSrc: ["'self'"],
             scriptSrc: ["'self'"],
             styleSrc: ["'self'", "'unsafe-inline'"],
-            fontSrc: ["'self'"],
-            imgSrc: ["'self'", "data:"],
-            connectSrc: ["'self'"],
+            fontSrc: ["'self'", "data:", "blob:"],
+            imgSrc: ["'self'", "data:", "blob:"],
+            workerSrc: ["'self'", "blob:"],
+            connectSrc: ["'self'", "blob:"],
             objectSrc: ["'none'"],
             frameAncestors: ["'none'"],
           },
         }
       : false,
   });
-  await app.register(rateLimit, { max: 300, timeWindow: "1 minute" });
+  await app.register(rateLimit, {
+    max: 300,
+    timeWindow: "1 minute",
+    // Public runtime chunks must not consume the shared API/login quota.
+    // Several fresh browser sessions can request hundreds of split assets.
+    allowList: (request) => {
+      const path = request.url.split("?", 1)[0]!;
+      return (
+        /^\/assets\/[A-Za-z0-9_.-]+\.(?:js|css|woff2?|ttf|eot|svg|png|jpe?g|gif|webp|avif|wasm|map)$/.test(
+          path,
+        ) ||
+        path === "/office-assets/pdf.js" ||
+        path === "/office-assets/pdf.worker.js"
+      );
+    },
+  });
   const identity = new WeakMap<
     FastifyRequest,
     { actor: Actor; csrf: string }
@@ -168,11 +269,13 @@ export async function buildApp(options: {
     }
     if (
       mutation &&
-      !allowedMutationOrigin(
-        req.headers,
-        req.raw.socket.remoteAddress,
-        allowedOrigin,
-        options.codespacesOriginRewrite,
+      !allowedOrigins.some((origin) =>
+        allowedMutationOrigin(
+          req.headers,
+          req.raw.socket.remoteAddress,
+          origin,
+          options.codespacesOriginRewrite,
+        ),
       )
     )
       throw new HttpError(403, "Origin not allowed");
@@ -188,6 +291,10 @@ export async function buildApp(options: {
       throw new HttpError(403, "Invalid request token");
   });
   app.setErrorHandler((err, req, reply) => {
+    if (err instanceof TaskBulkConflict)
+      return reply
+        .status(409)
+        .send({ message: err.message, conflicts: err.conflicts });
     if (err instanceof WecomError)
       return reply
         .status(502)
@@ -217,15 +324,20 @@ export async function buildApp(options: {
       current: e.current,
     });
   });
-  app.addHook("onClose", async () => repo.close());
+  app.addHook("onReady", async () => notifications.start());
+  app.addHook("onClose", async () => {
+    await notifications.close();
+    repo.close();
+  });
   const actor = (r: FastifyRequest) => identity.get(r)!.actor;
-  registerAiRoutes(app, repo, actor, options.qwen, options.aiFetch, (a) =>
-    workspaceQwen(
+  registerAiRoutes(app, repo, actor, options.qwen, options.aiFetch, (a) => {
+    const config = workspaceQwen(
       repo,
       a.workspaceId,
       options.qwen ?? credentials.read(a.workspaceId),
-    ),
-  );
+    );
+    return config && options.aiRuntime ? { ...config, runtime: options.aiRuntime } : config;
+  });
   function mutate<T>(req: FastifyRequest, fn: (a: Actor) => T): T {
     const a = actor(req);
     const key = z.string().uuid().parse(req.headers["idempotency-key"]);
@@ -247,6 +359,12 @@ export async function buildApp(options: {
         return JSON.parse(String(old.response)) as T;
       }
       const result = fn(a);
+      notifications.reconcileWorkspace(a.workspaceId, {
+        suppress:
+          req.url.startsWith("/api/import") ||
+          req.url.includes("/restore") ||
+          req.url.includes("/undo"),
+      });
       repo.db
         .prepare(
           "INSERT INTO idempotency(key,user_id,request_hash,response,created_at) VALUES(?,?,?,?,?)",
@@ -258,7 +376,22 @@ export async function buildApp(options: {
       return result;
     });
   }
+  registerAssistantRoutes(app, repo, actor, mutate);
+  registerSpeechRoutes(
+    app,
+    repo,
+    actor,
+    (a) =>
+      workspaceQwen(
+        repo,
+        a.workspaceId,
+        options.qwen ?? credentials.read(a.workspaceId),
+      ),
+    options.aiFetch,
+  );
   registerIntakeRoutes(app, repo, actor, mutate);
+  registerDailyLogs(app, repo, actor, mutate);
+  registerNotificationRoutes(app, repo, actor, mutate, notifications);
   registerAdminRoutes(
     app,
     repo,
@@ -275,6 +408,7 @@ export async function buildApp(options: {
     mutate,
     options.wecom,
     options.wecomFetch,
+    wecomCredentials,
   );
   app.get("/api/health", () => ({ status: "ok" }));
   app.post(
@@ -496,6 +630,9 @@ export async function buildApp(options: {
       );
       repo.checkVersion(old, input.version);
       input.channelId ??= old.channelId ?? "company";
+      // Older project editors omit location; explicit null clears it.
+      if (input.location === undefined && old.location !== undefined)
+        input.location = old.location;
       try {
         checkProjectCatalog(input, repo.catalogs(a.workspaceId), old);
       } catch (e) {
@@ -525,6 +662,7 @@ export async function buildApp(options: {
     }),
   );
   registerProgressMaterials(app, repo, actor, mutate);
+  registerProjectFiles(app, repo, actor, mutate);
   app.get("/api/projects/:id/progress", (req) => {
     const a = actor(req),
       id = (req.params as { id: string }).id;
@@ -630,6 +768,21 @@ export async function buildApp(options: {
         );
       }
       for (const source of plan.sources) {
+        repo.db
+          .prepare(
+            "INSERT INTO project_redirects(workspace_id,source_id,target_id,created_at) VALUES(?,?,?,?) ON CONFLICT(workspace_id,source_id) DO UPDATE SET target_id=excluded.target_id",
+          )
+          .run(
+            a.workspaceId,
+            source.id,
+            plan.project.id,
+            new Date().toISOString(),
+          );
+        repo.db
+          .prepare(
+            "UPDATE project_redirects SET target_id=? WHERE workspace_id=? AND target_id=?",
+          )
+          .run(plan.project.id, a.workspaceId, source.id);
         repo.db
           .prepare(
             "UPDATE progress_materials SET project_id=? WHERE workspace_id=? AND project_id=?",
@@ -812,6 +965,181 @@ export async function buildApp(options: {
       return changes.map((change) => change.after);
     }),
   );
+  app.post("/api/tasks/:id/move", (req) =>
+    mutate(req, (actor) => {
+      const id = (req.params as { id: string }).id;
+      repo.get<Task>("tasks", actor.workspaceId, id);
+      const snapshot = repo.snapshot(actor.workspaceId);
+      let changes;
+      try {
+        changes = planTaskMove(
+          snapshot.projects,
+          snapshot.tasks,
+          id,
+          taskMoveInput.parse(req.body),
+        );
+      } catch (error) {
+        if (error instanceof TaskMoveConflict)
+          throw new HttpError(409, error.message, error.current);
+        throw error;
+      }
+      for (const { before, after } of changes) {
+        repo.putTask(actor.workspaceId, after);
+        repo.record(
+          actor,
+          "task",
+          "Moved task",
+          before,
+          after,
+          "Task placement",
+        );
+      }
+      return changes.map(({ after }) => after);
+    }),
+  );
+  app.post("/api/tasks/:id/lifecycle", (req) =>
+    mutate(req, (a) => {
+      const snapshot = repo.snapshot(a.workspaceId);
+      let changes;
+      const input = taskLifecycleInput.parse(req.body);
+      try {
+        changes = planTaskLifecycle(
+          snapshot.tasks,
+          (req.params as { id: string }).id,
+          input,
+          snapshot.revision,
+          a,
+          randomUUID(),
+        );
+      } catch (e) {
+        throw new HttpError(
+          e instanceof TaskLifecycleConflict ? 409 : 400,
+          (e as Error).message,
+        );
+      }
+      for (const { before, after } of changes) {
+        repo.putTask(a.workspaceId, after);
+        repo.record(
+          a,
+          "task",
+          input.action === "void" ? "作废任务" : "恢复已作废任务",
+          before,
+          after,
+          input.reason || "恢复误作废的任务",
+        );
+      }
+      repo.validate(a.workspaceId);
+      return changes.map((c) => c.after);
+    }),
+  );
+  function applyTaskSchedules(
+    actor: Actor,
+    changes: TaskScheduleChange[],
+    source: string,
+  ) {
+    const snapshot = repo.snapshot(actor.workspaceId);
+    let planned;
+    try {
+      planned = planTaskSchedules(snapshot.tasks, changes);
+    } catch (reason) {
+      if (reason instanceof TaskScheduleConflict)
+        throw new HttpError(409, reason.message, reason.current);
+      throw reason;
+    }
+    for (const { before, after } of planned) {
+      repo.putTask(actor.workspaceId, after, undefined, {
+        preserveAssignment: true,
+      });
+      repo.record(
+        actor,
+        "task",
+        "Updated task schedule",
+        before,
+        after,
+        source,
+      );
+    }
+    repo.validate(actor.workspaceId);
+    const confirmed = new Map(snapshot.tasks.map((task) => [task.id, task]));
+    for (const change of planned) confirmed.set(change.after.id, change.after);
+    return changes.map((change) => confirmed.get(change.id)!);
+  }
+  app.put("/api/tasks/:id/dependencies", (req) =>
+    mutate(req, (actor) => {
+      const input = taskDependencyReplaceInput.parse(req.body);
+      const id = (req.params as { id: string }).id;
+      const current = repo.get<Task>("tasks", actor.workspaceId, id);
+      let change;
+      try {
+        change = planTaskDependencies(
+          repo.snapshot(actor.workspaceId).tasks,
+          id,
+          input,
+        );
+      } catch (reason) {
+        if (reason instanceof TaskDependencyConflict)
+          throw new HttpError(409, reason.message, reason.current);
+        throw reason;
+      }
+      if (!change) return current;
+      repo.putTask(actor.workspaceId, change.after, undefined, {
+        preserveAssignment: true,
+      });
+      repo.validate(actor.workspaceId);
+      repo.record(
+        actor,
+        "task",
+        "Updated task dependencies",
+        change.before,
+        change.after,
+        "Dependency edit",
+      );
+      return change.after;
+    }),
+  );
+  app.patch("/api/tasks/:id/schedule", (req) =>
+    mutate(req, (actor) => {
+      const input = taskSchedulePatchInput.parse(req.body);
+      const id = (req.params as { id: string }).id;
+      const current = repo.get<Task>("tasks", actor.workspaceId, id);
+      return (
+        applyTaskSchedules(actor, [{ id, ...input }], "Schedule edit")[0] ??
+        current
+      );
+    }),
+  );
+  app.post("/api/tasks/schedule-batch", (req) =>
+    mutate(req, (actor) => {
+      const input = taskScheduleBatchInput.parse(req.body);
+      if (repo.snapshot(actor.workspaceId).revision !== input.revision)
+        throw new HttpError(409, "Workspace changed. Review again.");
+      return applyTaskSchedules(
+        actor,
+        input.changes,
+        `Schedule batch ${randomUUID()}`,
+      );
+    }),
+  );
+  app.post("/api/tasks/bulk-update", (req) =>
+    mutate(req, (actor) => {
+      const input = taskBulkUpdateInput.parse(req.body);
+      const snapshot = repo.snapshot(actor.workspaceId);
+      const result = planTaskBulkUpdate(
+        snapshot.tasks,
+        snapshot.members ?? [],
+        input,
+      );
+      const source = `Task bulk ${randomUUID()} · ${result.field}`;
+      for (const { before, after } of result.changes) {
+        repo.putTask(actor.workspaceId, after, undefined, {
+          preserveAssignment: true,
+        });
+        repo.record(actor, "task", "Bulk updated task", before, after, source);
+      }
+      repo.validate(actor.workspaceId);
+      return result.confirmed;
+    }),
+  );
   app.put("/api/tasks/:id", (req) =>
     mutate(req, (a) => {
       const input = taskInput
@@ -823,6 +1151,8 @@ export async function buildApp(options: {
         (req.params as { id: string }).id,
       );
       repo.checkVersion(old, input.version);
+      if (old.voided)
+        throw new HttpError(400, "任务已作废，请先恢复后再编辑。");
       if (input.projectId !== old.projectId)
         repo.get<Project>("projects", a.workspaceId, input.projectId);
       const children = repo
@@ -871,14 +1201,16 @@ export async function buildApp(options: {
     const ws = actor(req).workspaceId;
     return { ...repo.snapshot(ws), ...exportProgress(repo, ws) };
   });
-  app.post("/api/import", { bodyLimit: 64 * 1024 * 1024 }, (req) =>
+  app.post("/api/import", { bodyLimit: WORKSPACE_IMPORT_LIMIT }, (req) =>
     mutate(req, (a) => {
-      const input = snapshotImport
-        .extend({
-          revision: z.number().int().positive(),
-          confirmed: z.literal(true),
-        })
-        .parse(req.body);
+      const input = normalizeImportedTaskPlanning(
+        snapshotImport
+          .extend({
+            revision: z.number().int().positive(),
+            confirmed: z.literal(true),
+          })
+          .parse(req.body),
+      );
       const current = repo.snapshot(a.workspaceId);
       if (current.revision !== input.revision)
         throw new HttpError(
@@ -972,6 +1304,11 @@ export async function buildApp(options: {
         );
       if (!event.before || !["task", "project"].includes(event.kind))
         throw new HttpError(400, "This event cannot be restored");
+      if (event.before.voided || event.after?.voided)
+        throw new HttpError(
+          400,
+          "请在任务的已作废列表中恢复，确保同批子任务一起恢复。",
+        );
       const old = repo.get<Project | Task>(
         event.kind === "task" ? "tasks" : "projects",
         a.workspaceId,
@@ -983,6 +1320,8 @@ export async function buildApp(options: {
         version: old.version + 1,
         updatedAt: new Date().toISOString(),
       };
+      if (event.kind === "task")
+        restored.assigneeId = restored.assigneeId ?? null;
       if (
         event.kind === "task" &&
         !repo.db
@@ -1006,19 +1345,42 @@ export async function buildApp(options: {
   );
   app.post("/api/proposals", (req) =>
     mutate(req, (a) => {
-      const { source } = z
+      const { source, originalSource, temporaryMaterialIds } = z
         .object({
           source: z
             .string()
             .min(1)
             .max(20000)
             .refine((s) => !!s.trim(), "Enter source text"),
+          originalSource: captureSourceSchema.optional(),
+          temporaryMaterialIds: z.array(z.string().uuid()).max(6).optional(),
         })
         .strict()
         .parse(req.body);
+      for (const id of originalSource?.materialIds ?? [])
+        readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, id);
+      for (const id of temporaryMaterialIds ?? []) {
+        const file = readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, id);
+        if (file.metadata.uploadedById !== a.id)
+          throw new HttpError(403, "只能清理自己尚未归档的临时附件。");
+        if (originalSource?.materialIds.includes(id))
+          throw new HttpError(400, "不能同时保留并清理同一附件。");
+        if (
+          repo.db
+            .prepare(
+              "SELECT 1 FROM proposals,json_each(proposals.data,'$.originalSource.materialIds') AS source_file WHERE proposals.workspace_id=? AND source_file.value=? LIMIT 1",
+            )
+            .get(a.workspaceId, id)
+        )
+          throw new HttpError(
+            409,
+            "这个附件已作为原始资料保留，不能按临时图片清理；请保留原附件或重新粘贴图片。",
+          );
+      }
       const proposal: Proposal = {
         id: randomUUID(),
         source,
+        ...(originalSource ? { originalSource } : {}),
         sourceVersion: 1,
         status: "draft",
         createdAt: new Date().toISOString(),
@@ -1029,15 +1391,28 @@ export async function buildApp(options: {
       repo.db
         .prepare("INSERT INTO proposals(id,workspace_id,data) VALUES(?,?,?)")
         .run(proposal.id, a.workspaceId, JSON.stringify(proposal));
+      for (const id of temporaryMaterialIds ?? [])
+        repo.db
+          .prepare(
+            "DELETE FROM progress_materials WHERE id=? AND workspace_id=? AND project_id=?",
+          )
+          .run(id, a.workspaceId, CAPTURE_SCOPE);
       return proposal;
     }),
   );
   app.post("/api/proposals/:id/apply", (req) =>
     mutate(req, (a) => {
-      const { suggestions } = z
-        .object({ suggestions: z.array(suggestionInput).min(1).max(100) })
+      const input = z
+        .object({
+          suggestions: z.array(suggestionInput).max(100),
+          partial: z.literal(true).optional(),
+          skippedIds: z.array(z.string().min(1).max(100)).max(100).optional(),
+          updateMode: z.literal("append").optional(),
+          newProject: meetingNewProjectInput.optional(),
+        })
         .strict()
         .parse(req.body);
+      const { suggestions } = input;
       const row = repo.db
         .prepare("SELECT data FROM proposals WHERE workspace_id=? AND id=?")
         .get(a.workspaceId, (req.params as { id: string }).id);
@@ -1045,39 +1420,129 @@ export async function buildApp(options: {
       const proposal = JSON.parse(String(row.data)) as Proposal;
       if (proposal.status === "applied")
         throw new HttpError(409, "Suggestions have already been applied");
-      if (new Set(suggestions.map((s) => s.id)).size !== suggestions.length)
-        throw new HttpError(400, "Duplicate suggestion");
+      if (!input.partial && input.skippedIds?.length)
+        throw new HttpError(400, "Skipping requires partial completion");
+      try {
+        validateMeetingSelection(
+          proposal,
+          suggestions.map((s) => s.id),
+          input.skippedIds ?? [],
+        );
+      } catch (e) {
+        throw new HttpError(409, (e as Error).message);
+      }
       const saved: Suggestion[] = [];
+      const appliedResults: NonNullable<Proposal["appliedResults"]> = [];
+      const createdProjectIds: string[] = [];
+      if (input.newProject) {
+        if (!input.partial)
+          throw new HttpError(400, "新建项目需要明确确认对应的会议事项。");
+        try {
+          validateMeetingNewProjectSelection(input.newProject, suggestions);
+        } catch (e) {
+          throw new HttpError(400, (e as Error).message);
+        }
+        let fields;
+        try {
+          fields = meetingNewProjectFields(
+            input.newProject,
+            repo.snapshot(a.workspaceId).projects,
+            channelEntries(repo.catalogs(a.workspaceId)),
+            repo.catalogs(a.workspaceId),
+          );
+        } catch (e) {
+          throw new HttpError(409, (e as Error).message);
+        }
+        const created: Project = {
+          ...fields,
+          id: randomUUID(),
+          version: 1,
+          updatedAt: new Date().toISOString(),
+          reportedAt: null,
+          reportedBy: null,
+        };
+        repo.putProject(a.workspaceId, created);
+        createdProjectIds.push(created.id);
+        const original = proposal.suggestions.find(
+          (item) => item.id === input.newProject!.suggestionId,
+        )!;
+        repo.record(
+          a,
+          "project",
+          "Created project from meeting",
+          null,
+          created,
+          `Meeting source ${proposal.id} v1, line ${original.sourceLine}: ${original.sourceText}`,
+        );
+        for (const suggestion of suggestions)
+          suggestion.selectedProjectId = created.id;
+      }
       const updates = new Map<
         string,
-        { before: Project; titles: string[]; sources: string[] }
+        {
+          before: Project;
+          titles: string[];
+          sources: string[];
+          sourceTexts: string[];
+          attribution: Suggestion;
+        }
       >();
+      const members = repo.members(a.workspaceId);
+      const timeZone = repo.settings(a.workspaceId).timeZone;
+      const reportTasks = proposal.suggestions.some((item) => item.dailyReport)
+        ? repo.snapshot(a.workspaceId).tasks
+        : [];
       for (const s of suggestions) {
-        const original = proposal.suggestions.find((x) => x.id === s.id);
-        if (!original)
+        const found = proposal.suggestions.find((x) => x.id === s.id);
+        if (!found)
           throw new HttpError(400, "Suggestion does not match source");
+        const original = attributedReportSuggestion(found, proposal, timeZone);
         const p = repo.get<Project>(
           "projects",
           a.workspaceId,
           s.selectedProjectId,
         );
-        const source = `Meeting source ${proposal.id} v1, line ${original.sourceLine}: ${original.sourceText}`;
+        const source = `${original.dailyReport ? "Daily report" : "Meeting source"} ${proposal.id} v1, line ${original.sourceLine}: ${original.sourceText}`;
         if (s.action === "update") {
-          if (!s.overwriteConfirmed)
+          if (input.updateMode !== "append" && !s.overwriteConfirmed)
             throw new HttpError(
               400,
               "Confirm replacement of the latest project update",
             );
-          repo.checkVersion(p, s.projectVersion ?? 0);
-          const group = updates.get(p.id) ?? {
+          if (input.updateMode !== "append")
+            repo.checkVersion(p, s.projectVersion ?? 0);
+          const groupKey = reportProgressKey(p.id, original);
+          const group = updates.get(groupKey) ?? {
             before: p,
             titles: [],
             sources: [],
+            sourceTexts: [],
+            attribution: original,
           };
           group.titles.push(s.title);
           group.sources.push(source);
-          updates.set(p.id, group);
+          group.sourceTexts.push(original.sourceText);
+          updates.set(groupKey, group);
+          appliedResults.push({ suggestionId: s.id, projectId: p.id });
         } else {
+          const assignment = reportTaskAssignment(original, members);
+          const existing = matchingReportTask(
+            original,
+            reportTasks,
+            p.id,
+            s.title,
+            assignment,
+          );
+          if (existing) {
+            appliedResults.push({
+              suggestionId: s.id,
+              projectId: p.id,
+              taskId: existing.id,
+              taskDisposition: "linked",
+            });
+            saved.push(saveReviewedReportSuggestion(original, s));
+            continue;
+          }
           const t: Task = {
             id: randomUUID(),
             projectId: p.id,
@@ -1085,26 +1550,40 @@ export async function buildApp(options: {
             title: s.title,
             description: original.sourceText,
             status: s.status,
-            assignee: "Unassigned",
+            ...assignment,
             dueDate: null,
-            workWeek: null,
+            workWeek: reportWorkWeek(original, s.title),
             workDates: [],
             version: 1,
             updatedAt: new Date().toISOString(),
           };
           repo.putTask(a.workspaceId, t);
+          reportTasks.push(t);
           repo.record(a, "task", "Applied reviewed task", null, t, source);
+          appliedResults.push({
+            suggestionId: s.id,
+            projectId: p.id,
+            taskId: t.id,
+            ...(original.dailyReport
+              ? { taskDisposition: "created" as const }
+              : {}),
+          });
         }
-        saved.push({ ...original, ...s });
+        saved.push(saveReviewedReportSuggestion(original, s));
       }
       for (const group of updates.values()) {
+        const before = repo.get<Project>(
+          "projects",
+          a.workspaceId,
+          group.before.id,
+        );
         const next = {
-          ...group.before,
+          ...before,
           latestUpdate: group.titles.join("\n"),
-          version: group.before.version + 1,
+          version: before.version + 1,
           updatedAt: new Date().toISOString(),
           reportedAt: new Date().toISOString(),
-          reportedBy: a.name,
+          reportedBy: group.attribution.reporter || a.name,
         };
         if (next.latestUpdate.length > 4000)
           throw new HttpError(400, "Combined update exceeds 4000 characters");
@@ -1112,18 +1591,21 @@ export async function buildApp(options: {
         repo.record(
           a,
           "project",
-          "Applied reviewed update",
-          group.before,
+          group.attribution.dailyReport
+            ? "Added daily work log"
+            : input.updateMode === "append"
+              ? "Added meeting progress log"
+              : "Applied reviewed update",
+          before,
           next,
           group.sources.join("\n"),
+          reportProgressSource(proposal, group.attribution, group.sourceTexts),
         );
       }
-      const result = {
-        ...proposal,
-        status: "applied" as const,
-        suggestions: saved,
-        appliedAt: new Date().toISOString(),
-      };
+      const result = settleMeetingProposal(proposal, saved, input, {
+        appliedResults,
+        createdProjectIds,
+      });
       repo.db
         .prepare("UPDATE proposals SET data=? WHERE id=? AND workspace_id=?")
         .run(JSON.stringify(result), proposal.id, a.workspaceId);
@@ -1172,5 +1654,5 @@ export async function buildApp(options: {
       return document(req, reply);
     });
   }
-  return { app, repo };
+  return { app, repo, notifications };
 }

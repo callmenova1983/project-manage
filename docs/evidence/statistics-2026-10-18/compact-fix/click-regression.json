@@ -1,0 +1,198 @@
+{
+  "config": {
+    "argv": [
+      "/Users/yuanjiezheng/.nvm/versions/node/v22.20.0/bin/node",
+      "/Users/yuanjiezheng/develop/pm-system/node_modules/.bin/playwright",
+      "test",
+      "-c",
+      "playwright.multi-view.config.ts",
+      "statistics.spec.ts",
+      "--grep",
+      "all statistic counts|pending refresh"
+    ],
+    "configFile": "/Users/yuanjiezheng/develop/pm-system/playwright.multi-view.config.ts",
+    "rootDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/private/tmp/pm-statistics-click-20261018-b/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "filteredProjects": [
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "/private/tmp/pm-statistics-click-20261018-b/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "",
+        "testDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+        "snapshotDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+        "testIgnore": [],
+        "testMatch": "**/*.@(spec|test).?(c|m)[jt]s?(x)",
+        "timeout": 60000,
+        "use": {
+          "baseURL": "http://127.0.0.1:4197",
+          "headless": true,
+          "viewport": {
+            "width": 1536,
+            "height": 1000
+          },
+          "colorScheme": "light",
+          "trace": "retain-on-failure",
+          "screenshot": "only-on-failure",
+          "launchOptions": {
+            "executablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          }
+        },
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": ""
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/private/tmp/pm-statistics-click-20261018-b/report.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "default",
+    "updateSourceMethod": "patch",
+    "version": "1.64.0",
+    "workers": 1,
+    "webServer": {
+      "command": "node --import tsx scripts/multi-view-e2e-server.ts",
+      "url": "http://127.0.0.1:4197/api/health",
+      "reuseExistingServer": false,
+      "timeout": 30000
+    }
+  },
+  "suites": [
+    {
+      "title": "statistics.spec.ts",
+      "file": "statistics.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "all statistic counts including total activate on desktop and mobile",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1488,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-18T01:28:11.671Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ce6a6ad83d45104d2631-0a6860c360a6c1eb11fd",
+          "file": "statistics.spec.ts",
+          "line": 309,
+          "column": 1
+        },
+        {
+          "title": "pending refresh does not swallow task-total activation between pointerup and click",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 546,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-18T01:28:14.653Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ce6a6ad83d45104d2631-1121c7b68591f0d44962",
+          "file": "statistics.spec.ts",
+          "line": 375,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-18T01:28:10.323Z",
+    "duration": 5032.319,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

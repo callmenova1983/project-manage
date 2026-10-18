@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from "../locales";
 import { computed, ref, watch, onBeforeUnmount, nextTick } from "vue";
 import type { Catalogs } from "../../../../packages/domain/admin";
 import {
@@ -100,7 +101,7 @@ async function addContact() {
   text.value = text.value.trimEnd() + blankContactText;
   await nextTick();
   textarea.value?.focus();
-  const start = text.value.lastIndexOf("姓名：") + 3;
+  const start = text.value.lastIndexOf(t("姓名：")) + 3;
   textarea.value?.setSelectionRange(start, start);
 }
 async function save() {
@@ -116,7 +117,7 @@ async function save() {
     else next.channels[index] = channel;
     const saved = await store.operation(
       () => api.saveCatalogs(next),
-      "渠道资料已保存",
+      t("渠道资料已保存"),
     );
     selectedId.value = channel.id;
     added.value = null;
@@ -132,14 +133,18 @@ async function save() {
   <section class="channel-management">
     <div class="section-heading">
       <div>
-        <h2>渠道与项目信息</h2>
+        <h2>{{ t("渠道与项目信息") }}</h2>
         <p class="muted">
-          选中渠道，在一个编辑器中维护公司资料和联系人。未设置渠道的项目归入默认渠道。
+          {{
+            t(
+              "选中渠道，在一个编辑器中维护公司资料和联系人。未设置渠道的项目归入默认渠道。",
+            )
+          }}
         </p>
       </div>
     </div>
     <div class="channel-layout">
-      <nav class="channel-list" aria-label="选择渠道">
+      <nav class="channel-list" :aria-label="t('选择渠道')">
         <button
           v-for="channel in channelEntries(catalog)"
           :key="channel.id"
@@ -150,89 +155,97 @@ async function save() {
         >
           <strong>{{ channel.shortName }}</strong
           ><small
-            >{{ channel.name }}{{ channel.archived ? " · 已停用" : "" }}</small
+            >{{ channel.name
+            }}{{ channel.archived ? t(" · 已停用") : "" }}</small
           ><small
-            >{{ count(channel.id) }} 个项目 ·
-            {{ channel.contacts?.length ?? 0 }} 位联系人{{
-              channel.id === "company" ? " · 默认" : ""
-            }}</small
+            >{{ count(channel.id) }} {{ t("个项目 ·") }}
+            {{ channel.contacts?.length ?? 0 }} {{ t("位联系人")
+            }}{{ channel.id === "company" ? t(" · 默认") : "" }}</small
           >
         </button>
         <button type="button" class="text-button" @click="add">
-          ＋ 添加渠道
+          {{ t("＋ 添加渠道") }}
         </button>
       </nav>
       <form
         class="panel profile-editor"
-        aria-label="渠道资料编辑器"
+        :aria-label="t('渠道资料编辑器')"
         @submit.prevent="save"
       >
         <div class="section-heading">
           <h3>
-            {{ added ? "新渠道资料" : selected.shortName + " · 公司资料" }}
+            {{
+              added ? t("新渠道资料") : selected.shortName + t(" · 公司资料")
+            }}
           </h3>
-          <small class="muted">{{ dirty ? "有修改待保存" : "已保存" }}</small>
+          <small class="muted">{{
+            dirty ? t("有修改待保存") : t("已保存")
+          }}</small>
         </div>
         <p class="muted editor-help">
-          直接修改“字段名：内容”。每位联系人使用一个【联系人】段落；自由文字写在备注下。
+          {{
+            t(
+              "直接修改“字段名：内容”。每位联系人使用一个【联系人】段落；自由文字写在备注下。",
+            )
+          }}
         </p>
         <textarea
           ref="textarea"
           v-model="text"
           rows="20"
           maxlength="100000"
-          aria-label="公司与联系人资料"
+          :aria-label="t('公司与联系人资料')"
           :disabled="store.busy"
           :spellcheck="false"
         />
         <div class="profile-preview" aria-live="polite">
           <template v-if="preview"
             >{{ preview.name }} · {{ preview.shortName }} ·
-            {{ preview.contacts?.length ?? 0 }} 位联系人<span
-              v-if="preview.contacts?.find((c) => c.primary)"
-            >
-              · 主要联系人：{{
-                preview.contacts.find((c) => c.primary)!.name
-              }}</span
+            {{ preview.contacts?.length ?? 0 }} {{ t("位联系人")
+            }}<span v-if="preview.contacts?.find((c) => c.primary)">
+              {{ t("· 主要联系人：")
+              }}{{ preview.contacts.find((c) => c.primary)!.name }}</span
             ></template
-          ><template v-else>部分信息待填写，保存时会检查字段格式。</template>
+          ><template v-else>{{
+            t("部分信息待填写，保存时会检查字段格式。")
+          }}</template>
         </div>
-        <p v-if="error" class="error-box" role="alert">{{ error }}</p>
+        <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
         <div class="form-actions">
           <button type="button" :disabled="store.busy" @click="addContact">
-            插入联系人</button
+            {{ t("插入联系人") }}</button
           ><button
             type="button"
             :disabled="!dirty || store.busy"
             @click="reset"
           >
-            取消修改</button
+            {{ t("取消修改") }}</button
           ><button
             class="primary"
             type="submit"
             :disabled="!dirty || store.busy"
           >
-            保存资料
+            {{ t("保存资料") }}
           </button>
         </div>
       </form>
     </div>
     <div class="section-heading">
-      <h3>项目资料 · {{ rows.length }}</h3>
+      <h3>{{ t("项目资料 ·") }} {{ rows.length }}</h3>
     </div>
     <div class="project-filters">
       <input
         v-model="query"
-        placeholder="搜索项目全称、简称、客户或负责人"
-        aria-label="搜索项目资料"
-      /><select v-model="filter" aria-label="按渠道查看项目">
-        <option value="">全部渠道</option>
+        :placeholder="t('搜索项目全称、简称、客户或负责人')"
+        :aria-label="t('搜索项目资料')"
+      /><select v-model="filter" :aria-label="t('按渠道查看项目')">
+        <option value="">{{ t("全部渠道") }}</option>
         <option
           v-for="channel in channelEntries(catalog)"
           :key="channel.id"
           :value="channel.id"
         >
-          {{ channel.shortName }}{{ channel.archived ? "（已停用）" : "" }}
+          {{ channel.shortName }}{{ channel.archived ? t("（已停用）") : "" }}
         </option>
       </select>
     </div>
@@ -247,13 +260,13 @@ async function save() {
       <table>
         <thead>
           <tr>
-            <th>项目全称</th>
-            <th>简称</th>
-            <th>渠道</th>
-            <th>客户单位</th>
-            <th>负责人</th>
-            <th>阶段</th>
-            <th>资料</th>
+            <th>{{ t("项目全称") }}</th>
+            <th>{{ t("简称") }}</th>
+            <th>{{ t("渠道") }}</th>
+            <th>{{ t("客户单位") }}</th>
+            <th>{{ t("负责人") }}</th>
+            <th>{{ t("阶段") }}</th>
+            <th>{{ t("资料") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -263,26 +276,26 @@ async function save() {
                 project.name
               }}</RouterLink>
             </td>
-            <td>{{ project.shortName || "未设置" }}</td>
+            <td>{{ project.shortName || t("未设置") }}</td>
             <td>{{ channelName(project) }}</td>
-            <td>{{ project.client || "未设置" }}</td>
-            <td>{{ project.owner || "未分配" }}</td>
+            <td>{{ project.client || t("未设置") }}</td>
+            <td>{{ project.owner || t("未分配") }}</td>
             <td>{{ stageLabels[project.stage] }}</td>
             <td>
               <button
                 type="button"
                 class="text-button"
-                :aria-label="`编辑项目资料 ${project.name}`"
+                :aria-label="t('编辑项目资料 {p0}', { p0: project.name })"
                 @click="confirmDiscard() && (editing = project)"
               >
-                编辑
+                {{ t("编辑") }}
               </button>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
-    <p v-if="!rows.length" class="muted">暂无匹配项目。</p>
+    <p v-if="!rows.length" class="muted">{{ t("暂无匹配项目。") }}</p>
   </section>
 </template>
 <style scoped>

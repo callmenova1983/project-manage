@@ -36,6 +36,27 @@ const success = (content: unknown = { suggestions: [item] }) =>
     ],
   });
 describe("server-only Qwen configuration", () => {
+  it("offers scoped lookup only for large SDK project lists", () => {
+    const many = Array.from({ length: 26 }, (_, i) => ({
+      ...projects[0]!,
+      id: `project-${i}`,
+      name: `Project ${i}`,
+    }));
+    const sdk = makeRequest(source, many, { ...config, runtime: "sdk" });
+    expect(sdk.sdkProjectLookup).toHaveLength(26);
+    expect(JSON.parse(sdk.messages[1]!.content).projects).toEqual([]);
+    expect(
+      makeRequest(source, many.slice(0, 25), { ...config, runtime: "sdk" }),
+    ).not.toHaveProperty("sdkProjectLookup");
+    expect(
+      makeRequest(source, many, { ...config, runtime: "legacy" }),
+    ).not.toHaveProperty("sdkProjectLookup");
+  });
+  it("requires an explicit supported runtime and defaults to the rollback path", () => {
+    expect(config.runtime).toBe("legacy");
+    expect(readQwenConfig({ ...env, AI_RUNTIME: "sdk" })!.runtime).toBe("sdk");
+    expect(() => readQwenConfig({ ...env, AI_RUNTIME: "unknown" })).toThrow();
+  });
   it("defaults to rules and requires explicit enablement, budget, expiry and matching region", () => {
     expect(readQwenConfig({})).toBeUndefined();
     expect(readQwenConfig({ DASHSCOPE_API_KEY: "unused" })).toBeUndefined();
@@ -51,7 +72,10 @@ describe("server-only Qwen configuration", () => {
       expect(() => readQwenConfig({ ...env, [key]: "" })).toThrow();
     }
     expect(config.retries).toBe(0);
-    expect(config.model).toBe(QWEN_MODEL);
+    expect(config.model).toBe("qwen3.8-max");
+    expect(readQwenConfig({ ...env, QWEN_MODEL: "qwen3.8-flash" })!.model).toBe(
+      "qwen3.8-flash",
+    );
     expect(() =>
       readQwenConfig({ ...env, QWEN_MODEL: "another-model" }),
     ).toThrow();
@@ -226,6 +250,48 @@ describe("Qwen provider contract without network", () => {
         mock,
       ),
     ).rejects.toMatchObject({ code: "AI_CONNECTION" });
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+  it("does not reserve or send another call when retry delay exceeds the total time limit", async () => {
+    const mock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(null, { status: 503, headers: { "retry-after": "1" } }),
+      );
+    const reserve = vi.fn();
+    await expect(
+      generateQwen(
+        source,
+        projects,
+        { ...config, timeoutMs: 100, retries: 1 },
+        reserve,
+        mock,
+      ),
+    ).rejects.toMatchObject({ code: "AI_CONNECTION" });
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+  it("bounds response body reading within the same deadline and cancels the stream", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"choices":'));
+      },
+      cancel,
+    });
+    const mock = vi.fn<typeof fetch>().mockResolvedValue(new Response(stream));
+    const reserve = vi.fn();
+    await expect(
+      generateQwen(
+        source,
+        projects,
+        { ...config, timeoutMs: 20, retries: 1 },
+        reserve,
+        mock,
+      ),
+    ).rejects.toMatchObject({ code: "AI_CONNECTION" });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(reserve).toHaveBeenCalledTimes(1);
     expect(mock).toHaveBeenCalledTimes(1);
   });
   it.each([

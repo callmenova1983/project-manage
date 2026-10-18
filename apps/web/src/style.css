@@ -1,3 +1,8 @@
+/* Shared page edges across workspace routes and section tabs. */
+:root {
+  --page-gutter: 24px;
+}
+
 /* One semantic palette for the workspace, forms, activity and charts. */
 :root,
 :root[data-theme="dark"] {
@@ -549,9 +554,11 @@ small {
   min-width: 0;
 }
 .page {
-  padding: 32px 34px 40px;
-  max-width: 1800px;
-  margin: auto;
+  width: 100%;
+  min-width: 0;
+  padding: 16px var(--page-gutter) 32px;
+  max-width: none;
+  margin: 0;
 }
 .page-heading {
   display: flex;
@@ -1447,10 +1454,6 @@ blockquote {
 .success-panel .heading-actions {
   margin-top: 16px;
 }
-.settings-page {
-  max-width: 1000px;
-  margin-left: 0;
-}
 .settings-list {
   margin: 0;
 }
@@ -1612,10 +1615,6 @@ blockquote {
   pointer-events: auto;
 }
 @media (min-width: 1600px) {
-  .page {
-    padding-left: 44px;
-    padding-right: 44px;
-  }
   .project-table-head,
   .project-row {
     grid-template-columns:
@@ -1624,9 +1623,6 @@ blockquote {
   }
 }
 @media (max-width: 1250px) {
-  .page {
-    padding: 28px 24px;
-  }
   .metric {
     padding: 0 17px;
   }
@@ -1774,9 +1770,6 @@ blockquote {
   .breadcrumbs {
     font-size: 10px;
     gap: 10px;
-  }
-  .page {
-    padding: 24px 16px 30px;
   }
   .page-heading {
     flex-direction: column;
@@ -2171,15 +2164,32 @@ body {
 .horizontal-nav {
   display: flex;
   align-self: stretch;
-  gap: 28px;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
 }
 .horizontal-nav a {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
+  min-width: 72px;
+  min-height: 44px;
+  padding: 0 12px;
+  white-space: nowrap;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-drag: none;
   color: var(--muted);
   font-size: 14px;
   border-bottom: 2px solid transparent;
+}
+.horizontal-nav a > * {
+  pointer-events: none;
+}
+.horizontal-nav a:hover {
+  background: var(--surface-hover);
+  color: var(--text);
 }
 .horizontal-nav a.router-link-active {
   border-color: var(--accent);
@@ -2187,6 +2197,14 @@ body {
 }
 .topbar-right {
   margin-left: auto;
+}
+@media (min-width: 761px) and (max-width: 1200px) {
+  .topbar {
+    gap: 16px;
+  }
+  .topbar .sync-label {
+    display: none;
+  }
 }
 .menu-scrim {
   position: fixed;
@@ -2216,8 +2234,7 @@ body {
   display: inline;
 }
 .projects-page {
-  padding: 12px 24px 20px;
-  max-width: none;
+  padding-block: 12px 20px;
 }
 .projects-page .page-heading {
   margin-bottom: 8px;
@@ -2568,6 +2585,9 @@ body {
   }
 }
 @media (max-width: 760px) {
+  :root {
+    --page-gutter: 12px;
+  }
   .topbar {
     height: 48px;
     padding: 0 12px;
@@ -2590,7 +2610,7 @@ body {
     gap: 5px;
   }
   .projects-page {
-    padding: 12px;
+    padding-block: 12px;
   }
   .projects-page .page-heading {
     align-items: flex-start;
@@ -2866,7 +2886,11 @@ body {
     margin-left: 0;
   }
   .horizontal-nav {
-    gap: 16px;
+    gap: 2px;
+  }
+  .horizontal-nav a {
+    min-width: 64px;
+    padding-inline: 8px;
   }
   .topbar {
     gap: 18px;
@@ -2963,13 +2987,20 @@ body {
   }
   .topbar-brand {
     gap: 0;
+    min-width: 0;
   }
   .topbar .brand {
     gap: 6px;
     font-size: 14px;
+    min-width: 0;
+  }
+  .topbar .brand span {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .topbar-right {
     gap: 0;
+    flex-shrink: 0;
   }
   .project-row > .project-cell {
     align-items: flex-start;
@@ -3180,4 +3211,11 @@ body {
     flex-wrap: wrap;
     gap: 8px 16px;
   }
+}
+
+/* The AI assistant is an app-level companion, retaining the working page. */
+@media (min-width: 761px) {
+  .assistant-is-open .app-body > main,
+  .assistant-is-open .app-body > .app-footer,
+  .assistant-is-open .app-body > .demo-notice { margin-right: var(--assistant-dock-width, 460px); }
 }

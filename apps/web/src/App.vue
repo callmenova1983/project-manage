@@ -1,13 +1,19 @@
 <script setup lang="ts">
+import AssistantDock from "./components/AssistantDock.vue";
+import {
+  assistantPanel,
+  openAssistant,
+  collapseAssistant,
+} from "./composables/assistant-panel";
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import {
+  PhSparkle,
   PhRocketLaunch,
   PhSidebarSimple,
   PhSquaresFour,
   PhCheckSquare,
   PhClockCounterClockwise,
-  PhNotePencil,
   PhGearSix,
   PhSignOut,
   PhArrowClockwise,
@@ -15,14 +21,20 @@ import {
   PhSpinnerGap,
   PhX,
   PhUsers,
+  PhGlobeHemisphereEast,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "./stores/workspace";
 import { embeddedDemo } from "./services/mode";
-import { t, formatDate } from "./locales";
+import { t, locale, formatDate } from "./locales";
+import { romanizeName } from "./services/map-english";
 import PreferencesControls from "./components/PreferencesControls.vue";
+import FullscreenSwitch from "./components/FullscreenSwitch.vue";
 import ActivateAccount from "./components/ActivateAccount.vue";
 import TaskFeedback from "./components/TaskFeedback.vue";
+import NotificationCenter from "./components/NotificationCenter.vue";
+import TokenUsage from "./components/TokenUsage.vue";
 import { initialActivationToken } from "./services/activation";
+import { createClickThroughGuard } from "./services/click-through-guard";
 const activationToken = ref(initialActivationToken);
 const store = useWorkspace(),
   router = useRouter();
@@ -38,8 +50,8 @@ const nav = [
   { path: "/tasks", label: "Tasks", icon: PhCheckSquare },
   { path: "/directory", label: "Team", icon: PhUsers },
   { path: "/activity", label: "Activity", icon: PhClockCounterClockwise },
-  { path: "/meetings", label: "Meeting notes", icon: PhNotePencil },
-  { path: "/intake", label: "Quick intake", icon: PhNotePencil },
+  { path: "/project-map", label: "Project map", icon: PhGlobeHemisphereEast },
+  { path: "/intake", label: t("AI 工作助手"), icon: PhSparkle },
 ];
 watch(
   () => router.currentRoute.value.path,
@@ -64,13 +76,21 @@ function resumeSync() {
   if (store.mode === "server" && store.user && !store.busy && !document.hidden)
     void store.refresh(true);
 }
+const clickThroughGuard = createClickThroughGuard<Element>();
 function guardRepeatedActivation(event: MouseEvent) {
-  // A saved editor can disappear between clicks. Do not let the second click
-  // activate an unrelated button/link newly exposed at the same coordinates.
+  const target =
+    event.target instanceof Element
+      ? event.target.closest("button, a[href]")
+      : null;
   if (
-    event.detail > 1 &&
-    event.target instanceof Element &&
-    event.target.closest("button, a[href]")
+    target &&
+    clickThroughGuard({
+      target,
+      detail: event.detail,
+      timeStamp: event.timeStamp,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    })
   ) {
     event.preventDefault();
     event.stopPropagation();
@@ -254,7 +274,14 @@ function search() {
       </p>
     </form>
   </main>
-  <div v-else class="app-shell" :class="{ 'sidebar-expanded': expanded }">
+  <div
+    v-else
+    class="app-shell"
+    :class="{
+      'sidebar-expanded': expanded,
+      'atlas-shell': router.currentRoute.value.path === '/project-map',
+    }"
+  >
     <button
       v-if="expanded"
       class="menu-scrim"
@@ -309,6 +336,11 @@ function search() {
       >
         <PhArrowClockwise :size="20" />{{ t("Refresh workspace") }}
       </button>
+      <FullscreenSwitch
+        labelled
+        class="mobile-fullscreen"
+        @change="expanded = false"
+      />
       <a v-if="embeddedDemo" class="nav-item" href="/projects"
         ><PhArrowRight :size="20" />{{ t("Open shared workspace") }}</a
       >
@@ -321,7 +353,10 @@ function search() {
         <PhSignOut :size="20" />{{ t("Sign out") }}
       </button>
     </aside>
-    <div class="app-body" :inert="expanded">
+    <div
+      class="app-body"
+      :inert="expanded || (assistantPanel.open && assistantPanel.mobile)"
+    >
       <header class="topbar">
         <div class="topbar-brand">
           <button
@@ -343,16 +378,35 @@ function search() {
         </div>
         <nav class="horizontal-nav" :aria-label="t('Workspace navigation')">
           <RouterLink
-            v-for="item in nav.slice(0, 4)"
+            v-for="item in nav.slice(0, 5)"
             :key="item.path"
             :to="item.path"
-            ><component :is="item.icon" :size="16" />{{
+            :draggable="false"
+            ><component :is="item.icon" :size="16" /><span>{{
               t(item.label)
-            }}</RouterLink
+            }}</span></RouterLink
           >
         </nav>
         <div class="topbar-right">
+          <button
+            type="button"
+            class="assistant-launch"
+            :class="{ active: assistantPanel.open }"
+            :aria-label="t('AI work assistant')"
+            aria-controls="global-ai-assistant"
+            :aria-expanded="assistantPanel.open"
+            @click="assistantPanel.open ? collapseAssistant() : openAssistant()"
+          >
+            <PhSparkle :size="18" /><span>{{ t("AI assistant") }}</span
+            ><i
+              v-if="assistantPanel.busy || assistantPanel.unread"
+              :class="{ working: assistantPanel.busy }"
+            />
+          </button>
+          <TokenUsage />
+          <NotificationCenter />
           <PreferencesControls />
+          <FullscreenSwitch class="desktop-fullscreen" />
           <span class="sync-label">{{
             t(
               store.mode === "local"
@@ -375,7 +429,10 @@ function search() {
             class="avatar small desktop-avatar"
             :aria-label="t('Workspace settings')"
             >{{
-              store.user.name
+              (locale === "en"
+                ? romanizeName(store.user.name)
+                : store.user.name
+              )
                 .split(" ")
                 .map((n) => n[0])
                 .slice(0, 2)
@@ -436,6 +493,9 @@ function search() {
         >
       </footer>
     </div>
+    <AssistantDock
+      :key="JSON.stringify([store.mode, store.user.workspaceId, store.user.id])"
+    />
     <div v-if="store.toast" role="status" class="toast">
       <PhCheckSquare :size="18" />{{ t(store.toast) }}
     </div>
@@ -443,15 +503,93 @@ function search() {
 </template>
 
 <style scoped>
+.assistant-launch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  position: relative;
+  padding: 6px 9px;
+  min-height: 34px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.assistant-launch.active {
+  background: var(--accent-bg);
+  border-color: var(--border);
+}
+.assistant-launch i {
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.assistant-launch i.working {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@media (min-width: 761px) and (max-width: 900px) {
+  .assistant-launch span {
+    display: none;
+  }
+  .assistant-launch {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 6px;
+  }
+}
+@media (max-width: 760px) {
+  .assistant-launch span {
+    display: none;
+  }
+  .assistant-launch {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 6px;
+  }
+}
+
+.atlas-shell {
+  --surface-subtle: #0b1726;
+  --surface: #101e2f;
+  --surface-raised: #15283a;
+  --border: #273d50;
+  --text: #edf4fa;
+  --muted: #a5b9ca;
+  --accent: #68ded3;
+  --accent-bg: #17363d;
+  --accent-border: #34726f;
+  background: #07121f;
+  color: var(--text);
+}
+.atlas-shell .app-footer {
+  display: none;
+}
+.atlas-shell .demo-notice {
+  background: #102237;
+  color: #b3c7d8;
+  border-color: #273d50;
+}
 .login-preferences {
   display: flex;
   justify-content: flex-end;
   margin-bottom: 8px;
 }
+.mobile-fullscreen {
+  display: none;
+}
 @media (max-width: 600px) {
   .desktop-refresh,
-  .desktop-avatar {
+  .desktop-avatar,
+  .desktop-fullscreen {
     display: none;
+  }
+  .mobile-fullscreen {
+    display: inline-flex;
   }
   .topbar {
     gap: 8px;

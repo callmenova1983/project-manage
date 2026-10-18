@@ -12,7 +12,9 @@ import ThemeSwitch from "./ThemeSwitch.vue";
       @change="setLocale(($event.target as HTMLSelectElement).value)"
     >
       <option value="en" lang="en">EN</option>
-      <option value="zh-CN" lang="zh-CN">中文</option>
+      <option value="zh-CN" :lang="locale === 'en' ? 'en' : 'zh-CN'">
+        {{ locale === "en" ? "Chinese" : t("中文") }}
+      </option>
     </select>
     <AccentSwitch />
     <ThemeSwitch />

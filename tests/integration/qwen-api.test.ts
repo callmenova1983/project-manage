@@ -6,7 +6,12 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { buildApp } from "../../apps/api/src/app.js";
 import { createUser } from "../../apps/api/src/auth.js";
 import { QWEN_MODEL, type QwenConfig } from "../../apps/api/src/ai/config.js";
-import type { Proposal, Snapshot } from "../../packages/domain/types.js";
+import {
+  taskInput,
+  type Task,
+  type Proposal,
+  type Snapshot,
+} from "../../packages/domain/types.js";
 let ctx: Awaited<ReturnType<typeof buildApp>>,
   dir: string,
   cookie: string,
@@ -240,7 +245,7 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
     expect(mock).toHaveBeenCalledTimes(1);
     await propose();
     await propose();
-    expect((await propose()).json().code).toBe("AI_BUDGET");
+    expect((await propose()).json().code).toBe("AI_BUDGET_EXHAUSTED");
     expect(mock).toHaveBeenCalledTimes(3);
     expect((await request("GET", "/api/ai/capabilities")).json().enabled).toBe(
       false,
@@ -299,6 +304,8 @@ it("records safe actual usage metadata and workspace settings can disable future
     outputTokens: 45,
     cost: null,
     attempts: 1,
+    meteredAttempts: 1,
+    callUsage: [{ attempt: 1, inputTokens: 120, outputTokens: 45 }],
   });
   expect(result.json()[0].durationMs).toBeGreaterThanOrEqual(0);
   expect(result.body).not.toContain(source);
@@ -355,7 +362,7 @@ describe("saved-task background review", () => {
       workWeek: null,
     });
     expect(response.statusCode).toBe(200);
-    return response.json();
+    return response.json<Task>();
   }
   function reviewReply() {
     return Response.json({
@@ -428,11 +435,8 @@ describe("saved-task background review", () => {
         "idempotency-key": randomUUID(),
       },
       payload: {
-        ...Object.fromEntries(
-          Object.entries(task).filter(
-            ([key]) => !["id", "updatedAt"].includes(key),
-          ),
-        ),
+        ...taskInput.strip().parse(task),
+        version: task.version,
         estimatedDate: "2026-10-31",
         reminderAt: "2026-10-29T09:00:00+08:00",
       },
@@ -442,6 +446,7 @@ describe("saved-task background review", () => {
       dueDate: null,
       estimatedDate: "2026-10-31",
       reminderAt: "2026-10-29T09:00:00+08:00",
+      sortOrder: task.sortOrder,
     });
   });
   it("keeps original text when AI fails and rejects stale versions before calling the provider", async () => {
@@ -528,7 +533,7 @@ it("counts failed attempts toward exhaustion without inventing a provider log fo
   mock.mockImplementation(async () => Response.json({}, { status: 503 }));
   for (let i = 0; i < 3; i++)
     expect((await propose()).json().code).toBe("AI_PROVIDER");
-  expect((await propose()).json().code).toBe("AI_BUDGET");
+  expect((await propose()).json().code).toBe("AI_BUDGET_EXHAUSTED");
   expect(mock).toHaveBeenCalledTimes(3);
   expect((await request("GET", "/api/admin/model")).json()).toMatchObject({
     credentialAvailable: true,
@@ -538,6 +543,7 @@ it("counts failed attempts toward exhaustion without inventing a provider log fo
   expect((await request("GET", "/api/ai/capabilities")).json()).toMatchObject({
     enabled: false,
     remainingAttempts: 0,
+    availabilityReason: "exhausted",
   });
   const logs = (await request("GET", "/api/admin/model/logs")).json();
   expect(logs).toHaveLength(3);
@@ -576,8 +582,40 @@ it("reports an expired allowance consistently without sending a provider request
   expect((await request("GET", "/api/ai/capabilities")).json()).toMatchObject({
     enabled: false,
     remainingAttempts: 3,
+    availabilityReason: "expired",
   });
-  expect((await propose()).json().code).toBe("AI_BUDGET");
+  expect((await propose()).json().code).toBe("AI_BUDGET_EXPIRED");
   expect(mock).not.toHaveBeenCalled();
   expect((await request("GET", "/api/admin/model/logs")).json()).toEqual([]);
+});
+it("lets an administrator select a Qwen model while preserving credentials and request allowance", async () => {
+  ctx.repo.db
+    .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
+    .run();
+  const before = (await request("GET", "/api/admin/model")).json();
+  const saved = await ctx.app.inject({
+    method: "PUT",
+    url: "/api/admin/model",
+    headers: {
+      cookie,
+      origin,
+      "x-csrf-token": csrf,
+      "idempotency-key": randomUUID(),
+    },
+    payload: { ...before.settings, model: "qwen3.8-flash" },
+  });
+  expect(saved.statusCode, saved.body).toBe(200);
+  expect(saved.json()).toMatchObject({
+    approvedModel: "qwen3.8-flash",
+    remainingAttempts: before.remainingAttempts,
+    expiresAt: before.expiresAt,
+    runtimeEnabled: true,
+  });
+  expect(mock).not.toHaveBeenCalled();
+  expect((await request("GET", "/api/ai/capabilities")).json().model).toBe(
+    "qwen3.8-flash",
+  );
+  await propose();
+  const payload = JSON.parse(String(mock.mock.calls[0]![1]!.body));
+  expect(payload.model).toBe("qwen3.8-flash");
 });

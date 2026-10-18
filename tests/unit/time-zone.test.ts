@@ -5,6 +5,8 @@ import {
   zonedDay,
   zonedWeek,
   calendarWeek,
+  nextZonedDayBoundary,
+  calendarRefreshDelay,
 } from "../../packages/domain/time-zone";
 import {
   queryActivities,
@@ -23,6 +25,28 @@ import { plannedWork } from "../../apps/web/src/composables/planned-work";
 afterEach(() => {
   workspaceTimeZone.value = "UTC";
   locale.value = "en";
+});
+it.each([
+  ["2026-03-08T05:00:00Z", "America/New_York", "2026-03-09T04:00:00Z", 23],
+  ["2026-11-01T04:00:00Z", "America/New_York", "2026-11-02T05:00:00Z", 25],
+  ["2026-10-03T13:30:00Z", "Australia/Lord_Howe", "2026-10-04T13:00:00Z", 23.5],
+  ["2026-10-15T16:00:00Z", "Asia/Shanghai", "2026-10-16T16:00:00Z", 24],
+])("schedules actual next midnight for %s in %s", (start, zone, end, hours) => {
+  const date = new Date(String(start));
+  expect(nextZonedDayBoundary(date, String(zone))).toBe(
+    Date.parse(String(end)),
+  );
+  expect(
+    (nextZonedDayBoundary(date, String(zone)) - date.getTime()) / 3600000,
+  ).toBe(hours);
+  const before = new Date(Date.parse(String(end)) - 250);
+  expect(calendarRefreshDelay(before, String(zone))).toBe(260);
+  expect(
+    zonedDay(
+      new Date(before.getTime() + calendarRefreshDelay(before, String(zone))),
+      String(zone),
+    ),
+  ).not.toBe(zonedDay(before, String(zone)));
 });
 it.each([
   ["UTC", true],

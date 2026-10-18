@@ -1,4 +1,72 @@
+import {
+  planTaskBulkUpdate,
+  TaskBulkConflict,
+} from "../../../../packages/domain/task-bulk-update";
+import {
+  answerAssistantQuery,
+  assistantSessionInput,
+  type AssistantSession,
+} from "../../../../packages/domain/assistant";
+import { normalizeImportedTaskPlanning } from "../../../../packages/domain/snapshot-schedule";
+import {
+  normalizeTaskOrder,
+  nextTaskSortOrder,
+  planTaskMove,
+  TaskMoveConflict,
+} from "../../../../packages/domain/task-move";
+import {
+  taskDependencyReplaceInput,
+  planTaskDependencies,
+  TaskDependencyConflict,
+} from "../../../../packages/domain/task-dependencies";
+import {
+  taskSchedulePatchInput,
+  taskScheduleBatchInput,
+  planTaskSchedules,
+  TaskScheduleConflict,
+  type TaskScheduleChange,
+} from "../../../../packages/domain/task-schedule-write";
+import { retainTaskSchedule } from "../../../../packages/domain/task-schedule";
+import type { WecomConfiguration } from "../../../../packages/domain/directory";
+import {
+  defaultNotificationPreferences,
+  deriveNotifications,
+  notificationActionInput,
+  notificationFollowingInput,
+  notificationItemSchema,
+  notificationPreferencesInput,
+  type NotificationItem,
+  type NotificationPreferences,
+  type NotificationResponse,
+} from "../../../../packages/domain/notifications";
+import {
+  dailyLogInput,
+  planDailyLog,
+  planBulkProjectFill,
+  type DailyLogBatch,
+} from "../../../../packages/domain/daily-log";
+import {
+  validateMeetingSelection,
+  settleMeetingProposal,
+  meetingNewProjectFields,
+  validateMeetingNewProjectSelection,
+  type MeetingApplyOptions,
+} from "../../../../packages/domain/meeting-completion";
 import type { TaskReview } from "../../../../packages/domain/task-review";
+import {
+  attributedReportSuggestion,
+  matchingReportTask,
+  reportProgressKey,
+  reportProgressSource,
+  reportTaskAssignment,
+  reportWorkWeek,
+  saveReviewedReportSuggestion,
+} from "../../../../packages/domain/report-attribution";
+import { channelEntries } from "../../../../packages/domain/channels";
+import {
+  planTaskLifecycle,
+  TaskLifecycleConflict,
+} from "../../../../packages/domain/task-lifecycle";
 import {
   planTaskFieldCopy,
   TaskFieldCopyConflict,
@@ -23,6 +91,7 @@ import {
   adminUserInput,
   adminUserUpdate,
   modelSettingsInput,
+  modelAllowanceInput,
   checkCatalogs,
   checkProjectCatalog,
   importCatalogs,
@@ -72,6 +141,7 @@ import {
   type ProjectInput,
   type TaskInput,
   type Proposal,
+  type Suggestion,
   type Activity,
 } from "../../../../packages/domain/types";
 import {
@@ -95,20 +165,22 @@ const actor: Actor = {
 export function createLocalApi(): WorkspaceApi {
   let state: Snapshot & {
     intakes?: IntakeBatch[];
+    dailyLogs?: DailyLogBatch[];
+    assistantProposals?: Proposal[];
     administration?: {
       users: ManagedUser[];
       model: ModelSettings;
+      allowance?: { maxRequests: number; expiresAt: string };
       logs: ModelLog[];
       audit: AdminAudit[];
     };
   };
-  const proposals = new Map<string, Proposal>();
   const read = () => {
     const raw = localStorage.getItem(KEY);
     if (!raw) {
       state = {
         ...createSeed(),
-        schemaVersion: 2,
+        schemaVersion: 3,
         catalogs: structuredClone(defaultCatalogs),
       };
       localStorage.setItem(KEY, JSON.stringify(state));
@@ -117,7 +189,7 @@ export function createLocalApi(): WorkspaceApi {
         const data = JSON.parse(raw);
         const parsed = snapshotImport.parse(data);
         validateGraph(parsed.projects, parsed.tasks);
-        if (parsed.schemaVersion === 2 && !parsed.catalogs)
+        if (parsed.schemaVersion >= 2 && !parsed.catalogs)
           throw new Error("Missing catalog");
         validateCatalogReferences(
           parsed.projects,
@@ -126,7 +198,7 @@ export function createLocalApi(): WorkspaceApi {
         state = {
           ...data,
           ...parsed,
-          schemaVersion: 2,
+          schemaVersion: 3,
           catalogs: parsed.catalogs ?? structuredClone(defaultCatalogs),
         };
       } catch {
@@ -135,10 +207,16 @@ export function createLocalApi(): WorkspaceApi {
         );
       }
     }
+    state.tasks = normalizeTaskOrder(state.tasks);
     state.projectOrder = orderedProjectIds(state.projects, state.projectOrder);
     return structuredClone(state);
   };
   const persist = () => {
+    // Creation paths share task objects with audit/intake receipts. Assign the
+    // persisted order before serializing so an untouched receipt still matches.
+    normalizeTaskOrder(state.tasks).forEach((task, index) => {
+      state.tasks[index]!.sortOrder = task.sortOrder;
+    });
     state.revision++;
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
@@ -219,6 +297,12 @@ export function createLocalApi(): WorkspaceApi {
     );
     const old = state.projects.find((p) => p.id === id);
     if (id && !old) throw new ApiError("Project not found", 404);
+    if (
+      source !== "History restore" &&
+      data.location === undefined &&
+      old?.location !== undefined
+    )
+      data.location = old.location;
     if (old && old.version !== version)
       throw new ApiError(
         "This project changed in another tab. Review the latest version.",
@@ -256,6 +340,29 @@ export function createLocalApi(): WorkspaceApi {
     persist();
     return p;
   };
+  function applyTaskSchedules(changes: TaskScheduleChange[], source: string) {
+    let planned;
+    try {
+      planned = planTaskSchedules(state.tasks, changes);
+    } catch (reason) {
+      throw new ApiError(
+        (reason as Error).message,
+        reason instanceof TaskScheduleConflict ? 409 : 400,
+        reason instanceof TaskScheduleConflict ? reason.current : undefined,
+      );
+    }
+    const updates = new Map(
+      planned.map((change) => [change.after.id, change.after]),
+    );
+    const candidate = state.tasks.map((task) => updates.get(task.id) ?? task);
+    validateGraph(state.projects, candidate);
+    state.tasks = candidate;
+    for (const { before, after } of planned)
+      record("task", before, after, source, "Updated task schedule");
+    if (planned.length) persist();
+    const confirmed = new Map(state.tasks.map((task) => [task.id, task]));
+    return structuredClone(changes.map((change) => confirmed.get(change.id)!));
+  }
   const saveTask = async (
     data: TaskInput,
     id?: string,
@@ -266,6 +373,7 @@ export function createLocalApi(): WorkspaceApi {
     taskInput.parse(data);
     const old = state.tasks.find((t) => t.id === id);
     if (id && !old) throw new ApiError("Task not found", 404);
+    if (old?.voided) throw new ApiError("任务已作废，请先恢复后再编辑。");
     if (old && old.version !== version)
       throw new ApiError("This task changed in another tab.", 409, old);
     if (
@@ -283,15 +391,20 @@ export function createLocalApi(): WorkspaceApi {
     )
       throw new ApiError("Only standalone tasks can change project assignment");
     const t: Task = {
-      ...taskMember(data, administration().users, old),
+      ...retainTaskSchedule(taskMember(data, administration().users, old), old),
+      sortOrder:
+        old?.projectId === data.projectId && old.parentId === data.parentId
+          ? old.sortOrder
+          : nextTaskSortOrder(state.tasks, data.projectId, data.parentId),
       id: id ?? crypto.randomUUID(),
       version: (old?.version ?? 0) + 1,
       updatedAt: new Date().toISOString(),
     };
-    state.tasks = old
+    const candidateTasks = old
       ? state.tasks.map((x) => (x.id === id ? t : x))
       : [...state.tasks, t];
-    validateGraph(state.projects, state.tasks);
+    validateGraph(state.projects, candidateTasks);
+    state.tasks = candidateTasks;
     record(
       "task",
       old ?? null,
@@ -406,19 +519,317 @@ export function createLocalApi(): WorkspaceApi {
       settings: structuredClone(administration().model),
       credentialAvailable: false,
       credentialEditable: false,
+      allowanceEditable: true,
       runtimeEnabled: false,
       approvedRegion: null,
       approvedModel: null,
-      remainingAttempts: 0,
-      expiresAt: null,
+      maxRequests: administration().allowance?.maxRequests ?? null,
+      usedAttempts: 0,
+      remainingAttempts: administration().allowance?.maxRequests ?? 0,
+      expiresAt: administration().allowance?.expiresAt ?? null,
+    };
+  }
+  const notificationKey = `${KEY}-notifications:${actor.id}`;
+  function notificationState() {
+    const raw = localStorage.getItem(notificationKey);
+    if (!raw)
+      return {
+        items: [] as NotificationItem[],
+        preferences: { ...defaultNotificationPreferences },
+        followingIds: [] as string[],
+      };
+    try {
+      const data = JSON.parse(raw);
+      return {
+        items: notificationItemSchema.array().parse(data.items),
+        preferences: notificationPreferencesInput.parse(data.preferences),
+        followingIds: notificationFollowingInput.parse({
+          projectIds: data.followingIds,
+          mode: "replace",
+        }).projectIds,
+      };
+    } catch {
+      throw new ApiError(
+        "本地提醒数据无法读取，请先导出浏览器数据后重试。",
+        400,
+      );
+    }
+  }
+  function persistNotifications(value: ReturnType<typeof notificationState>) {
+    try {
+      localStorage.setItem(notificationKey, JSON.stringify(value));
+    } catch {
+      throw new ApiError("提醒未保存，浏览器存储不可用或空间不足。", 503);
+    }
+  }
+  function localNotifications(): NotificationResponse {
+    const snapshot = read();
+    const value = notificationState();
+    const now = new Date();
+    const asOf = now.toISOString();
+    const current = deriveNotifications(snapshot, actor.id, now, {
+      isAdmin: true,
+    });
+    const candidates = new Map(current.map((item) => [item.key, item]));
+    const existing = new Map(value.items.map((item) => [item.key, item]));
+    for (const item of value.items) {
+      if (!candidates.has(item.key) && !item.resolvedAt) {
+        item.resolvedAt = asOf;
+        item.updatedAt = asOf;
+        item.snoozedUntil = null;
+      }
+    }
+    for (const candidate of current) {
+      const old = existing.get(candidate.key);
+      if (old) {
+        const changed =
+          old.reason !== candidate.reason || old.title !== candidate.title;
+        const reopening = !!old.resolvedAt;
+        Object.assign(old, candidate, {
+          resolvedAt: null,
+          ...(changed || reopening ? { updatedAt: asOf } : {}),
+          ...(reopening ? { readAt: null, snoozedUntil: null } : {}),
+        });
+      } else {
+        value.items.push({
+          ...candidate,
+          id: crypto.randomUUID(),
+          createdAt: asOf,
+          updatedAt: asOf,
+          readAt: null,
+          resolvedAt: null,
+          snoozedUntil: null,
+        });
+      }
+    }
+    value.followingIds = value.followingIds.filter((id) =>
+      snapshot.projects.some((project) => project.id === id),
+    );
+    persistNotifications(value);
+    const items = [...value.items].sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt),
+    );
+    return {
+      items,
+      followingIds: value.followingIds,
+      preferences: value.preferences,
+      unreadCount: items.filter(
+        (item) =>
+          !item.resolvedAt &&
+          !item.readAt &&
+          (!item.snoozedUntil ||
+            Date.parse(item.snoozedUntil) <= now.getTime()),
+      ).length,
+      pendingCount: items.filter((item) => !item.resolvedAt && item.actionable)
+        .length,
+      timeZone: snapshot.settings?.timeZone ?? "UTC",
+      asOf,
+      deliveryStatus: {
+        configured: false,
+        bound: false,
+        reason: "本地演示仅保存站内提醒。",
+      },
     };
   }
   return {
+    async speechCapabilities() {
+      return {
+        enabled: false,
+        model: "qwen3-asr-flash",
+        maxSeconds: 120,
+        reason: "语音识别需要团队工作区；演示模式不会发送录音。",
+      };
+    },
+    async transcribeSpeech() {
+      throw new ApiError("云端语音识别需要团队工作区。", 503);
+    },
+    async assistantSession() {
+      read();
+      const value = localStorage.getItem(KEY + ":assistant");
+      const session = value
+        ? (JSON.parse(value) as AssistantSession)
+        : { version: 0, updatedAt: null, state: {} };
+      const proposal = session.state.proposal as Proposal | undefined;
+      const authoritative = state.assistantProposals?.find(
+        (p) => p.id === proposal?.id,
+      );
+      if (authoritative)
+        session.state.proposal = structuredClone(authoritative);
+      return session;
+    },
+    async saveAssistantSession(input) {
+      const parsed = assistantSessionInput.parse(input);
+      const current = await this.assistantSession();
+      if (current.version !== parsed.version)
+        throw new ApiError("另一端已更新对话。", 409);
+      const result = {
+        version: current.version + 1,
+        updatedAt: new Date().toISOString(),
+        state: parsed.state,
+      };
+      localStorage.setItem(KEY + ":assistant", JSON.stringify(result));
+      return result;
+    },
+    async queryAssistant(input) {
+      return answerAssistantQuery(input, await this.snapshot(), actor);
+    },
+    async notifications() {
+      return localNotifications();
+    },
+    async notificationAction(input) {
+      localNotifications();
+      const parsed = notificationActionInput.parse(input);
+      const value = notificationState();
+      const now = new Date();
+      if (
+        parsed.action === "snooze" &&
+        (Date.parse(parsed.until!) <= now.getTime() ||
+          Date.parse(parsed.until!) > now.getTime() + 30 * 86400000)
+      )
+        throw new ApiError("稍后提醒时间应在未来30天内。", 400);
+      const selected = new Set(parsed.ids);
+      if (parsed.ids.some((id) => !value.items.some((item) => item.id === id)))
+        throw new ApiError("提醒已变化，请刷新后重试。", 404);
+      if (
+        parsed.action === "snooze" &&
+        value.items.some((item) => selected.has(item.id) && item.resolvedAt)
+      )
+        throw new ApiError("这条事项已处理，无需再次提醒。", 409);
+      for (const item of value.items) {
+        if (!selected.has(item.id)) continue;
+        if (parsed.action === "read") {
+          item.readAt = now.toISOString();
+          if (!item.actionable) item.resolvedAt = now.toISOString();
+        }
+        if (parsed.action === "unread") {
+          item.readAt = null;
+          if (!item.actionable) item.resolvedAt = null;
+        }
+        if (parsed.action === "snooze") {
+          item.snoozedUntil = new Date(parsed.until!).toISOString();
+          item.readAt = null;
+        }
+        if (parsed.action === "unsnooze") item.snoozedUntil = null;
+        item.updatedAt = now.toISOString();
+      }
+      persistNotifications(value);
+      return localNotifications();
+    },
+    async saveNotificationPreferences(input: NotificationPreferences) {
+      localNotifications();
+      const parsed = notificationPreferencesInput.parse(input);
+      const value = notificationState();
+      if (value.preferences.version !== parsed.version)
+        throw new ApiError("提醒偏好已在其他页面更新，请刷新后重试。", 409);
+      value.preferences = { ...parsed, version: parsed.version + 1 };
+      persistNotifications(value);
+      return localNotifications();
+    },
+    async saveNotificationFollowing(input) {
+      localNotifications();
+      const parsed = notificationFollowingInput.parse(input);
+      if (
+        parsed.projectIds.some(
+          (id) => !state.projects.some((project) => project.id === id),
+        )
+      )
+        throw new ApiError("关注项目已变化，请刷新后重试。", 400);
+      const value = notificationState();
+      value.followingIds =
+        parsed.mode === "merge"
+          ? [...new Set([...value.followingIds, ...parsed.projectIds])]
+          : parsed.projectIds;
+      persistNotifications(value);
+      return localNotifications();
+    },
+    async openNotification(id) {
+      const result = localNotifications();
+      const item = result.items.find((item) => item.id === id);
+      if (!item) throw new ApiError("提醒不存在或已不可访问。", 404);
+      if (item.taskId) {
+        const task = state.tasks.find((task) => task.id === item.taskId);
+        if (task)
+          return {
+            path: `/projects/${encodeURIComponent(task.projectId)}?task=${encodeURIComponent(task.id)}`,
+          };
+      }
+      if (
+        item.projectId &&
+        state.projects.some((project) => project.id === item.projectId)
+      )
+        return {
+          path: `/projects/${encodeURIComponent(item.projectId)}${item.kind === "project_update" ? "#progress-history" : ""}`,
+        };
+      throw new ApiError("原事项已不可访问，请查看活动记录。", 404);
+    },
+    async taskLifecycle(id, input) {
+      read();
+      let changes;
+      try {
+        changes = planTaskLifecycle(
+          state.tasks,
+          id,
+          input,
+          state.revision,
+          actor,
+          crypto.randomUUID(),
+        );
+      } catch (e) {
+        throw new ApiError(
+          (e as Error).message,
+          e instanceof TaskLifecycleConflict ? 409 : 400,
+        );
+      }
+      const replacements = new Map(changes.map((c) => [c.after.id, c.after]));
+      const candidateTasks = state.tasks.map(
+        (t) => replacements.get(t.id) ?? t,
+      );
+      validateGraph(state.projects, candidateTasks);
+      state.tasks = candidateTasks;
+      for (const { before, after } of changes)
+        record(
+          "task",
+          before,
+          after,
+          input.reason || "恢复误作废的任务",
+          input.action === "void" ? "作废任务" : "恢复已作废任务",
+        );
+      persist();
+      return structuredClone(changes.map((c) => c.after));
+    },
+    async moveTask(id, input) {
+      read();
+      if (!state.tasks.some((task) => task.id === id))
+        throw new ApiError("Task not found", 404);
+      let changes;
+      try {
+        changes = planTaskMove(state.projects, state.tasks, id, input);
+      } catch (error) {
+        throw new ApiError(
+          (error as Error).message,
+          error instanceof TaskMoveConflict ? 409 : 400,
+          error instanceof TaskMoveConflict ? error.current : undefined,
+        );
+      }
+      const updates = new Map(changes.map(({ after }) => [after.id, after]));
+      state.tasks = state.tasks.map((task) => updates.get(task.id) ?? task);
+      for (const { before, after } of changes)
+        record("task", before, after, "Task placement", "Moved task");
+      if (changes.length) persist();
+      return structuredClone(changes.map(({ after }) => after));
+    },
     async copyTaskField(input) {
       read();
       let changes;
       try {
         changes = planTaskFieldCopy(state.tasks, input);
+        changes = changes.map(({ before, after }) => ({
+          before,
+          after: {
+            ...after,
+            ...taskMember(after, administration().users, before),
+          },
+        }));
       } catch (e) {
         throw new ApiError(
           (e as Error).message,
@@ -458,8 +869,41 @@ export function createLocalApi(): WorkspaceApi {
         503,
       );
     },
+    async captureMaterial() {
+      throw new ApiError(
+        "File processing requires the server workspace. Your file was not sent.",
+        503,
+      );
+    },
+    async extractCaptureMaterial() {
+      throw new ApiError("附件识别需要团队工作区。", 503);
+    },
+    async classifyCaptureReferences() {
+      throw new ApiError("附件归档需要团队工作区。", 503);
+    },
+    async archiveCaptureReferences() {
+      throw new ApiError("附件归档需要团队工作区。", 503);
+    },
+    async analyzeCapture() {
+      throw new ApiError(
+        "Qwen is unavailable in the browser-only demo. No notes were sent.",
+        503,
+      );
+    },
     async progressMaterials() {
       return [];
+    },
+    async projectFiles() {
+      return [];
+    },
+    async uploadProjectFile() {
+      throw new ApiError(
+        "附件上传需要服务端工作区，本地演示不会上传文件。",
+        503,
+      );
+    },
+    async projectFileContent() {
+      throw new ApiError("附件预览需要服务端工作区。", 503);
     },
     async analyzeProgress() {
       throw new ApiError(
@@ -529,6 +973,20 @@ export function createLocalApi(): WorkspaceApi {
       const event = state.activities.find((a) => a.id === id);
       if (!event) throw new ApiError("History record not found", 404);
       return structuredClone(event);
+    },
+    async analyzeProjectLocation(id, version) {
+      read();
+      const project = state.projects.find((item) => item.id === id);
+      if (!project) throw new ApiError("Project not found", 404);
+      if (project.version !== version)
+        throw new ApiError("项目已更新，请刷新后重试。", 409, project);
+      const { inferProjectLocation } =
+        await import("../../../../packages/domain/project-location");
+      return {
+        ...inferProjectLocation(project),
+        provider: "rules",
+        model: null,
+      };
     },
     saveProject,
     async progressHistory(id) {
@@ -706,6 +1164,17 @@ export function createLocalApi(): WorkspaceApi {
         })),
       );
     },
+    async wecomConfiguration(): Promise<WecomConfiguration> {
+      return {
+        version: 0,
+        corpId: "",
+        secretConfigured: false,
+        source: "local",
+      };
+    },
+    async saveWecomConfiguration() {
+      throw new ApiError("请在服务器工作区保存企业微信配置。", 503);
+    },
     async wecomSyncState() {
       return { configured: false, lastSyncedAt: null, mode: "local" };
     },
@@ -740,6 +1209,83 @@ export function createLocalApi(): WorkspaceApi {
       throw new ApiError("AI review is unavailable in local demo mode.");
     },
     saveTask,
+    async saveTaskDependencies(id, raw) {
+      read();
+      const input = taskDependencyReplaceInput.parse(raw);
+      let change;
+      try {
+        change = planTaskDependencies(state.tasks, id, input);
+      } catch (reason) {
+        throw new ApiError(
+          (reason as Error).message,
+          reason instanceof TaskDependencyConflict ? 409 : 400,
+          reason instanceof TaskDependencyConflict ? reason.current : undefined,
+        );
+      }
+      if (!change)
+        return structuredClone(state.tasks.find((task) => task.id === id)!);
+      const candidate = state.tasks.map((task) =>
+        task.id === id ? change.after : task,
+      );
+      validateGraph(state.projects, candidate);
+      state.tasks = candidate;
+      record(
+        "task",
+        change.before,
+        change.after,
+        "Dependency edit",
+        "Updated task dependencies",
+      );
+      persist();
+      return structuredClone(change.after);
+    },
+    async saveTaskSchedule(id, raw) {
+      read();
+      const input = taskSchedulePatchInput.parse(raw);
+      const current = state.tasks.find((task) => task.id === id);
+      if (!current) throw new ApiError("Task not found", 404);
+      return (
+        applyTaskSchedules([{ id, ...input }], "Schedule edit")[0] ??
+        structuredClone(current)
+      );
+    },
+    async saveTaskScheduleBatch(raw) {
+      read();
+      const input = taskScheduleBatchInput.parse(raw);
+      if (state.revision !== input.revision)
+        throw new ApiError("Workspace changed. Review again.", 409);
+      return applyTaskSchedules(
+        input.changes,
+        `Schedule batch ${crypto.randomUUID()}`,
+      );
+    },
+    async bulkUpdateTasks(raw) {
+      read();
+      let result;
+      try {
+        result = planTaskBulkUpdate(state.tasks, administration().users, raw);
+      } catch (reason) {
+        throw new ApiError(
+          (reason as Error).message,
+          reason instanceof TaskBulkConflict ? 409 : 400,
+          undefined,
+          undefined,
+          undefined,
+          reason instanceof TaskBulkConflict ? reason.conflicts : undefined,
+        );
+      }
+      const updates = new Map(
+        result.changes.map((change) => [change.after.id, change.after]),
+      );
+      const candidate = state.tasks.map((task) => updates.get(task.id) ?? task);
+      validateGraph(state.projects, candidate);
+      state.tasks = candidate;
+      const source = `Task bulk ${crypto.randomUUID()} · ${result.field}`;
+      for (const { before, after } of result.changes)
+        record("task", before, after, source, "Bulk updated task");
+      if (result.changes.length) persist();
+      return structuredClone(result.confirmed);
+    },
     async confirmNoteDate(projectId, data) {
       read();
       const input = noteDateInput.parse(data);
@@ -787,8 +1333,9 @@ export function createLocalApi(): WorkspaceApi {
         version: 1,
         updatedAt: new Date().toISOString(),
       }));
-      state.tasks.push(...result);
-      validateGraph(state.projects, state.tasks);
+      const candidateTasks = [...state.tasks, ...result];
+      validateGraph(state.projects, candidateTasks);
+      state.tasks = candidateTasks;
       result.forEach((t) => record("task", null, t, "Text / TSV paste"));
       persist();
       return result;
@@ -804,7 +1351,7 @@ export function createLocalApi(): WorkspaceApi {
       read();
       if (state.revision !== revision)
         throw new ApiError("Workspace changed. Review again.", 409);
-      const parsed = snapshotImport.parse(data);
+      const parsed = normalizeImportedTaskPlanning(snapshotImport.parse(data));
       parsed.projects = parsed.projects.map((p) =>
         projectMembers(
           p,
@@ -828,7 +1375,7 @@ export function createLocalApi(): WorkspaceApi {
       state = {
         ...parsed,
         settings: state.settings ?? { ...defaultWorkspaceSettings },
-        schemaVersion: 2,
+        schemaVersion: 3,
         catalogs,
         revision: state.revision,
         activities: state.activities,
@@ -839,54 +1386,145 @@ export function createLocalApi(): WorkspaceApi {
       persist();
       return read();
     },
-    async propose(source) {
+    async propose(source, originalSource) {
       read();
       const p: Proposal = {
         id: crypto.randomUUID(),
         source,
+        ...(originalSource ? { originalSource } : {}),
         sourceVersion: 1,
         status: "draft",
         createdAt: new Date().toISOString(),
         suggestions: suggest(source, state.projects),
       };
-      proposals.set(p.id, p);
+      state.assistantProposals = [...(state.assistantProposals ?? []), p];
+      persist();
       return structuredClone(p);
     },
-    async applyProposal(proposal, suggestions: ReviewedSuggestion[]) {
+    async applyProposal(
+      proposal,
+      suggestions: ReviewedSuggestion[],
+      options: MeetingApplyOptions = {},
+    ) {
       read();
-      const original = proposals.get(proposal.id);
+      const original = state.assistantProposals?.find(
+        (p) => p.id === proposal.id,
+      );
       if (!original || original.status === "applied")
         throw new ApiError("Proposal is missing or already applied", 409);
+      if (!options.partial && options.skippedIds?.length)
+        throw new ApiError("Skipping requires partial completion");
+      try {
+        validateMeetingSelection(
+          original,
+          suggestions.map((s) => s.id),
+          options.skippedIds ?? [],
+        );
+      } catch (e) {
+        throw new ApiError((e as Error).message, 409);
+      }
       const copy = structuredClone(state);
+      const appliedResults: NonNullable<Proposal["appliedResults"]> = [];
+      const createdProjectIds: string[] = [];
       const updates = new Map<
         string,
-        { before: Project; titles: string[]; sources: string[] }
+        {
+          before: Project;
+          titles: string[];
+          sources: string[];
+          sourceTexts: string[];
+          attribution: Suggestion;
+        }
       >();
+      const timeZone = (state.settings ?? defaultWorkspaceSettings).timeZone;
       try {
+        suggestions = suggestions.map((item) => ({ ...item }));
+        if (options.newProject) {
+          if (!options.partial)
+            throw new ApiError("新建项目需要明确确认对应的会议事项。");
+          validateMeetingNewProjectSelection(options.newProject, suggestions);
+          const fields = meetingNewProjectFields(
+            options.newProject,
+            state.projects,
+            channelEntries(state.catalogs ?? defaultCatalogs),
+            state.catalogs ?? defaultCatalogs,
+          );
+          const created: Project = {
+            ...fields,
+            id: crypto.randomUUID(),
+            version: 1,
+            updatedAt: new Date().toISOString(),
+            reportedAt: null,
+            reportedBy: null,
+          };
+          state.projects.push(created);
+          createdProjectIds.push(created.id);
+          const source = original.suggestions.find(
+            (item) => item.id === options.newProject!.suggestionId,
+          )!;
+          record(
+            "project",
+            null,
+            created,
+            `Meeting source ${original.id} v1, line ${source.sourceLine}: ${source.sourceText}`,
+            "Created project from meeting",
+          );
+          for (const suggestion of suggestions)
+            suggestion.selectedProjectId = created.id;
+        }
         for (const s of suggestions) {
-          const source = original.suggestions.find((x) => x.id === s.id);
-          if (!source || !s.confirmed)
+          const found = original.suggestions.find((x) => x.id === s.id);
+          if (!found || !s.confirmed)
             throw new ApiError("Confirm every selected suggestion");
+          const source = attributedReportSuggestion(found, original, timeZone);
           const p = state.projects.find((x) => x.id === s.selectedProjectId);
           if (!p) throw new ApiError("Choose a project");
           if (s.action === "update") {
-            if (!s.overwriteConfirmed || p.version !== s.projectVersion)
+            if (
+              options.updateMode !== "append" &&
+              (!s.overwriteConfirmed || p.version !== s.projectVersion)
+            )
               throw new ApiError(
                 "Review and confirm the latest update",
                 409,
                 p,
               );
-            const group = updates.get(p.id) ?? {
+            const groupKey = reportProgressKey(p.id, source);
+            const group = updates.get(groupKey) ?? {
               before: p,
               titles: [],
               sources: [],
+              sourceTexts: [],
+              attribution: source,
             };
             group.titles.push(s.title);
             group.sources.push(
-              `Meeting source ${original.id} v1, line ${source.sourceLine}: ${source.sourceText}`,
+              `${source.dailyReport ? "Daily report" : "Meeting source"} ${original.id} v1, line ${source.sourceLine}: ${source.sourceText}`,
             );
-            updates.set(p.id, group);
+            group.sourceTexts.push(source.sourceText);
+            updates.set(groupKey, group);
+            appliedResults.push({ suggestionId: s.id, projectId: p.id });
           } else {
+            const assignment = reportTaskAssignment(
+              source,
+              state.members ?? [],
+            );
+            const existing = matchingReportTask(
+              source,
+              state.tasks,
+              p.id,
+              s.title,
+              assignment,
+            );
+            if (existing) {
+              appliedResults.push({
+                suggestionId: s.id,
+                projectId: p.id,
+                taskId: existing.id,
+                taskDisposition: "linked",
+              });
+              continue;
+            }
             const t: Task = {
               ...taskInput.parse({
                 projectId: p.id,
@@ -894,9 +1532,9 @@ export function createLocalApi(): WorkspaceApi {
                 title: s.title,
                 description: source.sourceText,
                 status: s.status,
-                assignee: "Unassigned",
+                ...assignment,
                 dueDate: null,
-                workWeek: null,
+                workWeek: reportWorkWeek(source, s.title),
                 workDates: [],
               }),
               id: crypto.randomUUID(),
@@ -905,26 +1543,66 @@ export function createLocalApi(): WorkspaceApi {
             };
             state.tasks.push(t);
             record("task", null, t, source.sourceText);
+            appliedResults.push({
+              suggestionId: s.id,
+              projectId: p.id,
+              taskId: t.id,
+              ...(source.dailyReport
+                ? { taskDisposition: "created" as const }
+                : {}),
+            });
           }
         }
         for (const group of updates.values()) {
+          const before = state.projects.find((p) => p.id === group.before.id)!;
           const next = {
-            ...group.before,
+            ...before,
             latestUpdate: group.titles.join("\n"),
-            version: group.before.version + 1,
+            version: before.version + 1,
             updatedAt: new Date().toISOString(),
             reportedAt: new Date().toISOString(),
-            reportedBy: actor.name,
+            reportedBy: group.attribution.reporter || actor.name,
           };
           projectInput.strip().parse(next);
           state.projects = state.projects.map((p) =>
             p.id === next.id ? next : p,
           );
-          record("project", group.before, next, group.sources.join("\n"));
+          record(
+            "project",
+            before,
+            next,
+            group.sources.join("\n"),
+            group.attribution.dailyReport
+              ? "Added daily work log"
+              : options.updateMode === "append"
+                ? "Added meeting progress log"
+                : "Applied reviewed update",
+            reportProgressSource(
+              original,
+              group.attribution,
+              group.sourceTexts,
+            ),
+          );
         }
+        const saved = suggestions.map((s) =>
+          saveReviewedReportSuggestion(
+            attributedReportSuggestion(
+              original.suggestions.find((item) => item.id === s.id)!,
+              original,
+              timeZone,
+            ),
+            s,
+          ),
+        );
+        const result = settleMeetingProposal(original, saved, options, {
+          appliedResults,
+          createdProjectIds,
+        });
+        state.assistantProposals = (state.assistantProposals ?? []).map((p) =>
+          p.id === result.id ? result : p,
+        );
         persist();
-        original.status = "applied";
-        return structuredClone(original);
+        return structuredClone(result);
       } catch (e) {
         state = copy;
         throw e;
@@ -1051,6 +1729,35 @@ export function createLocalApi(): WorkspaceApi {
     async saveModelCredential() {
       throw new ApiError("API keys cannot be saved in the browser demo.");
     },
+    async saveModelAllowance(input) {
+      read();
+      const next = modelAllowanceInput.parse(input),
+        admin = administration();
+      if (next.version !== admin.model.version)
+        throw new ApiError(
+          "Model settings changed. Reload before saving.",
+          409,
+        );
+      admin.allowance = {
+        maxRequests: next.maxRequests,
+        expiresAt: new Date(next.expiresAt).toISOString(),
+      };
+      admin.model.version++;
+      auditAdmin("Simulated model allowance update", actor.workspaceId);
+      persist();
+      return modelState();
+    },
+    async modelUsage() {
+      return {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        measuredRequests: 0,
+        unmeasuredRequests: 0,
+        pendingRequests: 0,
+        last: null,
+      };
+    },
     async modelLogs() {
       read();
       return structuredClone(administration().logs);
@@ -1058,6 +1765,84 @@ export function createLocalApi(): WorkspaceApi {
     async adminAudit() {
       read();
       return structuredClone(administration().audit);
+    },
+    async dailyLogs() {
+      read();
+      return structuredClone(state.dailyLogs ?? []);
+    },
+    async saveDailyLog(raw) {
+      read();
+      const input = dailyLogInput.parse(raw);
+      const previous = state.dailyLogs?.find((batch) =>
+        input.batchId
+          ? batch.id === input.batchId
+          : batch.source === input.source &&
+            batch.workDate === input.workDate &&
+            batch.reporter === input.reporter,
+      );
+      if (input.batchId && !previous) throw new ApiError("日志批次不存在。");
+      if (!input.batchId && previous) return structuredClone(previous);
+      const plan = planDailyLog(input, state, previous);
+      const backup = structuredClone(state);
+      try {
+        state.projects.push(...plan.created);
+        for (const project of plan.created)
+          record(
+            "project",
+            null,
+            project,
+            `Daily log ${plan.receipt.id}`,
+            "Created project from daily log",
+          );
+        for (const change of plan.changes) {
+          state.projects[
+            state.projects.findIndex((p) => p.id === change.after.id)
+          ] = change.after;
+          record(
+            "project",
+            change.before,
+            change.after,
+            `Daily work log ${plan.receipt.id}`,
+            "Added daily work log",
+            { text: input.source, materialIds: [], workDate: input.workDate },
+          );
+        }
+        state.dailyLogs = [
+          plan.receipt,
+          ...(state.dailyLogs ?? []).filter(
+            (batch) => batch.id !== plan.receipt.id,
+          ),
+        ];
+        persist();
+        return structuredClone(plan.receipt);
+      } catch (e) {
+        state = backup;
+        throw e;
+      }
+    },
+    async bulkFillProjects(input) {
+      read();
+      const changes = planBulkProjectFill(input, state);
+      const backup = structuredClone(state);
+      try {
+        for (const change of changes) {
+          state.projects[
+            state.projects.findIndex((p) => p.id === change.after.id)
+          ] = change.after;
+          record(
+            "project",
+            change.before,
+            change.after,
+            "Batch project details",
+            "Filled project details in batch",
+          );
+        }
+        persist();
+        return structuredClone(changes.map((change) => change.after));
+      } catch (e) {
+        state = backup;
+        throw e;
+      }
     },
     async intakeHistory() {
       read();
@@ -1077,9 +1862,11 @@ export function createLocalApi(): WorkspaceApi {
         Object.assign(p, projectMembers(p, administration().users));
       for (const t of batch.tasks)
         Object.assign(t, taskMember(t, administration().users));
-      state.projects.push(...batch.projects);
-      state.tasks.push(...batch.tasks);
-      validateGraph(state.projects, state.tasks);
+      const candidateProjects = [...state.projects, ...batch.projects];
+      const candidateTasks = [...state.tasks, ...batch.tasks];
+      validateGraph(candidateProjects, candidateTasks);
+      state.projects = candidateProjects;
+      state.tasks = candidateTasks;
       for (const p of batch.projects)
         record(
           "project",
@@ -1105,12 +1892,15 @@ export function createLocalApi(): WorkspaceApi {
       const batch = state.intakes?.find((b) => b.id === id);
       if (!batch) throw new ApiError("Intake not found");
       verifyIntakeUndo(batch, state);
-      state.projects = state.projects.filter(
+      const remainingProjects = state.projects.filter(
         (p) => !batch.projects.some((x) => x.id === p.id),
       );
-      state.tasks = state.tasks.filter(
+      const remainingTasks = state.tasks.filter(
         (t) => !batch.tasks.some((x) => x.id === t.id),
       );
+      validateGraph(remainingProjects, remainingTasks);
+      state.projects = remainingProjects;
+      state.tasks = remainingTasks;
       for (const p of batch.projects)
         record("project", p, null, `Intake undo · ${batch.id}`, "Undid intake");
       for (const task of batch.tasks)
@@ -1124,12 +1914,20 @@ export function createLocalApi(): WorkspaceApi {
       read();
       const a = state.activities.find((x) => x.id === id);
       if (!a?.before) throw new ApiError("No restorable version");
+      if (
+        ("voided" in a.before && a.before.voided) ||
+        (a.after && "voided" in a.after && a.after.voided)
+      )
+        throw new ApiError(
+          "请在任务的已作废列表中恢复，确保同批子任务一起恢复。",
+        );
       if (a.source === "Project merge")
         throw new ApiError(
           "Project merges cannot be restored as a single record.",
         );
       const taskBefore =
         a.kind === "task" ? taskInput.strip().parse(a.before) : null;
+      if (taskBefore) taskBefore.assigneeId = taskBefore.assigneeId ?? null;
       if (
         taskBefore &&
         !state.projects.some((p) => p.id === taskBefore.projectId)

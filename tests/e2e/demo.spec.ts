@@ -149,14 +149,16 @@ for (const width of [1536, 390, 375]) {
       await navigate(page, "Meeting notes");
       await expect(page).toHaveURL(/\/demo\/meetings$/);
       await expect(page.getByLabel("Review method")).toHaveCount(0);
-      await expect(page.getByText(/not model-generated/)).toBeVisible();
+      await expect(page.locator(".meeting-conversation textarea")).toHaveCount(
+        1,
+      );
       await page
         .getByLabel("Meeting notes", { exact: true })
         .fill("Atlas: check the synthetic demo recording");
-      await page
-        .getByRole("button", { name: "Review suggestions", exact: true })
-        .click();
-      await expect(page.locator(".suggestion-card")).toHaveCount(1);
+      await page.getByRole("button", { name: "完成", exact: true }).click();
+      await expect(
+        page.getByText("已完成：新增 1 项任务。", { exact: true }),
+      ).toBeVisible();
       expect(apiRequests).toEqual([]);
       expect(errors).toEqual([]);
       expect(

@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "purpose": "人员安排板块功能重规划的本地业务数据只读基线；仅包含汇总，不包含原始个人或业务内容。",
+  "collected_at_utc": "2026-10-17T13:50:30+00:00",
+  "collected_at_asia_shanghai": "2026-10-17T21:50:30+08:00",
+  "business_date_used_for_overdue": "2026-10-17",
+  "database_relative_path": "data/project-manage.sqlite",
+  "workspace_scope": {
+    "workspace_count": 1,
+    "revision": 148,
+    "time_zone": "UTC",
+    "selection": "Only workspace present in this database; workspace ID and account identity are deliberately omitted."
+  },
+  "read_method": {
+    "connection": "Python sqlite3 URI mode=ro; PRAGMA query_only=ON; BEGIN read transaction; no Repository constructor, migrations, writes, or write APIs.",
+    "read_columns": [
+      "workspaces: id,revision,time_zone",
+      "users: id,status",
+      "projects/tasks/activities/workspace_directory/daily_logs: data within workspace",
+      "project_members: aggregate counts within workspace"
+    ],
+    "processing": "JSON records were parsed in process; only explicitly constructed aggregate output is retained. No names, account IDs, email addresses, task/project titles, log bodies, credentials, tokens, or password hashes are written to this evidence file.",
+    "leaf_definition_source": "packages/domain/task-view.ts:43-59",
+    "assignee_definition_source": "packages/domain/task-field-copy.ts:25-32",
+    "week_filter_source": "packages/domain/task-view.ts:83-88",
+    "risk_definition_source": "packages/domain/task-view.ts:35-40"
+  },
+  "field_definitions": {
+    "stored_tasks": "All task rows in the selected workspace before parent/voided exclusions.",
+    "parent_tasks": "Task ID referenced by any stored task.parentId; detect parents before any scope/status filter.",
+    "effective_leaf_tasks": "Tasks that are not voided and whose IDs are not in the complete parent-ID set.",
+    "open": "Effective leaf status is not done.",
+    "unassigned": "No assigneeId and trimmed lower-case assignee is empty or one of unassigned, 未分配, 待补, 未指定.",
+    "text_assignee_only": "No assigneeId, with a nonempty non-sentinel responsibility text; this is not confirmed natural-person identity.",
+    "with_assignee_id": "A stored account identity reference; existing model expects a workspace member account ID, not employee ID.",
+    "with_work_dates": "A nonempty workDates array, counting each task once even when it has several dates.",
+    "work_week_without_dates": "A nonempty workWeek and empty/missing workDates.",
+    "without_work_plan_regardless_of_status": "Neither workWeek nor any workDates, including already-completed tasks.",
+    "unplanned_open": "Open task without workWeek or any workDates; corresponds to taskIsUnplanned.",
+    "week_scope": "Effective leaves whose workWeek is exactly 2026-10-12. This excludes all tasks with no workWeek.",
+    "overdue_open": "Open leaf with explicit dueDate earlier than 2026-10-17. Estimated/schedule/work dates do not substitute for dueDate.",
+    "project_members": "Automatically recorded project editors under the current API, not an authoritative project staffing roster.",
+    "exact_unique_name_candidate": "Text exactly matches one employee name; only a review candidate, not an identity assertion or automatic link."
+  },
+  "counts": {
+    "task_population": {
+      "stored_tasks": 115,
+      "parent_tasks": 1,
+      "voided_tasks": 1,
+      "parent_and_voided_overlap": 0,
+      "effective_leaf_tasks": 113,
+      "reconciliation": "115 stored - 1 parent - 1 voided + 0 overlap = 113 effective leaves"
+    },
+    "all_effective_leaves": {
+      "total": 113,
+      "by_status": {
+        "todo": 77,
+        "done": 29,
+        "blocked": 6,
+        "in_progress": 1
+      },
+      "with_assignee_id": 0,
+      "with_valid_account_assignee_id": 0,
+      "text_assignee_only": 10,
+      "unassigned": 103,
+      "with_work_week": 10,
+      "with_work_dates": 3,
+      "work_week_without_dates": 7,
+      "without_work_plan_regardless_of_status": 103,
+      "unplanned_open": 78,
+      "with_due_date": 6,
+      "with_estimated_date": 0,
+      "with_schedule_range": 0,
+      "with_dependencies": 0,
+      "with_reminder_at": 0,
+      "milestone": 0,
+      "overdue_open_as_of_business_date": 1
+    },
+    "open_effective_leaves": {
+      "total": 84,
+      "by_status": {
+        "todo": 77,
+        "blocked": 6,
+        "in_progress": 1
+      },
+      "with_assignee_id": 0,
+      "with_valid_account_assignee_id": 0,
+      "text_assignee_only": 6,
+      "unassigned": 78,
+      "with_work_week": 6,
+      "with_work_dates": 1,
+      "work_week_without_dates": 5,
+      "without_work_plan_regardless_of_status": 78,
+      "unplanned_open": 78,
+      "with_due_date": 4,
+      "with_estimated_date": 0,
+      "with_schedule_range": 0,
+      "with_dependencies": 0,
+      "with_reminder_at": 0,
+      "milestone": 0,
+      "overdue_open_as_of_business_date": 1
+    },
+    "week_2026_10_12_effective_leaves": {
+      "total": 10,
+      "by_status": {
+        "done": 4,
+        "todo": 5,
+        "blocked": 1
+      },
+      "with_assignee_id": 0,
+      "with_valid_account_assignee_id": 0,
+      "text_assignee_only": 2,
+      "unassigned": 8,
+      "with_work_week": 10,
+      "with_work_dates": 3,
+      "work_week_without_dates": 7,
+      "without_work_plan_regardless_of_status": 0,
+      "unplanned_open": 0,
+      "with_due_date": 3,
+      "with_estimated_date": 0,
+      "with_schedule_range": 0,
+      "with_dependencies": 0,
+      "with_reminder_at": 0,
+      "milestone": 0,
+      "overdue_open_as_of_business_date": 1
+    },
+    "week_2026_10_12_open_leaves": {
+      "total": 6,
+      "by_status": {
+        "todo": 5,
+        "blocked": 1
+      },
+      "with_assignee_id": 0,
+      "with_valid_account_assignee_id": 0,
+      "text_assignee_only": 1,
+      "unassigned": 5,
+      "with_work_week": 6,
+      "with_work_dates": 1,
+      "work_week_without_dates": 5,
+      "without_work_plan_regardless_of_status": 0,
+      "unplanned_open": 0,
+      "with_due_date": 2,
+      "with_estimated_date": 0,
+      "with_schedule_range": 0,
+      "with_dependencies": 0,
+      "with_reminder_at": 0,
+      "milestone": 0,
+      "overdue_open_as_of_business_date": 1
+    },
+    "projects": {
+      "total": 39,
+      "with_owner_id": 0,
+      "text_owner_only": 33,
+      "with_participant_ids": 0,
+      "with_latest_update": 32,
+      "with_reported_at": 24,
+      "with_reported_by": 3,
+      "intake_inbox": 0
+    },
+    "accounts_by_status": {
+      "active": 1
+    },
+    "directory": {
+      "departments": 5,
+      "employees": 17,
+      "active_employees": 17,
+      "with_linked_account": 1,
+      "with_valid_linked_account": 1,
+      "with_departments": 17,
+      "with_employee_number": 13,
+      "with_position": 17,
+      "with_wecom_identity": 0,
+      "last_synced_at": null
+    },
+    "identity_review_candidates": {
+      "text_task_rows": 10,
+      "distinct_text_task_groups": 2,
+      "text_task_rows_with_exact_unique_employee_name_candidate": 10,
+      "text_project_owner_rows": 33,
+      "text_project_owner_rows_with_exact_unique_employee_name_candidate": 31
+    },
+    "activities": {
+      "total": 272,
+      "with_actor_id": 112,
+      "by_kind": {
+        "task": 145,
+        "project": 126,
+        "import": 1
+      },
+      "distinct_dates": 5,
+      "earliest_date": "2026-10-12",
+      "latest_date": "2026-10-17",
+      "task_transitions_from_non_done_to_done_with_both_states": 10
+    },
+    "daily_logs": {
+      "batches": 0,
+      "rows": 0,
+      "pending_rows": 0,
+      "recorded_rows": 0
+    },
+    "project_editor_records": {
+      "rows": 37,
+      "distinct_users": 1,
+      "distinct_projects": 37,
+      "write_behavior_source": "apps/api/src/database.ts:376-421"
+    }
+  },
+  "open_backlog_overlap_across_all_time": {
+    "unassigned": 78,
+    "unplanned": 78,
+    "intersection": 73,
+    "union": 83,
+    "unassigned_only": 5,
+    "unplanned_only": 5,
+    "neither": 1,
+    "reconciliation": "78 unassigned + 78 unplanned - 73 both = 83 unique open tasks needing at least one of these two fields."
+  },
+  "screenshot_week_reconciliation": {
+    "source": "User-provided personnel arrangements screenshot; current week 2026-10-12 and UTC displayed.",
+    "screenshot_counts": {
+      "task_groups": 2,
+      "tasks": 10,
+      "open": 6,
+      "done": 4,
+      "blocked": 1,
+      "overdue": 1,
+      "unplanned_in_week_filter": 0,
+      "unassigned_tasks": 8,
+      "text_assignee_tasks": 2,
+      "with_work_dates": 3,
+      "week_without_specific_dates": 7
+    },
+    "database_counts_match_screenshot": true,
+    "open_week_detail": {
+      "tasks": 6,
+      "with_specific_work_dates": 1,
+      "week_without_specific_dates": 5
+    },
+    "interpretation": "The two rows are responsibility groups, not evidence of a two-person workforce. The seven day cells count task-date appearances, while week totals deduplicate task IDs."
+  },
+  "limitations_and_metric_overlaps": [
+    "This is the configured local SQLite database, not a separately verified production dataset. No authenticated API or browser state was used for this extraction.",
+    "The workspace stores UTC although the client context is Asia/Shanghai; this baseline preserves that setting and does not migrate dates.",
+    "All-time statistics and week-filtered statistics have different populations. A week filter requiring workWeek cannot expose tasks without any workWeek; therefore the screenshot unplanned=0 does not mean no backlog.",
+    "Unassigned and unplanned are overlapping flags, not mutually exclusive status buckets. Their sum must not be displayed as a unique task total.",
+    "Blocked and overdue can overlap each other and open/unassigned/unplanned; do not sum these flags into a total risk count without task-ID deduplication.",
+    "Done in the weekly view means currently done among tasks assigned to that work week, not tasks completed during that week.",
+    "Only 6 of 113 effective leaves have dueDate. The 1 overdue item reflects explicit deadlines only; absent deadlines mean unknown deadline risk.",
+    "Task counts and workDates do not measure hours, available capacity, utilization, effort, productivity, idle time, or overload.",
+    "Employee.active and account.status are separate facts. No task association on an unlinked employee must not be interpreted as zero work.",
+    "Text names, even exact unique employee-name matches, require explicit identity confirmation; they do not establish assigneeId or actor identity.",
+    "The 37 project_members rows all belong to one editing account. They describe current editing history and are not valid evidence of 37 staffed project memberships.",
+    "Daily-log schema currently stores a text reporter, not a stable reporter ID; the API returns only the latest 50 batches. This local database currently has zero daily-log batches.",
+    "Only 10 explicit non-done-to-done transitions were found compared with 29 currently done leaves. Imported/current statuses and incomplete audit history cannot support a comprehensive completion throughput series.",
+    "Synthetic performance fixtures in docs/evidence/people-domain-baseline-* are excluded from these business-data counts."
+  ]
+}

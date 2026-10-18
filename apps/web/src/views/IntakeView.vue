@@ -9,6 +9,14 @@ import {
   watch,
 } from "vue";
 import MappingTemplates from "../components/MappingTemplates.vue";
+import CaptureInput from "../components/CaptureInput.vue";
+import CaptureResults from "../components/CaptureResults.vue";
+import { intakeResults } from "../services/capture-results";
+import PersonPicker from "../components/PersonPicker.vue";
+import ChannelResolve from "../components/ChannelResolve.vue";
+import { catalogLabel, stageColors } from "../composables/catalogs";
+import { channelEntries } from "../../../../packages/domain/channels";
+import type { CaptureSource } from "../../../../packages/domain/capture";
 import {
   groupIntakeCandidates,
   needsIntakeDecision,
@@ -42,12 +50,21 @@ import { readIntakeFile } from "../services/intake-files";
 import { useUnsaved } from "../composables/unsaved";
 import { useIntakeDraft } from "../composables/intake-draft";
 import { intakeDraftKey } from "../services/intake-drafts";
-const props = defineProps<{ embedded?: boolean }>();
-const emit = defineEmits<{ close: [] }>();
+const props = defineProps<{
+  embedded?: boolean;
+  initialSource?: string;
+  autoReview?: boolean;
+  originalSource?: CaptureSource;
+  compactReview?: boolean;
+  conversational?: boolean;
+}>();
+const expandedRow = ref("");
+const capture = ref<InstanceType<typeof CaptureInput>>();
+const emit = defineEmits<{ close: []; completed: [IntakeBatch] }>();
 const panel = ref<HTMLElement | null>(null);
 const store = useWorkspace();
 const step = ref<"source" | "review" | "done">("source"),
-  text = ref(""),
+  text = ref(props.initialSource ?? ""),
   sources = ref<IntakeSource[]>([]),
   sheetIndex = ref(0),
   mapping = ref<IntakeField[]>([]),
@@ -71,15 +88,20 @@ const askDiscard = useUnsaved(dirty, () => {
       : "Discard unsaved changes?",
   );
 });
-const source = computed<IntakeSource>(
-  () =>
-    sources.value[sheetIndex.value] ?? {
-      kind: "text",
-      name: "Pasted text",
-      sheet: "",
-      text: text.value,
-    },
-);
+const source = computed<IntakeSource>(() => {
+  const value = sources.value[sheetIndex.value] ?? {
+    kind: "text",
+    name: "Pasted text",
+    sheet: "",
+    text: text.value,
+  };
+  return {
+    ...value,
+    ...(props.originalSource && !value.originalSource
+      ? { originalSource: props.originalSource }
+      : {}),
+  };
+});
 const draft = useIntakeDraft(intakeDraftKey(store.mode, store.user!), {
   step,
   text,
@@ -144,9 +166,31 @@ const newProjectCount = computed(
     ).size,
 );
 const taskCount = computed(() => selected.value.filter((c) => c.task).length);
+const missingProjectFields = computed(() =>
+  selected.value
+    .filter((c) => !c.targetProjectId)
+    .flatMap((c) => {
+      const missing = [
+        !c.project.name.trim() && t("项目名"),
+        !c.project.channelId && t("渠道"),
+        !c.project.stage && t("阶段"),
+      ].filter(Boolean);
+      return missing.length
+        ? [
+            t("{p0}：请确认{p1}", {
+              p0: c.project.name || t("第") + c.sourceRow + t("行"),
+              p1: missing.join("、"),
+            }),
+          ]
+        : [];
+    }),
+);
 const fieldLabels: Record<IntakeField, string> = {
   ignore: "Ignore column",
   project: "Project name",
+  channel: t("渠道"),
+  shortName: t("简称"),
+  aliases: t("别名"),
   client: "Client",
   owner: "Project owner",
   stage: "Stage",
@@ -156,8 +200,9 @@ const fieldLabels: Record<IntakeField, string> = {
   status: "Task status",
   description: "Description",
 };
-const example =
-  "项目：星河客户门户；客户：星河科技；负责人：林晓；阶段：实施中；任务：确认首页文案；截止日期：2026-10-20\n项目：星河客户门户；客户：星河科技；负责人：林晓；阶段：实施中；任务：整理验收清单";
+const example = t(
+  "项目：星河客户门户；客户：星河科技；负责人：林晓；阶段：实施中；任务：确认首页文案；截止日期：2026-10-20\n项目：星河客户门户；客户：星河科技；负责人：林晓；阶段：实施中；任务：整理验收清单",
+);
 function resetMapping() {
   mapping.value = detectColumns(source.value.rows?.[0] ?? []);
 }
@@ -192,6 +237,8 @@ function useExample() {
 async function preview(reviewOnly = false) {
   error.value = "";
   try {
+    if (capture.value?.hasFiles)
+      text.value = (await capture.value.resolveSource()).text;
     if (
       !sources.value.length &&
       /\t|,/.test(text.value.split(/\r?\n/)[0] ?? "")
@@ -236,7 +283,11 @@ async function preview(reviewOnly = false) {
         duplicate(c) ||
         needsIntakeDecision(c, false),
     );
-    if (!problems && !reviewOnly) {
+    if (
+      !problems &&
+      !missingProjectFields.value.length &&
+      (!reviewOnly || props.conversational)
+    ) {
       confirmed.value = true;
       await apply();
     }
@@ -301,7 +352,12 @@ async function apply() {
   error.value = "";
   try {
     const input = intakeInput.parse({
-      source: source.value,
+      source: {
+        ...source.value,
+        ...(!source.value.originalSource && props.originalSource
+          ? { originalSource: props.originalSource }
+          : {}),
+      },
       rows: selected.value.map((c) => ({
         sourceRow: c.sourceRow,
         sourcePart: c.sourcePart,
@@ -324,6 +380,7 @@ async function apply() {
     sources.value = [];
     draft.flush();
     await loadHistory();
+    emit("completed", result.value);
   } catch (e) {
     reviewMode.value = "all";
     error.value = (e as Error).message.startsWith("[")
@@ -367,6 +424,8 @@ function closePanel() {
 }
 onMounted(async () => {
   void loadHistory();
+  if (props.initialSource && props.autoReview && !draft.pending.value)
+    await preview(!props.conversational);
   if (props.embedded) {
     await nextTick();
     panel.value?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
@@ -378,13 +437,17 @@ onBeforeUnmount(() => controller?.abort());
   <section
     ref="panel"
     class="page intake-page"
-    :class="{ 'intake-embedded': embedded }"
-    :aria-label="t('Quick intake')"
+    :class="{
+      'intake-embedded': embedded,
+      'capture-review': compactReview,
+      'conversation-review': conversational,
+    }"
+    :aria-label="compactReview ? t('录入预览') : t('Quick intake')"
   >
-    <div class="intake-heading">
+    <div v-if="!compactReview" class="intake-heading">
       <div class="intake-heading-title">
         <h2>{{ t("Quick intake") }}</h2>
-        <span class="muted">{{ t("Paste text or upload a file") }}</span>
+        <span class="muted">{{ t("直接粘贴文字、截图、Excel 或 Word") }}</span>
       </div>
       <button
         v-if="embedded"
@@ -407,9 +470,11 @@ onBeforeUnmount(() => controller?.abort());
       <h2 id="draft-recovery-title">{{ t("Unsubmitted intake draft") }}</h2>
       <p>
         {{
-          t(
-            "This draft is kept in this browser tab for up to 24 hours. It has not been submitted to the workspace.",
-          )
+          compactReview
+            ? t("有一份未提交草稿，可继续编辑。")
+            : t(
+                "This draft is kept in this browser tab for up to 24 hours. It has not been submitted to the workspace.",
+              )
         }}
       </p>
       <template v-if="draft.recovery.value.kind === 'ready'">
@@ -422,7 +487,7 @@ onBeforeUnmount(() => controller?.abort());
             })
           }}
         </p>
-        <p class="muted">
+        <p v-if="!compactReview" class="muted">
           {{
             t(
               "Restore your source and edits, then review and confirm again. Only the selected worksheet is kept; reopen the file for other sheets.",
@@ -455,7 +520,11 @@ onBeforeUnmount(() => controller?.abort());
         )
       }}
     </p>
-    <p v-else-if="draft.status.value === 'saved'" class="muted" role="status">
+    <p
+      v-else-if="draft.status.value === 'saved' && !compactReview"
+      class="muted"
+      role="status"
+    >
       {{
         t(
           "Unsubmitted draft kept in this tab · up to 24 hours · review before saving to the workspace.",
@@ -477,21 +546,21 @@ onBeforeUnmount(() => controller?.abort());
           {{ t("Try a sample") }}
         </button>
       </div>
-      <label v-if="!sources.length"
-        >{{ t("Notes or pasted table")
-        }}<textarea
-          v-model="text"
-          rows="3"
-          maxlength="200000"
-          :placeholder="
-            t(
-              'Project: Customer portal; Client: Acme; Owner: Alex; Task: Review the brief; Due: 2026-10-20',
-            )
-          "
-        />
-      </label>
+      <CaptureInput
+        v-if="!sources.length"
+        ref="capture"
+        v-model="text"
+        :rows="3"
+        :label="t('Notes or pasted table')"
+        :maxlength="200000"
+        :placeholder="
+          t(
+            'Project: Customer portal; Client: Acme; Owner: Alex; Task: Review the brief; Due: 2026-10-20',
+          )
+        "
+      />
       <details class="intake-source-help">
-        <summary>{{ t("Input tips") }}</summary>
+        <summary>{{ t("录入提示") }}</summary>
         <p class="muted">
           {{
             t(
@@ -502,7 +571,9 @@ onBeforeUnmount(() => controller?.abort());
       </details>
       <div class="intake-source-tools">
         <label class="intake-upload button">
-          <PhUploadSimple :size="17" /><span>{{ t("Upload file") }}</span>
+          <PhUploadSimple :size="15" /><span>{{
+            t("打开表格文件（可选）")
+          }}</span>
           <input
             type="file"
             :aria-label="t('Upload file')"
@@ -514,7 +585,9 @@ onBeforeUnmount(() => controller?.abort());
             "
           />
         </label>
-        <span class="muted">{{ t("Or drop a file") }} · TXT / CSV / XLSX</span>
+        <span class="muted">{{
+          t("可直接粘贴；只有需要切换工作表时才打开文件")
+        }}</span>
       </div>
       <div v-if="reading" role="status">
         {{ t("Reading file…") }}
@@ -606,12 +679,21 @@ onBeforeUnmount(() => controller?.abort());
     </div>
     <form
       v-else-if="!draft.pending.value && step === 'review'"
-      @submit.prevent="apply"
+      @submit.prevent="
+        if (compactReview) confirmed = true;
+        apply();
+      "
     >
       <div class="intake-review-header">
         <div>
-          <h2>{{ t("{count} candidates", { count: candidates.length }) }}</h2>
-          <p class="muted">
+          <h2>
+            {{
+              compactReview
+                ? t("已整理 ") + candidates.length + t(" 项")
+                : t("{count} candidates", { count: candidates.length })
+            }}
+          </h2>
+          <p v-if="!compactReview" class="muted">
             {{
               t(
                 "Keep the rows you want. Existing project details will not be overwritten.",
@@ -630,7 +712,7 @@ onBeforeUnmount(() => controller?.abort());
           {{ t("Back to source") }}
         </button>
       </div>
-      <div class="review-options">
+      <div v-if="!compactReview || decisionCount" class="review-options">
         <label
           >{{ t("Review view")
           }}<select v-model="reviewMode" :aria-label="t('Review view')">
@@ -642,7 +724,7 @@ onBeforeUnmount(() => controller?.abort());
             </option>
           </select></label
         >
-        <p class="muted">
+        <p v-if="!compactReview" class="muted">
           {{
             t(
               "Filtering changes this view only. All selected rows are included; ambiguity and duplicate confirmations still apply.",
@@ -657,13 +739,146 @@ onBeforeUnmount(() => controller?.abort());
           )
         }}
       </p>
+      <div v-if="compactReview" class="capture-preview-scroll">
+        <table class="capture-preview" :aria-label="t('待创建的项目与任务')">
+          <thead>
+            <tr>
+              <th class="preview-check">{{ t("选中") }}</th>
+              <th>{{ t("项目") }}</th>
+              <th>{{ t("客户") }}</th>
+              <th>{{ t("渠道") }}</th>
+              <th>{{ t("项目负责人") }}</th>
+              <th>{{ t("阶段") }}</th>
+              <th>{{ t("任务") }}</th>
+              <th class="preview-more">{{ t("详情") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="c in candidates"
+              :key="c.id"
+              :class="{ excluded: !c.selected }"
+            >
+              <td class="preview-check">
+                <label class="preview-selection">
+                  <input
+                    v-model="c.selected"
+                    type="checkbox"
+                    :aria-label="t('选中 ') + (c.task?.title || c.project.name)"
+                  />
+                  <span class="preview-selection-text" aria-hidden="true">{{
+                    t("选中此项")
+                  }}</span>
+                </label>
+              </td>
+              <td :data-label="t('项目')">
+                <input
+                  v-if="!c.targetProjectId"
+                  v-model="c.project.name"
+                  :disabled="!c.selected"
+                  :aria-label="t('项目名称 第') + c.sourceRow + t('行')"
+                  maxlength="120"
+                /><span v-else>{{ c.project.name }}</span>
+              </td>
+              <td :data-label="t('客户')">
+                <input
+                  v-model="c.project.client"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  :aria-label="t('客户 第') + c.sourceRow + t('行')"
+                  maxlength="120"
+                  placeholder="—"
+                />
+              </td>
+              <td :data-label="t('渠道')">
+                <select
+                  v-model="c.project.channelId"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  :aria-label="t('渠道 第') + c.sourceRow + t('行')"
+                >
+                  <option value="" disabled>
+                    {{
+                      c.requestedChannel
+                        ? c.requestedChannel + t("（未登记）")
+                        : t("未识别，请选择渠道")
+                    }}
+                  </option>
+                  <option
+                    v-for="channel in channelEntries(catalogs).filter(
+                      (channel) => !channel.archived,
+                    )"
+                    :key="channel.id"
+                    :value="channel.id"
+                  >
+                    {{ channel.name }}
+                  </option>
+                </select>
+                <ChannelResolve
+                  v-if="!c.project.channelId && c.requestedChannel"
+                  :name="c.requestedChannel"
+                  @resolved="c.project.channelId = $event"
+                />
+              </td>
+              <td :data-label="t('项目负责人')">
+                <PersonPicker
+                  v-model="c.project.owner"
+                  :label="t('项目负责人 第') + c.sourceRow + t('行')"
+                  :project-id="c.targetProjectId || undefined"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  compact
+                />
+              </td>
+              <td :data-label="t('阶段')">
+                <select
+                  v-model="c.project.stage"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                  :aria-label="t('阶段 第') + c.sourceRow + t('行')"
+                  :style="stageColors(c.project.stage)"
+                >
+                  <option value="" disabled>
+                    {{ t("未识别，请选择阶段") }}
+                  </option>
+                  <option value="unclassified">{{ t("阶段待补") }}</option>
+                  <option v-for="s in activeStages" :key="s.id" :value="s.id">
+                    {{ catalogLabel("stages", s.id) }}
+                  </option>
+                </select>
+              </td>
+              <td :data-label="t('任务')">
+                <input
+                  v-if="c.task"
+                  v-model="c.task.title"
+                  :disabled="!c.selected"
+                  :aria-label="t('任务 第') + c.sourceRow + t('行')"
+                  maxlength="240"
+                /><span v-else class="muted">{{ t("仅新建项目") }}</span>
+              </td>
+              <td class="preview-details">
+                <button
+                  type="button"
+                  class="text-button"
+                  :class="{ amber: needsIntakeDecision(c, duplicate(c)) }"
+                  @click="expandedRow = expandedRow === c.id ? '' : c.id"
+                >
+                  {{
+                    needsIntakeDecision(c, duplicate(c))
+                      ? t("需确认")
+                      : expandedRow === c.id
+                        ? t("收起")
+                        : t("更多")
+                  }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <section
         v-for="group in reviewGroups"
         :key="group.id"
         class="intake-project-group"
         :aria-label="t('Source project: {name}', { name: group.name })"
       >
-        <h3>
+        <h3 v-if="!compactReview">
           {{ t("Source project: {name}", { name: group.name }) }}
           <span class="muted"
             >· {{ t("{count} rows", { count: group.rows.length }) }}</span
@@ -674,6 +889,7 @@ onBeforeUnmount(() => controller?.abort());
           :key="c.id"
           class="panel intake-candidate"
           :class="{ excluded: !c.selected }"
+          v-show="!compactReview || expandedRow === c.id"
         >
           <div class="section-heading">
             <label class="checkbox"
@@ -687,7 +903,9 @@ onBeforeUnmount(() => controller?.abort());
               c.task ? t("Project + task") : t("Project only")
             }}</span>
           </div>
-          <details :open="index === 0 || c.warnings.length > 0">
+          <details
+            :open="compactReview || index === 0 || c.warnings.length > 0"
+          >
             <summary>{{ t("Review details") }}</summary>
             <div v-if="c.matchEvidence?.length" class="intake-matches">
               <p class="muted">{{ t("Suggested project matches") }}</p>
@@ -771,11 +989,55 @@ onBeforeUnmount(() => controller?.abort());
                   maxlength="80"
               /></label>
               <label
+                >{{ t("渠道")
+                }}<select
+                  v-model="c.project.channelId"
+                  :disabled="!c.selected || !!c.targetProjectId"
+                >
+                  <option value="" disabled>
+                    {{ t("未识别，请选择渠道") }}
+                  </option>
+                  <option
+                    v-for="channel in channelEntries(catalogs).filter(
+                      (channel) => !channel.archived,
+                    )"
+                    :key="channel.id"
+                    :value="channel.id"
+                  >
+                    {{ channel.name }}
+                  </option>
+                </select></label
+              >
+              <label v-if="c.project.shortName"
+                >{{ t("简称")
+                }}<input
+                  v-model="c.project.shortName"
+                  maxlength="80"
+                  :disabled="!c.selected || !!c.targetProjectId"
+              /></label>
+              <label v-if="c.project.aliases.length"
+                >{{ t("别名")
+                }}<input
+                  :value="c.project.aliases.join('、')"
+                  @input="
+                    c.project.aliases = (
+                      $event.target as HTMLInputElement
+                    ).value
+                      .split(/[、，,|]/)
+                      .map((name) => name.trim())
+                      .filter(Boolean)
+                  "
+                  :disabled="!c.selected || !!c.targetProjectId"
+              /></label>
+              <label
                 >{{ t("Stage")
                 }}<select
                   v-model="c.project.stage"
                   :disabled="!c.selected || !!c.targetProjectId"
                 >
+                  <option value="" disabled>
+                    {{ t("未识别，请选择阶段") }}
+                  </option>
                   <option value="unclassified">
                     {{ stageLabels.unclassified }}
                   </option>
@@ -884,14 +1146,14 @@ onBeforeUnmount(() => controller?.abort());
       </section>
       <div class="panel intake-confirm">
         <h2>{{ t("Ready to create") }}</h2>
-        <p class="muted">
+        <p v-if="!compactReview" class="muted">
           {{
             t(
               "Missing details do not block saving. Unresolved work stays in Intake inbox; owners, dates and stages can be completed later. Review warnings once before confirming.",
             )
           }}
         </p>
-        <p>
+        <p v-if="!compactReview">
           {{
             t("{projects} new projects · {tasks} new tasks", {
               projects: newProjectCount,
@@ -899,7 +1161,7 @@ onBeforeUnmount(() => controller?.abort());
             })
           }}
         </p>
-        <label class="checkbox"
+        <label v-if="!compactReview" class="checkbox"
           ><input
             v-model="confirmed"
             type="checkbox"
@@ -920,8 +1182,9 @@ onBeforeUnmount(() => controller?.abort());
             class="primary"
             type="submit"
             :disabled="
-              !confirmed ||
+              (!compactReview && !confirmed) ||
               !selected.length ||
+              !!missingProjectFields.length ||
               store.busy ||
               selected.some(
                 (c) =>
@@ -932,9 +1195,22 @@ onBeforeUnmount(() => controller?.abort());
               )
             "
           >
-            {{ store.busy ? t("Saving…") : t("Create confirmed items") }}
+            {{
+              store.busy
+                ? t("Saving…")
+                : compactReview
+                  ? t("确认创建 ") +
+                    newProjectCount +
+                    t(" 个项目 · ") +
+                    taskCount +
+                    t(" 个任务")
+                  : t("Create confirmed items")
+            }}
           </button>
         </div>
+        <p v-if="missingProjectFields.length" role="status" class="amber">
+          {{ missingProjectFields.join("；") }}
+        </p>
       </div>
     </form>
     <div v-else-if="result" class="panel intake-success" role="status">
@@ -956,6 +1232,10 @@ onBeforeUnmount(() => controller?.abort());
           })
         }}
       </p>
+      <CaptureResults
+        :rows="intakeResults(result, store.data.projects)"
+        :inactive="result.state === 'undone'"
+      />
       <div class="form-actions">
         <RouterLink class="button" to="/projects">{{
           t("View projects")
@@ -965,8 +1245,12 @@ onBeforeUnmount(() => controller?.abort());
         </button>
       </div>
     </div>
-    <section v-if="history.length" class="intake-history">
-      <h2>{{ t("Recent intakes") }}</h2>
+    <details
+      v-if="history.length"
+      class="intake-history"
+      :open="!compactReview"
+    >
+      <summary>{{ t("Recent intakes") }} · {{ history.length }}</summary>
       <article v-for="batch in history" :key="batch.id" class="panel">
         <div class="section-heading">
           <div>
@@ -1007,10 +1291,117 @@ onBeforeUnmount(() => controller?.abort());
           </button>
         </div>
       </article>
-    </section>
+    </details>
   </section>
 </template>
 <style scoped>
+.capture-review .intake-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0 0;
+  box-shadow: none;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+.capture-review .intake-confirm h2 {
+  display: none;
+}
+.capture-review .intake-confirm .form-actions {
+  margin-top: 0;
+  margin-left: auto;
+}
+.capture-review .intake-history {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.capture-preview-scroll {
+  overflow: auto;
+  margin: 14px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.capture-preview {
+  width: 100%;
+  min-width: 850px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+.capture-preview th,
+.capture-preview td {
+  height: 38px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0 8px;
+  text-align: left;
+}
+.capture-preview th {
+  background: var(--surface-raised);
+  font-weight: 500;
+  color: var(--muted);
+}
+.capture-preview td:last-child,
+.capture-preview th:last-child {
+  border-right: 0;
+}
+.capture-preview tr:last-child td {
+  border-bottom: 0;
+}
+.capture-preview .preview-check {
+  width: 50px;
+  text-align: center;
+}
+.capture-preview .preview-check input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+.preview-selection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+.preview-selection-text {
+  display: none;
+}
+.capture-preview .preview-more {
+  width: 65px;
+}
+.capture-preview input:not([type="checkbox"]),
+.capture-preview select {
+  width: 100%;
+  height: 32px;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 3px 5px;
+  font-size: 12px;
+}
+.capture-preview input:hover,
+.capture-preview input:focus,
+.capture-preview select:focus {
+  border-color: var(--accent-border);
+  background: var(--surface-subtle);
+}
+.capture-preview :deep(.person-search input) {
+  height: 32px;
+  border-color: transparent;
+  background: transparent;
+}
+.capture-preview :deep(.person-search > svg) {
+  top: 9px;
+}
+.capture-preview select {
+  font-size: 11px;
+}
+.capture-preview button {
+  font-size: 11px;
+}
 .intake-project-group h3 {
   overflow-wrap: anywhere;
 }
@@ -1039,10 +1430,6 @@ onBeforeUnmount(() => controller?.abort());
   text-align: left;
 }
 
-.intake-page {
-  max-width: 1200px;
-  margin: auto;
-}
 .intake-steps {
   display: flex;
   align-items: center;
@@ -1208,7 +1595,7 @@ onBeforeUnmount(() => controller?.abort());
     grid-template-columns: 1fr;
   }
   .intake-page {
-    padding: 16px 12px;
+    padding-block: 16px;
   }
   .intake-steps {
     gap: 6px;
@@ -1355,6 +1742,210 @@ onBeforeUnmount(() => controller?.abort());
   }
   .intake-embedded .intake-source {
     padding: 0;
+  }
+}
+@media (max-width: 600px) {
+  .capture-review.intake-embedded {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .capture-review .intake-review-header {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+  }
+  .capture-review .intake-review-header h2 {
+    margin: 0;
+    font-size: 16px;
+  }
+  .capture-review .intake-review-header > button {
+    flex-shrink: 0;
+  }
+  .capture-preview-scroll {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    margin: 12px 0;
+  }
+  .capture-preview,
+  .capture-preview tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+  .capture-preview thead {
+    display: none;
+  }
+  .capture-preview tbody {
+    display: grid;
+    gap: 12px;
+  }
+  .capture-preview tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  .capture-preview td {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    height: auto;
+    border: 0;
+    padding: 0;
+    overflow-wrap: anywhere;
+  }
+  .capture-preview td[data-label]::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .capture-preview .preview-check {
+    width: auto;
+    text-align: left;
+  }
+  .capture-preview .preview-selection {
+    min-height: 44px;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 10px;
+  }
+  .capture-preview .preview-selection-text {
+    display: inline;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .capture-preview .preview-check input {
+    width: 20px;
+    height: 20px;
+  }
+  .capture-preview input:not([type="checkbox"]),
+  .capture-preview select,
+  .capture-preview :deep(.person-search input) {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-subtle);
+    font-size: 16px;
+  }
+  .capture-preview :deep(.person-search input) {
+    padding-inline: 30px;
+  }
+  .capture-preview :deep(.person-search > svg) {
+    top: 14px;
+  }
+  .capture-preview .preview-details > button {
+    justify-self: start;
+    min-height: 44px;
+    padding: 8px 0;
+    font-size: 13px;
+  }
+  .capture-review .intake-confirm {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .capture-review .intake-confirm .form-actions {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    width: 100%;
+    margin: 0;
+  }
+  .capture-review .intake-confirm button {
+    min-height: 44px;
+    min-width: 0;
+    padding-inline: 12px;
+    white-space: normal;
+  }
+}
+
+.conversation-review {
+  padding: 12px 14px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.conversation-review .capture-preview-scroll {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+}
+.conversation-review .capture-preview,
+.conversation-review .capture-preview tbody {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+.conversation-review .capture-preview thead {
+  display: none;
+}
+.conversation-review .capture-preview tr {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.conversation-review .capture-preview td {
+  display: block;
+  width: auto;
+  height: auto;
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.conversation-review .capture-preview td[data-label]::before {
+  display: block;
+  content: attr(data-label);
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.conversation-review .capture-preview td[data-label="项目"],
+.conversation-review .capture-preview td[data-label="任务"],
+.conversation-review .preview-check,
+.conversation-review .preview-details {
+  grid-column: 1 / -1;
+}
+.conversation-review .preview-selection {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.conversation-review .preview-selection-text {
+  display: inline;
+  font-size: 11px;
+  color: var(--muted);
+}
+.conversation-review .capture-preview input:not([type="checkbox"]),
+.conversation-review .capture-preview select {
+  min-height: 36px;
+  border-color: var(--border);
+  background: var(--surface-subtle);
+  font-size: 13px;
+}
+.conversation-review .intake-review-header h2 {
+  font-size: 14px;
+}
+.conversation-review .intake-confirm .form-actions {
+  flex-wrap: wrap;
+}
+@media (max-width: 760px) {
+  .conversation-review .capture-preview input:not([type="checkbox"]),
+  .conversation-review .capture-preview select {
+    min-height: 44px;
+    font-size: 16px;
   }
 }
 </style>

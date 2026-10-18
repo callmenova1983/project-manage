@@ -33,7 +33,9 @@ export function progressHistory(
         a.projectId === project.id &&
         a.after &&
         "latestUpdate" in a.after &&
-        (a.source === "Progress log" ||
+        (a.action === "Added meeting progress log" ||
+          a.action === "Added daily work log" ||
+          a.source === "Progress log" ||
           a.source === "Progress correction" ||
           a.after.latestUpdate !==
             (a.before && "latestUpdate" in a.before

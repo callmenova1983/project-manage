@@ -1,0 +1,340 @@
+{
+  "config": {
+    "argv": [
+      "/Users/yuanjiezheng/.nvm/versions/node/v22.20.0/bin/node",
+      "/Users/yuanjiezheng/develop/pm-system/node_modules/.bin/playwright",
+      "test",
+      "-c",
+      "playwright.multi-view.config.ts",
+      "statistics.spec.ts",
+      "--grep-invert",
+      "5000 tasks"
+    ],
+    "configFile": "/Users/yuanjiezheng/develop/pm-system/playwright.multi-view.config.ts",
+    "rootDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/private/tmp/pm-statistics-functional-20261018-g/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "filteredProjects": [
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "/private/tmp/pm-statistics-functional-20261018-g/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "",
+        "testDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+        "snapshotDir": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view",
+        "testIgnore": [],
+        "testMatch": "**/*.@(spec|test).?(c|m)[jt]s?(x)",
+        "timeout": 60000,
+        "use": {
+          "baseURL": "http://127.0.0.1:4197",
+          "headless": true,
+          "viewport": {
+            "width": 1536,
+            "height": 1000
+          },
+          "colorScheme": "light",
+          "trace": "retain-on-failure",
+          "screenshot": "only-on-failure",
+          "launchOptions": {
+            "executablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          }
+        },
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": ""
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/private/tmp/pm-statistics-functional-20261018-g/report.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "default",
+    "updateSourceMethod": "patch",
+    "version": "1.64.0",
+    "workers": 1,
+    "webServer": {
+      "command": "node --import tsx scripts/multi-view-e2e-server.ts",
+      "url": "http://127.0.0.1:4197/api/health",
+      "reuseExistingServer": false,
+      "timeout": 30000
+    }
+  },
+  "suites": [
+    {
+      "title": "statistics.spec.ts",
+      "file": "statistics.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "statistics filters, numeric drilldown, settings and mobile remain usable",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1678,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-18T01:10:16.592Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ce6a6ad83d45104d2631-46f934c060ed002edf11",
+          "file": "statistics.spec.ts",
+          "line": 5,
+          "column": 1
+        },
+        {
+          "title": "restores views, rejects invalid scopes, supports keyboard sort and project return",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 982,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-18T01:10:19.552Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ce6a6ad83d45104d2631-80fb6817d93e01229737",
+          "file": "statistics.spec.ts",
+          "line": 60,
+          "column": 1
+        },
+        {
+          "title": "defers refresh atomically during interaction and clears deleted selection",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 20511,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-18T01:10:20.541Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ce6a6ad83d45104d2631-92df03d2b9f352978fc0",
+          "file": "statistics.spec.ts",
+          "line": 103,
+          "column": 1
+        },
+        {
+          "title": "functional responsive layouts, visible conditions and readonly interactions",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 789,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-18T01:10:41.057Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "ce6a6ad83d45104d2631-023795673eed2a860c04",
+          "file": "statistics.spec.ts",
+          "line": 249,
+          "column": 1
+        },
+        {
+          "title": "network recovery keeps successful data and explicit view navigation supports Back",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 8495,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('button', { name: '项目负责人', exact: true })\nExpected: \u001b[32m\"\u001b[7mtru\u001b[27me\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7mfals\u001b[27me\"\u001b[39m\nTimeout:  8000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" getByRole('button', { name: '项目负责人', exact: true }) with timeout 8000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: '项目负责人', exact: true })\u001b[22m\n\u001b[2m    20 × locator resolved to <button data-v-477fe82b=\"\" aria-pressed=\"false\">项目负责人</button>\u001b[22m\n\u001b[2m       - unexpected value \"false\"\u001b[22m\n",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('button', { name: '项目负责人', exact: true })\nExpected: \u001b[32m\"\u001b[7mtru\u001b[27me\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7mfals\u001b[27me\"\u001b[39m\nTimeout:  8000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" getByRole('button', { name: '项目负责人', exact: true }) with timeout 8000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: '项目负责人', exact: true })\u001b[22m\n\u001b[2m    20 × locator resolved to <button data-v-477fe82b=\"\" aria-pressed=\"false\">项目负责人</button>\u001b[22m\n\u001b[2m       - unexpected value \"false\"\u001b[22m\n\n    at /Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view/statistics.spec.ts:290:5",
+                    "location": {
+                      "file": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view/statistics.spec.ts",
+                      "column": 5,
+                      "line": 290
+                    },
+                    "snippet": "  288 |   await expect(\n  289 |     page.getByRole(\"button\", { name: \"项目负责人\", exact: true }),\n> 290 |   ).toHaveAttribute(\"aria-pressed\", \"true\");\n      |     ^\n  291 |   const before = await page.locator(\".stats-summary\").innerText();\n  292 |   let fail = true;\n  293 |   await page.route(\"**/api/workspace\", (r) =>"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view/statistics.spec.ts",
+                        "column": 5,
+                        "line": 290
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('button', { name: '项目负责人', exact: true })\nExpected: \u001b[32m\"\u001b[7mtru\u001b[27me\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7mfals\u001b[27me\"\u001b[39m\nTimeout:  8000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" getByRole('button', { name: '项目负责人', exact: true }) with timeout 8000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: '项目负责人', exact: true })\u001b[22m\n\u001b[2m    20 × locator resolved to <button data-v-477fe82b=\"\" aria-pressed=\"false\">项目负责人</button>\u001b[22m\n\u001b[2m       - unexpected value \"false\"\u001b[22m\n\n\n  288 |   await expect(\n  289 |     page.getByRole(\"button\", { name: \"项目负责人\", exact: true }),\n> 290 |   ).toHaveAttribute(\"aria-pressed\", \"true\");\n      |     ^\n  291 |   const before = await page.locator(\".stats-summary\").innerText();\n  292 |   let fail = true;\n  293 |   await page.route(\"**/api/workspace\", (r) =>\n    at /Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view/statistics.spec.ts:290:5"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-18T01:10:41.852Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "screenshot",
+                      "contentType": "image/png",
+                      "path": "/private/tmp/pm-statistics-functional-20261018-g/test-results/statistics-network-recover-4a95b-ew-navigation-supports-Back/test-failed-1.png"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/private/tmp/pm-statistics-functional-20261018-g/test-results/statistics-network-recover-4a95b-ew-navigation-supports-Back/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/private/tmp/pm-statistics-functional-20261018-g/test-results/statistics-network-recover-4a95b-ew-navigation-supports-Back/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/Users/yuanjiezheng/develop/pm-system/tests/e2e/multi-view/statistics.spec.ts",
+                    "column": 5,
+                    "line": 290
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "ce6a6ad83d45104d2631-67bf2d51c6d0927cc005",
+          "file": "statistics.spec.ts",
+          "line": 281,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-18T01:10:15.255Z",
+    "duration": 35294.013,
+    "expected": 4,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

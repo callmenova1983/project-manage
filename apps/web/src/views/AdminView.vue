@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount, nextTick } from "vue";
+import {
+  computed,
+  ref,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+  watch,
+} from "vue";
+import { useRoute } from "vue-router";
 import {
   PhUsers,
   PhFolders,
@@ -8,8 +16,10 @@ import {
   PhShieldCheck,
   PhPlus,
   PhArrowClockwise,
+  PhBell,
 } from "@phosphor-icons/vue";
 import ChannelManagement from "../components/ChannelManagement.vue";
+import WecomNotificationSettings from "../components/WecomNotificationSettings.vue";
 import { api } from "../services/api";
 import { useWorkspace } from "../stores/workspace";
 import { useUnsaved, confirmDiscard } from "../composables/unsaved";
@@ -27,19 +37,23 @@ import {
   type CatalogEntry,
 } from "../../../../packages/domain/admin";
 const store = useWorkspace();
+const route = useRoute();
 const allowed = computed(
   () => store.mode === "local" || store.user?.role === "admin",
 );
 const tabs = [
   { id: "users", label: "Users", icon: PhUsers },
-  { id: "channels", label: "渠道与项目信息", icon: PhFolders },
+  { id: "channels", label: t("渠道与项目信息"), icon: PhFolders },
   { id: "catalogs", label: "Stages & categories", icon: PhFolders },
   { id: "model", label: "Model settings", icon: PhCpu },
+  { id: "notifications", label: t("企业微信通知"), icon: PhBell },
   { id: "logs", label: "Call logs", icon: PhListBullets },
   { id: "audit", label: "Admin activity", icon: PhShieldCheck },
 ] as const;
 type Tab = (typeof tabs)[number]["id"];
-const tab = ref<Tab>("users"),
+const requestedTab = () =>
+  tabs.find((entry) => entry.id === route.query.tab)?.id;
+const tab = ref<Tab>(requestedTab() ?? "users"),
   loading = ref(true),
   error = ref(""),
   users = ref<ManagedUser[]>([]),
@@ -74,9 +88,21 @@ const tab = ref<Tab>("users"),
   activationExpiry = ref(""),
   copied = ref(false);
 const channelDirty = ref(false);
+const notificationDirty = ref(false);
+const allowanceLimit = ref<number | string>("");
+const allowanceUntil = ref("");
+const allowanceBaseline = ref("");
+const allowanceDirty = computed(
+  () =>
+    allowanceBaseline.value !== "" &&
+    JSON.stringify([allowanceLimit.value, allowanceUntil.value]) !==
+      allowanceBaseline.value,
+);
 const dirty = computed(
   () =>
     channelDirty.value ||
+    notificationDirty.value ||
+    allowanceDirty.value ||
     !!apiKey.value ||
     (editingId.value !== null &&
       JSON.stringify(userDraft.value) !== userBaseline.value) ||
@@ -87,7 +113,7 @@ const dirty = computed(
 );
 const apiKey = ref("");
 const credentialBaseUrl = ref("");
-const allowanceAttempts = ref(20);
+const allowanceAttempts = ref<number | string>("");
 const initialExpiry = new Date(Date.now() + 7 * 86400000);
 const allowanceExpiry = ref(
   new Date(initialExpiry.getTime() - initialExpiry.getTimezoneOffset() * 60000)
@@ -108,6 +134,22 @@ const currentUser = computed(() =>
 function resetBaselines() {
   catalogBaseline.value = JSON.stringify(catalog.value);
   modelBaseline.value = JSON.stringify(model.value.settings);
+  resetAllowanceDraft();
+}
+function resetAllowanceDraft() {
+  allowanceLimit.value = model.value.maxRequests ?? "";
+  const expires = model.value.expiresAt
+    ? new Date(model.value.expiresAt)
+    : null;
+  allowanceUntil.value = expires
+    ? new Date(expires.getTime() - expires.getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 16)
+    : "";
+  allowanceBaseline.value = JSON.stringify([
+    allowanceLimit.value,
+    allowanceUntil.value,
+  ]);
 }
 async function load() {
   if (!allowed.value) {
@@ -146,10 +188,19 @@ function chooseTab(value: Tab) {
   model.value.settings = JSON.parse(
     modelBaseline.value || JSON.stringify(defaultModelSettings),
   );
+  resetAllowanceDraft();
+  apiKey.value = "";
   activationLink.value = "";
   tab.value = value;
   error.value = "";
 }
+watch(
+  () => route.query.tab,
+  () => {
+    const requested = requestedTab();
+    if (requested) chooseTab(requested);
+  },
+);
 async function tabKey(event: KeyboardEvent, index: number) {
   let target: number;
   if (event.key === "ArrowRight") target = (index + 1) % tabs.length;
@@ -297,6 +348,11 @@ async function saveModel() {
 }
 async function saveCredential() {
   error.value = "";
+  const maxRequests = Number(allowanceAttempts.value);
+  if (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 1000) {
+    error.value = t("请明确填写本次授权的总调用上限（1–1000 次）。");
+    return;
+  }
   const expiresAt = new Date(allowanceExpiry.value);
   if (
     !Number.isFinite(expiresAt.getTime()) ||
@@ -313,17 +369,62 @@ async function saveCredential() {
           apiKey: apiKey.value,
           region: model.value.settings.region,
           baseUrl: credentialBaseUrl.value,
-          maxRequests: allowanceAttempts.value,
+          maxRequests,
           expiresAt: expiresAt.toISOString(),
         }),
       "API key saved. External calls remain disabled.",
     );
     modelBaseline.value = JSON.stringify(model.value.settings);
+    resetAllowanceDraft();
     audit.value = await api.adminAudit();
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
     apiKey.value = "";
+  }
+}
+async function saveAllowance() {
+  error.value = "";
+  const maxRequests = Number(allowanceLimit.value);
+  const expiresAt = new Date(allowanceUntil.value);
+  if (
+    !Number.isInteger(maxRequests) ||
+    maxRequests < 1 ||
+    maxRequests > 1000 ||
+    maxRequests < (model.value.usedAttempts ?? 0)
+  ) {
+    error.value = t("总调用上限须为 1–1000 的整数，且不能少于已经使用的次数。");
+    return;
+  }
+  if (
+    !Number.isFinite(expiresAt.getTime()) ||
+    expiresAt.getTime() <= Date.now()
+  ) {
+    error.value = t("请选择未来的额度有效期。");
+    return;
+  }
+  const draft = { ...model.value.settings };
+  const settingsDirty = JSON.stringify(draft) !== modelBaseline.value;
+  try {
+    model.value = await store.operation(
+      () =>
+        api.saveModelAllowance({
+          version: model.value.settings.version,
+          maxRequests,
+          expiresAt: expiresAt.toISOString(),
+        }),
+      store.mode === "local" ? t("已保存模拟调用额度") : t("AI 调用额度已更新"),
+    );
+    modelBaseline.value = JSON.stringify(model.value.settings);
+    if (settingsDirty)
+      model.value.settings = {
+        ...draft,
+        version: model.value.settings.version,
+      };
+    resetAllowanceDraft();
+    audit.value = await api.adminAudit();
+  } catch (e) {
+    error.value = (e as Error).message;
   }
 }
 onMounted(load);
@@ -598,6 +699,10 @@ onMounted(load);
             catalogBaseline = JSON.stringify($event);
           "
         />
+        <WecomNotificationSettings
+          v-else-if="tab === 'notifications'"
+          @dirty="notificationDirty = $event"
+        />
         <form v-else-if="tab === 'catalogs'" @submit.prevent="saveCatalog">
           <div class="section-heading">
             <div>
@@ -718,6 +823,14 @@ onMounted(load);
         >
           <h2>{{ t("Model settings") }}</h2>
           <p class="muted">
+            {{ t("语音识别：") }}<strong>qwen3-asr-flash</strong>
+            {{
+              t(
+                "· 默认复用百炼凭据、区域和调用额度。文本整理继续使用下方选择的模型。",
+              )
+            }}
+          </p>
+          <p class="muted">
             {{
               t(
                 "Saving these settings never sends notes or makes a model request. Credentials stay on the server.",
@@ -743,11 +856,135 @@ onMounted(load);
               t("Connection has not been verified by this page.")
             }}</span>
           </div>
+          <section class="model-allowance" aria-labelledby="allowance-heading">
+            <div class="section-heading">
+              <h3 id="allowance-heading">{{ t("AI 调用额度") }}</h3>
+              <span v-if="store.mode === 'local'" class="muted">{{
+                t("浏览器演示")
+              }}</span>
+            </div>
+            <dl class="allowance-summary">
+              <div>
+                <dt>{{ t("已使用") }}</dt>
+                <dd>{{ model.usedAttempts ?? t("未知") }} {{ t("次") }}</dd>
+              </div>
+              <div>
+                <dt>{{ t("总调用上限") }}</dt>
+                <dd>
+                  {{ model.maxRequests ?? t("未配置")
+                  }}<template
+                    v-if="
+                      model.maxRequests !== null &&
+                      model.maxRequests !== undefined
+                    "
+                  >
+                    {{ t("次") }}</template
+                  >
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t("剩余调用") }}</dt>
+                <dd>{{ model.remainingAttempts }} {{ t("次") }}</dd>
+              </div>
+              <div>
+                <dt>{{ t("有效期至") }}</dt>
+                <dd>
+                  {{
+                    model.expiresAt
+                      ? formatDate(model.expiresAt, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })
+                      : t("未配置")
+                  }}
+                </dd>
+              </div>
+            </dl>
+            <fieldset
+              v-if="model.allowanceEditable"
+              :disabled="store.busy"
+              class="allowance-editor"
+              @keydown.enter.prevent="saveAllowance"
+            >
+              <legend>{{ t("调整额度，无需重新填写 API key") }}</legend>
+              <div class="allowance-inputs">
+                <label
+                  >{{ t("总调用上限")
+                  }}<input
+                    v-model.number="allowanceLimit"
+                    type="number"
+                    :min="Math.max(1, model.usedAttempts ?? 0)"
+                    max="1000"
+                    step="1"
+                    :placeholder="t('包含已使用次数')"
+                /></label>
+                <label
+                  >{{ t("有效期至（本机时间）")
+                  }}<input v-model="allowanceUntil" type="datetime-local"
+                /></label>
+                <button
+                  type="button"
+                  class="primary"
+                  :disabled="store.busy || !allowanceDirty"
+                  @click="saveAllowance"
+                >
+                  {{ t("保存额度") }}
+                </button>
+              </div>
+              <p class="muted">
+                {{
+                  t(
+                    "这是累计调用总上限，包含已使用次数，不是额外增加的次数。修改只更新额度和有效期，保留原密钥与调用记录，不会自动启用 AI 或发起调用，也不会自动续额。",
+                  )
+                }}
+              </p>
+              <p v-if="store.mode === 'local'" class="muted">
+                {{ t("演示调整只保存在当前浏览器；不会修改服务器额度。") }}
+              </p>
+            </fieldset>
+            <p v-else-if="model.credentialAvailable" class="muted">
+              {{
+                t(
+                  "当前额度由服务器环境配置管理，请联系部署管理员调整调用上限或有效期；此处只读。",
+                )
+              }}
+            </p>
+            <p v-else class="muted">
+              {{
+                t(
+                  "尚未配置服务凭证。先保存下方 API key 与初始额度，之后可在这里单独调整额度。",
+                )
+              }}
+            </p>
+          </section>
           <div class="admin-fields">
             <label>{{ t("Provider") }}<input value="Qwen" readonly /></label
             ><label
-              >{{ t("Approved model")
-              }}<input v-model="model.settings.model" readonly /></label
+              >{{ t("模型")
+              }}<select v-model="model.settings.model">
+                <option value="qwen3.8-max">
+                  {{ t("Qwen3.8-Max（默认）") }}
+                </option>
+                <option value="qwen3.8-flash">Qwen3.8-Flash</option>
+                <option value="qwen3.7-plus">Qwen3.7-Plus</option>
+                <option value="qwen3.6-35b-a3b">Qwen3.6-35B-A3B</option>
+                <option
+                  v-if="
+                    ![
+                      'qwen3.8-max',
+                      'qwen3.8-flash',
+                      'qwen3.7-plus',
+                      'qwen3.6-35b-a3b',
+                    ].includes(model.settings.model)
+                  "
+                  :value="model.settings.model"
+                >
+                  {{ model.settings.model }}
+                </option></select
+              ><input
+                v-model="model.settings.model"
+                :aria-label="t('模型 ID')"
+                :placeholder="t('或填写百炼模型 ID')" /></label
             ><label
               >{{ t("Region")
               }}<select v-model="model.settings.region">
@@ -837,6 +1074,8 @@ onMounted(load);
                   type="number"
                   min="1"
                   max="1000"
+                  :placeholder="t('请按使用需求填写')"
+                  required
                   :disabled="store.busy"
                 />
               </label>
@@ -879,17 +1118,6 @@ onMounted(load);
               )
             }}
           </p>
-          <p v-if="model.expiresAt" class="muted">
-            {{
-              t("{count} attempts remain · allowance expires {time}", {
-                count: model.remainingAttempts,
-                time: formatDate(model.expiresAt, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                }),
-              })
-            }}
-          </p>
           <div class="form-actions">
             <button
               type="button"
@@ -897,6 +1125,7 @@ onMounted(load);
               @click="
                 model.settings = JSON.parse(modelBaseline);
                 apiKey = '';
+                resetAllowanceDraft();
               "
             >
               {{ t("Cancel changes") }}</button
@@ -982,7 +1211,7 @@ onMounted(load);
                   </td>
                   <td>
                     {{ t(log.status)
-                    }}<small v-if="log.errorCode">{{ log.errorCode }}</small>
+                    }}<small v-if="log.errorCode">{{ t(log.errorCode) }}</small>
                   </td>
                   <td>
                     {{
@@ -1050,10 +1279,6 @@ onMounted(load);
   </section>
 </template>
 <style scoped>
-.admin-page {
-  max-width: 1280px;
-  margin: auto;
-}
 .credential-fields {
   min-width: 0;
   margin: 20px 0 12px;
@@ -1190,6 +1415,47 @@ onMounted(load);
 }
 .model-state span {
   color: var(--muted);
+}
+.model-allowance {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.model-allowance .section-heading {
+  margin: 0 0 12px;
+}
+.model-allowance h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.allowance-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 32px;
+  margin: 0;
+  font-size: 13px;
+}
+.allowance-summary dt {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.allowance-summary dd {
+  margin: 0;
+  font-weight: 600;
+}
+.allowance-editor {
+  margin: 16px 0 0;
+}
+.allowance-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.allowance-inputs label {
+  flex: 1 1 200px;
 }
 .admin-table-scroll {
   overflow: auto;

@@ -1,6 +1,12 @@
 <script setup lang="ts">
+import { assistantPanel, openAssistant } from "../composables/assistant-panel";
+
+import { useViewPreferences } from "../composables/view-preferences";
+import {
+  selectProjects,
+  projectOwnerKey,
+} from "../../../../packages/domain/project-view";
 import { currentDay, currentWeek } from "../composables/calendar";
-import { memberName } from "../../../../packages/domain/members";
 import {
   channelEntries,
   projectChannel,
@@ -10,9 +16,20 @@ import {
   catalogs,
   catalogLabel,
 } from "../composables/catalogs";
-import { computed, ref, toRefs, nextTick, onMounted, watch } from "vue";
+import {
+  computed,
+  defineAsyncComponent,
+  ref,
+  toRefs,
+  nextTick,
+  onMounted,
+  watch,
+} from "vue";
+const ProjectCollectionLayout = defineAsyncComponent(
+  () => import("../components/ProjectCollectionLayout.vue"),
+);
 import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router";
-import IntakeView from "./IntakeView.vue";
+import ProjectBulkFill from "../components/ProjectBulkFill.vue";
 import {
   PhMagnifyingGlass,
   PhPlus,
@@ -24,6 +41,7 @@ import {
   PhDotsSixVertical,
   PhStar,
   PhCaretUp,
+  PhSparkle,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
 import {
@@ -42,9 +60,14 @@ import ProjectEditor from "../components/ProjectEditor.vue";
 import ClientLabel from "../components/ClientLabel.vue";
 import ProjectQuickActions from "../components/ProjectQuickActions.vue";
 import { api } from "../services/api";
-import { orderedProjectIds } from "../../../../packages/domain/project-order";
+import { accountStorageKey } from "../services/account-storage";
+import {
+  orderedProjectIds,
+  reorderedProjectIds,
+} from "../../../../packages/domain/project-order";
 import ScopeWork from "../components/ScopeWork.vue";
 import ProjectFollow from "../components/ProjectFollow.vue";
+import ProjectOwner from "../components/ProjectOwner.vue";
 import TaskList from "../components/TaskList.vue";
 import InlineUpdate from "../components/InlineUpdate.vue";
 import PasteTasks from "../components/PasteTasks.vue";
@@ -55,20 +78,31 @@ import WeeklyChanges from "../components/WeeklyChanges.vue";
 import NextWork from "../components/NextWork.vue";
 const route = useRoute(),
   router = useRouter();
-const intakeOpen = computed(() => route.query.intake === "1");
-async function toggleIntake() {
-  if (intakeOpen.value) return;
-  if (!confirmDiscard()) return;
-  await router.replace({ query: { ...route.query, intake: "1" } });
-}
-async function closeIntake() {
-  const query = { ...route.query };
-  delete query.intake;
-  await router.replace({ query });
-  await nextTick();
-  document.querySelector<HTMLButtonElement>("[data-intake-toggle]")?.focus();
+const intakeOpen = computed(() => assistantPanel.open);
+function toggleIntake() {
+  openAssistant();
 }
 const store = useWorkspace();
+const {
+  preferences: layoutPreferences,
+  error: layoutPreferenceError,
+  save: saveLayoutPreferences,
+} = useViewPreferences();
+const projectLayout = computed(() => {
+  const value = route.query.view ?? layoutPreferences.value.projectLayout;
+  return value === "board" ? "board" : value === "cards" ? "cards" : "list";
+});
+const invalidProjectLayout = computed(() => {
+  const value = route.query.view ?? layoutPreferences.value.projectLayout;
+  return (
+    typeof value !== "string" || !["list", "board", "cards"].includes(value)
+  );
+});
+function saveProjectLayout() {
+  if (saveLayoutPreferences({ projectLayout: projectLayout.value }))
+    store.notify(t("Default layout saved in this browser."));
+}
+
 const {
   query,
   followedOnly,
@@ -86,28 +120,35 @@ const editing = ref(""),
   creating = ref(false),
   pasting = ref("");
 try {
-  const saved = localStorage.getItem("project-manage-project-sort");
+  const saved =
+    store.user && route.query.sort === undefined
+      ? localStorage.getItem(
+          accountStorageKey("project-sort", store.mode, store.user),
+        )
+      : null;
   if (["manual", "updated", "name"].includes(saved ?? "")) sort.value = saved!;
 } catch {
-  /* Session sorting still works. */
+  store.preferenceError =
+    "View preferences could not be saved in this browser.";
 }
 watch(sort, (value) => {
   try {
-    localStorage.setItem("project-manage-project-sort", value);
+    if (store.user)
+      localStorage.setItem(
+        accountStorageKey("project-sort", store.mode, store.user),
+        value,
+      );
   } catch {
-    /* Session sorting still works. */
+    store.preferenceError =
+      "View preferences could not be saved in this browser.";
   }
 });
 const order = computed(() =>
   orderedProjectIds(store.data.projects, store.data.projectOrder),
 );
-const orderRanks = computed(
-  () => new Map(order.value.map((id, index) => [id, index])),
-);
-const actionRefs = new Map<string, InstanceType<typeof ProjectQuickActions>>();
 const dragSource = ref(""),
   dropTarget = ref(""),
-  dropZone = ref<"before" | "after" | "merge">("before"),
+  dropZone = ref<"before" | "after">("before"),
   orderError = ref("");
 let dragProject: Project | null = null;
 let dragOrder: string[] = [],
@@ -143,7 +184,7 @@ function dragOver(project: Project, event: DragEvent) {
   const rect = row.getBoundingClientRect(),
     ratio = (event.clientY - rect.top) / rect.height;
   dropTarget.value = project.id;
-  dropZone.value = ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "merge";
+  dropZone.value = ratio < 0.5 ? "before" : "after";
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
 }
 function endDrag() {
@@ -167,10 +208,8 @@ async function moveProject(
   revision = store.data.revision,
 ) {
   orderError.value = "";
-  const next = ids.filter((id) => id !== source),
-    index = next.indexOf(target);
-  if (index < 0 || !ids.includes(source)) return;
-  next.splice(index + (after ? 1 : 0), 0, source);
+  const next = reorderedProjectIds(ids, source, target, after);
+  if (!next) return;
   try {
     await store.operation(
       () => api.saveProjectOrder({ projectIds: next, revision }),
@@ -195,15 +234,13 @@ async function drop(project: Project, event: DragEvent) {
     return;
   }
   endDrag();
-  if (zone === "merge") await actionRefs.get(project.id)?.mergeFrom(source);
-  else
-    await moveProject(
-      source,
-      project.id,
-      zone === "after",
-      dragOrder,
-      dragRevision,
-    );
+  await moveProject(
+    source,
+    project.id,
+    zone === "after",
+    dragOrder,
+    dragRevision,
+  );
 }
 async function moveToStage(targetStage: string, event: DragEvent) {
   event.preventDefault();
@@ -223,19 +260,22 @@ async function moveToStage(targetStage: string, event: DragEvent) {
   if (!permitted || targetStage === source.stage) return;
   orderError.value = "";
   try {
-    await store.operation(
-      () =>
-        api.saveProject(
-          { ...projectInput.strip().parse(source), stage: targetStage },
-          source.id,
-          source.version,
-        ),
-      t("Moved {name} to {stage}", {
-        name: source.shortName || source.name,
+    const current = store.data.projects.find(
+      (project) => project.id === source.id,
+    );
+    if (!current || current.version !== source.version)
+      throw new Error(
+        "The project changed while dragging. Start again from its latest version.",
+      );
+    await store.saveProject(
+      { ...projectInput.strip().parse(source), stage: targetStage },
+      source,
+    );
+    store.notify(
+      t("Project moved to {stage}. Current filters may hide it.", {
         stage: catalogLabel("stages", targetStage),
       }),
     );
-    if (stage.value === source.stage) stage.value = targetStage;
   } catch (e) {
     orderError.value = t(
       e instanceof Error ? e.message : "Changes could not be saved",
@@ -297,10 +337,7 @@ const overviewTasks = computed(() => {
       : task.workDates.includes(day),
   );
 });
-const ownerKey = (p: Project) =>
-  JSON.stringify(p.ownerId ? ["member", p.ownerId] : ["text", p.owner]);
-const ownerName = (p: Project) =>
-  memberName(p.ownerId, p.owner, store.data.members ?? []);
+const ownerKey = projectOwnerKey;
 const owners = computed(() =>
   [
     ...new Map(
@@ -320,29 +357,22 @@ const owners = computed(() =>
   ].sort((a, b) => a.label.localeCompare(b.label)),
 );
 const projects = computed(() =>
-  store.data.projects
-    .filter(
-      (p) =>
-        (!query.value ||
-          `${p.name} ${p.shortName ?? ""} ${p.aliases.join(" ")} ${p.client} ${p.latestUpdate} ${ownerName(p)}`
-            .toLowerCase()
-            .includes(query.value.toLowerCase())) &&
-        (!channel.value || projectChannel(p) === channel.value) &&
-        (!stage.value || p.stage === stage.value) &&
-        (!owner.value ||
-          ownerKey(p) === owner.value ||
-          (!p.ownerId && p.owner === owner.value)) &&
-        (!followedOnly.value || store.following.has(p.id)) &&
-        (!discipline.value || p.discipline === discipline.value) &&
-        (!category.value || p.categoryIds?.includes(category.value)),
-    )
-    .sort((a, b) =>
-      sort.value === "manual"
-        ? (orderRanks.value.get(a.id) ?? 0) - (orderRanks.value.get(b.id) ?? 0)
-        : sort.value === "name"
-          ? a.name.localeCompare(b.name)
-          : (b.reportedAt ?? "").localeCompare(a.reportedAt ?? ""),
-    ),
+  selectProjects(
+    store.data.projects,
+    store.data.members,
+    {
+      query: query.value,
+      stage: stage.value,
+      owner: owner.value,
+      discipline: discipline.value,
+      category: category.value,
+      channel: channel.value,
+      followedOnly: followedOnly.value,
+      sort: sort.value as "manual" | "updated" | "name",
+    },
+    store.following,
+    store.data.projectOrder,
+  ),
 );
 const filtered = computed(
   () =>
@@ -448,30 +478,23 @@ function edit(id: string) {
         >
       </div>
       <div class="heading-actions">
+        <ProjectBulkFill />
         <button
           class="button secondary"
           data-intake-toggle
           :aria-expanded="intakeOpen"
-          aria-controls="project-intake-panel"
+          aria-controls="global-ai-assistant"
           @click="toggleIntake"
+          @pointerup="$event.pointerType === 'touch' && toggleIntake()"
         >
-          {{ t("Quick intake") }}
+          <PhSparkle :size="17" />{{ t("AI 助手") }}
         </button>
-        <RouterLink to="/meetings" class="button secondary"
-          ><PhNotePencil :size="17" />{{
-            t("Review meeting notes")
-          }}</RouterLink
-        ><button class="primary" :disabled="creating" @click="creating = true">
+        <button class="primary" :disabled="creating" @click="creating = true">
           <PhPlus :size="17" />{{ t("New project") }}
         </button>
       </div>
     </section>
-    <IntakeView
-      v-if="intakeOpen"
-      id="project-intake-panel"
-      embedded
-      @close="closeIntake"
-    />
+
     <section class="work-scope-bar" :aria-label="t('Workspace overview')">
       <div class="scope-switch" :aria-label="t('Project work scope')">
         <button
@@ -578,14 +601,14 @@ function edit(id: string) {
             }}
           </button>
           <PhFunnel :size="16" class="muted" />
-          <select v-model="channel" aria-label="按渠道筛选项目">
-            <option value="">全部渠道</option>
+          <select v-model="channel" :aria-label="t('按渠道筛选项目')">
+            <option value="">{{ t("全部渠道") }}</option>
             <option
               v-for="entry in channelEntries(catalogs)"
               :key="entry.id"
               :value="entry.id"
             >
-              {{ entry.shortName }}{{ entry.archived ? "（已停用）" : "" }}
+              {{ entry.shortName }}{{ entry.archived ? t("（已停用）") : "" }}
             </option></select
           ><select v-model="stage" :aria-label="t('Filter by stage')">
             <option value="">{{ t("All stages") }}</option>
@@ -628,10 +651,40 @@ function edit(id: string) {
           </button>
         </div>
       </div>
-      <p class="drag-instructions muted">
+      <div
+        class="project-layout-switch"
+        role="group"
+        :aria-label="t('Project layout')"
+      >
+        <button
+          v-for="layout in ['list', 'board', 'cards']"
+          :key="layout"
+          :aria-pressed="projectLayout === layout"
+          @click="router.push({ query: { ...route.query, view: layout } })"
+        >
+          {{
+            t(
+              layout === "list"
+                ? "List view"
+                : layout === "board"
+                  ? "Stage board"
+                  : "Project cards",
+            )
+          }}</button
+        ><button @click="saveProjectLayout">
+          {{ t("Use current layout by default") }}
+        </button>
+      </div>
+      <p v-if="invalidProjectLayout" class="list-footnote" role="status">
+        {{ t("The requested layout is unavailable; showing the list.") }}
+      </p>
+      <p v-if="layoutPreferenceError" class="error-box" role="alert">
+        {{ t(layoutPreferenceError) }}
+      </p>
+      <p v-if="projectLayout === 'list'" class="drag-instructions muted">
         {{
           t(
-            "Drag the grip to a stage card to change stage, between rows to reorder, or onto a project to merge. Arrow keys also move a focused grip.",
+            "Drag the grip to a stage card to change stage or between rows to reorder. Use the merge button for an explicit merge. Arrow keys also move a focused grip.",
           )
         }}
       </p>
@@ -670,6 +723,12 @@ function edit(id: string) {
           {{ t("New project") }}
         </button>
       </div>
+      <ProjectCollectionLayout
+        v-else-if="projectLayout !== 'list'"
+        :projects="projects"
+        :mode="projectLayout"
+        :scope="scope === 'today' ? 'today' : 'week'"
+      />
       <div
         v-else
         class="project-table"
@@ -680,6 +739,7 @@ function edit(id: string) {
         <div class="project-table-head">
           <span>{{ t("Project") }}</span
           ><span>{{ t("Stage") }}</span
+          ><span>{{ t("负责人") }}</span
           ><span>{{ t("Latest progress log") }}</span
           ><span>{{
             t(scope === "week" ? "This week's work" : "Today's work")
@@ -699,17 +759,11 @@ function edit(id: string) {
             dragging: dragSource === project.id,
             'drop-before': dropTarget === project.id && dropZone === 'before',
             'drop-after': dropTarget === project.id && dropZone === 'after',
-            'drop-merge': dropTarget === project.id && dropZone === 'merge',
           }"
           @dragover="dragOver(project, $event)"
           @drop="drop(project, $event)"
           @dragleave="dragLeave"
         >
-          <span
-            v-if="dropTarget === project.id && dropZone === 'merge'"
-            class="project-drop-hint"
-            >{{ t("Release to merge into this project") }}</span
-          >
           <div class="project-row">
             <div class="project-cell">
               <button
@@ -717,7 +771,7 @@ function edit(id: string) {
                 :draggable="!store.busy && !project.intakeInbox"
                 :disabled="store.busy || project.intakeInbox"
                 :aria-label="t('Move {name}', { name: project.name })"
-                :title="t('Drag to reorder or merge')"
+                :title="t('Drag to reorder')"
                 @dragstart.stop="dragStart(project, $event)"
                 @dragend="endDrag"
                 @keydown="moveByKey(project, $event)"
@@ -739,23 +793,11 @@ function edit(id: string) {
               </button>
               <ProjectFollow :id="project.id" :name="project.name" />
               <div class="project-name">
-                <ProjectQuickActions
-                  :ref="
-                    (el) => {
-                      if (el)
-                        actionRefs.set(
-                          project.id,
-                          el as InstanceType<typeof ProjectQuickActions>,
-                        );
-                      else actionRefs.delete(project.id);
-                    }
-                  "
-                  :project="project"
-                  showName
-                />
+                <ProjectQuickActions :project="project" showName />
                 <ClientLabel :client="project.client" />
                 <small class="muted" style="display: block; font-size: 10px"
-                  >渠道：{{
+                  >{{ t("渠道：")
+                  }}{{
                     channelEntries(catalogs).find(
                       (c) => c.id === projectChannel(project),
                     )?.shortName ?? projectChannel(project)
@@ -764,6 +806,7 @@ function edit(id: string) {
               </div>
             </div>
             <StatusBadge :stage="project.stage" />
+            <ProjectOwner :project="project" compact />
             <div
               class="latest-update"
               :data-label="t('Latest reported update')"
@@ -870,9 +913,9 @@ function edit(id: string) {
               >
                 <PhCaretUp :size="16" />{{ t("Collapse project details") }}
               </button>
-              <RouterLink class="text-button" to="/intake"
-                ><PhNotePencil :size="16" />{{ t("Quick intake") }}</RouterLink
-              >
+              <button class="text-button" @click="openAssistant(project.id)">
+                <PhNotePencil :size="16" />{{ t("AI 助手") }}
+              </button>
             </div>
           </div>
         </article>
@@ -890,6 +933,23 @@ function edit(id: string) {
 </template>
 
 <style scoped>
+.project-layout-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0;
+}
+.project-layout-switch button {
+  min-height: 44px;
+}
+.project-layout-switch button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+[data-intake-toggle] {
+  touch-action: manipulation;
+}
 .expanded-columns {
   display: block;
 }
@@ -897,60 +957,25 @@ function edit(id: string) {
   max-height: none;
   overflow: visible;
 }
-.inline-subtasks :deep(.task-row) {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 10px;
-  align-items: center;
-  min-height: 38px;
-  padding: 3px 0;
-}
-.inline-subtasks :deep(.task-name) {
-  flex: 1;
-  min-width: 0;
-}
-.inline-subtasks :deep(.task-status select) {
-  width: 80px;
-  min-height: 28px;
-  height: 28px;
-  padding: 3px 7px;
-  font-size: 11px;
-}
-.inline-subtasks :deep(.task-row > .badge) {
-  display: none;
-}
-.inline-subtasks :deep(.task-assignee),
-.inline-subtasks :deep(.task-date) {
-  display: block;
-  min-width: 80px;
-  font-size: 11px;
-}
-.inline-subtasks :deep(.task-row .icon-button) {
-  min-height: 28px;
-  height: 28px;
-  width: 28px;
-  padding: 4px;
-}
-.inline-subtasks :deep(.field-value) {
-  padding: 3px 4px;
-  min-height: 28px;
-  font-size: 12px;
-}
-@media (max-width: 760px) {
-  .inline-subtasks :deep(.task-row) {
-    flex-wrap: wrap;
-  }
-  .inline-subtasks :deep(.task-name) {
-    flex-basis: calc(100% - 96px);
-  }
-  .inline-subtasks :deep(.task-row .icon-button),
-  .inline-subtasks :deep(.field-value) {
-    min-height: 36px;
-  }
-}
+/* TaskList owns its grid columns and responsive row layout. */
 
 .project-row {
   height: auto;
+}
+@media (min-width: 761px) {
+  .project-table-head,
+  .project-row {
+    grid-template-columns:
+      minmax(210px, 1.15fr) 104px 64px minmax(230px, 1.55fr)
+      minmax(210px, 1.25fr) 158px 24px;
+    gap: 12px;
+  }
+}
+@media (max-width: 760px) {
+  .project-row > .project-scope-summary,
+  .project-row > .icon-button {
+    grid-row: 5;
+  }
 }
 .drag-instructions {
   font-size: 11px;
@@ -973,11 +998,6 @@ function edit(id: string) {
 .project-record.dragging {
   opacity: 0.45;
 }
-.project-record.drop-merge > .project-row {
-  background: var(--surface-selected);
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
 .project-record.drop-before::before,
 .project-record.drop-after::after {
   content: "";
@@ -994,18 +1014,6 @@ function edit(id: string) {
 }
 .project-record.drop-after::after {
   bottom: -2px;
-}
-.project-drop-hint {
-  position: absolute;
-  top: -9px;
-  left: 45px;
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: var(--accent);
-  color: white;
-  z-index: 4;
-  pointer-events: none;
 }
 .project-return-actions {
   display: flex;

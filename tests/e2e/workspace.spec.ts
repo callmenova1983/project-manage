@@ -191,7 +191,10 @@ test("today/week scopes and task editing cancellation", async ({ page }) => {
   await expect(page.locator(".task-row")).toHaveCount(24);
   await page.getByRole("button", { name: "Today 8", exact: true }).click();
   await expect(page.locator(".task-row")).toHaveCount(8);
-  await page.getByLabel("Filter task status").selectOption("todo");
+  await page
+    .getByRole("group", { name: "Filter task status" })
+    .getByRole("button", { name: /^To do/ })
+    .click();
   await expect(page.locator(".task-row")).toHaveCount(4);
   await page
     .getByRole("button", { name: "Edit Confirm project scope", exact: true })
@@ -203,46 +206,46 @@ test("today/week scopes and task editing cancellation", async ({ page }) => {
     page.getByRole("button", { name: "Confirm project scope", exact: true }),
   ).toBeVisible();
 });
-test("meeting source, ambiguous match, overwrite confirmation and single apply", async ({
+test("meeting completion saves clear items and asks only for ambiguous projects in the same conversation", async ({
   page,
 }) => {
   await page
     .getByRole("link", { name: "Review meeting notes", exact: true })
     .click();
-  await expect(
-    page.getByText("Rule-assisted review · AI is not connected"),
-  ).toBeVisible();
+  const source =
+    "Atlas: confirm scope from direct meeting\nAtlas and Meridian: review joint handoff";
   await page
     .getByRole("textbox", { name: "Meeting notes", exact: true })
-    .fill("Atlas and Meridian: review joint handoff");
+    .fill(source);
+  await page.getByRole("button", { name: "完成", exact: true }).click();
+  await expect(page.getByText(/已保存 1 项明确事项。/)).toBeVisible();
+  const partial = await (await page.request.get("/api/workspace")).json();
+  expect(
+    partial.tasks.some(
+      (t: { description: string }) =>
+        t.description === "Atlas: confirm scope from direct meeting",
+    ),
+  ).toBe(true);
+  await expect(page.locator(".meeting-conversation textarea")).toHaveCount(1);
+  await expect(
+    page.locator(
+      ".meeting-conversation select, .meeting-conversation input, .suggestion-card",
+    ),
+  ).toHaveCount(0);
   await page
-    .getByRole("button", { name: "Review suggestions", exact: true })
-    .click();
-  await expect(page.getByText(/Ambiguous:/)).toBeVisible();
-  await page.getByLabel("Project for suggestion 1").selectOption("project-1");
-  await page.getByLabel("Action for suggestion 1").selectOption("update");
-  await page.getByLabel("Confirm suggestion 1").check();
+    .getByRole("textbox", { name: "回复", exact: true })
+    .fill("归到 Meridian");
+  await page.getByRole("button", { name: "回复并完成", exact: true }).click();
   await expect(
-    page.getByRole("button", {
-      name: "Apply 1 confirmed changes",
-      exact: true,
-    }),
-  ).toBeDisabled();
-  await page.getByLabel("I reviewed and confirm replacing this update").check();
-  await page
-    .getByRole("button", { name: "Apply 1 confirmed changes", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "Reviewed and recorded" }),
+    page.getByText("已完成：新增 2 项任务。", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "View activity", exact: true }).click();
-  await page.locator("details").first().locator("summary").click();
-  await expect(
-    page
-      .locator("details")
-      .first()
-      .getByText(/line 1: Atlas and Meridian: review joint handoff/),
-  ).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/meetings");
+  const done = await (await page.request.get("/api/workspace")).json();
+  expect(
+    done.tasks.filter((t: { description: string }) =>
+      source.split("\n").includes(t.description),
+    ),
+  ).toHaveLength(2);
 });
 test("stale editor exposes current version without overwriting it", async ({
   page,
@@ -548,7 +551,7 @@ test("project work scope switches named work and all four counts", async ({
     "Confirm project scope",
   );
 });
-test("multiple reviewed updates retain exact source and combine once", async ({
+test("multiple clear meeting lines finish directly while retaining exact original text", async ({
   page,
 }) => {
   await page.getByRole("link", { name: "Review meeting notes" }).click();
@@ -557,29 +560,27 @@ test("multiple reviewed updates retain exact source and combine once", async ({
   await page
     .getByRole("textbox", { name: "Meeting notes", exact: true })
     .fill(source);
-  await page.getByRole("button", { name: "Review suggestions" }).click();
-  await page.getByText("Original source · version 1", { exact: true }).click();
-  expect(await page.locator(".original-source pre").textContent()).toBe(source);
-  for (let i = 1; i <= 2; i++) {
-    await page.getByLabel("Action for suggestion " + i).selectOption("update");
-    const card = page.locator(".suggestion-card").nth(i - 1);
-    await card
-      .getByLabel("I reviewed and confirm replacing this update")
-      .check();
-    await page.getByLabel("Confirm suggestion " + i).check();
-  }
+  await page.getByRole("button", { name: "完成", exact: true }).click();
   await expect(
-    page.getByRole("heading", {
-      name: "Combined update · Atlas Customer Portal",
-    }),
+    page.getByText("已完成：新增 2 项任务。", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Apply 2 confirmed changes" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Reviewed and recorded" }),
-  ).toBeVisible();
-  const p = await (await page.request.get("/api/projects/project-1")).json();
-  expect(p.latestUpdate).toContain("completed scope ✓");
-  expect(p.latestUpdate).toContain("agreed acceptance checks");
+  expect(
+    await page.locator(".meeting-message.user p").first().textContent(),
+  ).toBe(source);
+  const tasks = await (await page.request.get("/api/tasks")).json();
+  expect(
+    tasks.some(
+      (t: { description: string }) =>
+        t.description === "  Atlas: completed scope ✓\tAlex  ",
+    ),
+  ).toBe(true);
+  expect(
+    tasks.some(
+      (t: { description: string }) =>
+        t.description === "Atlas: agreed acceptance checks",
+    ),
+  ).toBe(true);
+  await expect(page.locator(".meeting-conversation textarea")).toHaveCount(1);
 });
 test("tablet widths contain the table and keep keyboard scrolling available", async ({
   page,

@@ -4,11 +4,13 @@ import {
   createHash,
   randomBytes,
 } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { workspaceCredentialKey } from "../credential-key.js";
 import type { Repository } from "../database.js";
 import { readQwenConfig, type QwenConfig } from "./config.js";
-import type { ModelCredentialInput } from "../../../../packages/domain/admin.js";
+import type {
+  ModelAllowanceInput,
+  ModelCredentialInput,
+} from "../../../../packages/domain/admin.js";
 
 /** Workspace credentials are encrypted in SQLite; the key stays beside the private database. */
 export class QwenCredentialStore {
@@ -18,23 +20,9 @@ export class QwenCredentialStore {
     private databasePath: string,
   ) {}
   private key(): Buffer {
-    if (this.databasePath === ":memory:") return this.memoryKey;
-    const path = resolve(this.databasePath) + ".credentials-key";
-    if (!existsSync(path)) {
-      if (
-        this.repo.db
-          .prepare("SELECT 1 FROM workspace_ai_credentials LIMIT 1")
-          .get()
-      )
-        throw new Error("The model credential encryption key is missing");
-      writeFileSync(path, randomBytes(32), { mode: 0o600, flag: "wx" });
-    }
-    chmodSync(path, 0o600);
-    const key = readFileSync(path);
-    if (key.length !== 32)
-      throw new Error("Invalid model credential encryption key");
-    return key;
+    return workspaceCredentialKey(this.repo, this.databasePath, this.memoryKey);
   }
+
   read(workspaceId: string): QwenConfig | undefined {
     const row = this.repo.db
       .prepare(
@@ -80,6 +68,24 @@ export class QwenCredentialStore {
       AI_MAX_OUTPUT_TOKENS: "4096",
       AI_MAX_RETRIES: "0",
     })!;
+    this.write(workspaceId, config);
+    return config;
+  }
+  updateAllowance(workspaceId: string, input: ModelAllowanceInput): QwenConfig {
+    const current = this.read(workspaceId);
+    if (!current)
+      throw new Error("Workspace model credential is not configured");
+    const next = {
+      ...current,
+      maxRequests: input.maxRequests,
+      expiresAt: Date.parse(input.expiresAt),
+    };
+    // Keep the same ledger identity: approval changes the total ceiling, never
+    // resets already billed attempts or rotates credentials behind the form.
+    this.write(workspaceId, next);
+    return next;
+  }
+  private write(workspaceId: string, config: QwenConfig) {
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", this.key(), iv);
     cipher.setAAD(Buffer.from(workspaceId));
@@ -95,6 +101,5 @@ export class QwenCredentialStore {
         "INSERT INTO workspace_ai_credentials(workspace_id,encrypted_config) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET encrypted_config=excluded.encrypted_config",
       )
       .run(workspaceId, encrypted);
-    return config;
   }
 }

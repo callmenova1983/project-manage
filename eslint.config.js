@@ -11,11 +11,23 @@ export default ts.config(
       "playwright-report/**",
       "data/**",
       "artifacts/**",
+      // Generated verbatim from @vue-office/pdf by copy-office-runtime.mjs.
+      "apps/web/public/office-assets/pdf.js",
+      "apps/web/public/office-assets/pdf.worker.js",
     ],
   },
   js.configs.recommended,
   ...ts.configs.recommended,
   ...vue.configs["flat/recommended"],
+  {
+    files: ["apps/web/public/voice-recorder.js"],
+    languageOptions: {
+      globals: {
+        AudioWorkletProcessor: "readonly",
+        registerProcessor: "readonly",
+      },
+    },
+  },
   {
     files: ["**/*.{ts,vue,js,mjs}"],
     languageOptions: {

@@ -7,6 +7,24 @@ export const projectOrderInput = z
   })
   .strict();
 export type ProjectOrderInput = z.infer<typeof projectOrderInput>;
+/** Return a complete order or null when the requested placement changes nothing. */
+export function reorderedProjectIds(
+  ids: readonly string[],
+  source: string,
+  target: string,
+  after: boolean,
+): string[] | null {
+  if (
+    source === target ||
+    !ids.includes(source) ||
+    !ids.includes(target) ||
+    new Set(ids).size !== ids.length
+  )
+    return null;
+  const next = ids.filter((id) => id !== source);
+  next.splice(next.indexOf(target) + (after ? 1 : 0), 0, source);
+  return next.every((id, index) => id === ids[index]) ? null : next;
+}
 export function orderedProjectIds(projects: Project[], saved: string[] = []) {
   const ids = new Set(projects.map((p) => p.id));
   const valid = [...new Set(saved)].filter((id) => ids.has(id));

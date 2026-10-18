@@ -1,3 +1,6 @@
+import { taskDependenciesInput } from "./task-dependency-schema.js";
+import { validateTaskDependencies } from "./task-dependencies.js";
+import { validateTaskSchedule } from "./task-schedule.js";
 import { progressArchiveInput } from "./progress-material.js";
 import type { ProgressSource } from "./progress-material.js";
 import { z } from "zod";
@@ -9,6 +12,8 @@ import {
 } from "./time-zone.js";
 import { catalogsInput, type Catalogs } from "./admin.js";
 import type { CompanyDirectory, ProjectMember } from "./directory.js";
+import { projectLocationSchema } from "./project-location.js";
+import { parseDailyReport } from "./daily-report.js";
 export const stages = [
   "potential",
   "proposal",
@@ -57,6 +62,7 @@ export const projectInput = z
     latestUpdate: z.string().max(4000),
     notes: z.string().max(20000),
     aliases: z.array(text(80)).max(15),
+    location: projectLocationSchema.nullable().optional(),
   })
   .strict();
 export const taskInput = z
@@ -73,6 +79,10 @@ export const taskInput = z
     reminderAt: z.string().datetime({ offset: true }).nullable().optional(),
     workDates: z.array(dateSchema).max(31),
     workWeek: dateSchema.nullable(),
+    scheduleStart: dateSchema.nullable().optional(),
+    scheduleEnd: dateSchema.nullable().optional(),
+    milestone: z.boolean().optional(),
+    dependencies: taskDependenciesInput.optional(),
   })
   .strict();
 export const projectSchema = projectInput.extend({
@@ -83,6 +93,18 @@ export const projectSchema = projectInput.extend({
   updatedAt: z.string().datetime(),
 });
 export const taskSchema = taskInput.extend({
+  sortOrder: z.number().int().nonnegative().optional(),
+  voided: z
+    .object({
+      at: z.string().datetime(),
+      actor: text(100),
+      actorId: text(100),
+      reason: text(500),
+      batchId: text(100),
+    })
+    .strict()
+    .nullable()
+    .optional(),
   id: text(100),
   version: z.number().int().positive(),
   updatedAt: z.string().datetime(),
@@ -117,7 +139,7 @@ export interface Activity {
   after: Project | Task | null;
 }
 export interface Snapshot {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   catalogs?: Catalogs;
   settings?: WorkspaceSettings;
   members?: Member[];
@@ -137,7 +159,7 @@ export interface Member {
 }
 export const snapshotImport = z.object({
   ...progressArchiveInput.shape,
-  schemaVersion: z.union([z.literal(1), z.literal(2)]),
+  schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   catalogs: catalogsInput.optional(),
   settings: workspaceSettingsInput.optional(),
   projects: z.array(projectSchema).max(1000),
@@ -155,20 +177,38 @@ export interface Suggestion {
   status: Status;
   confirmed: boolean;
   overwriteConfirmed: boolean;
+  /** Source-derived daily-report attribution; never replaced by the submitter. */
+  dailyReport?: boolean;
+  reporter?: string;
+  reportTo?: string;
+  workDate?: string;
+  invalidWorkDate?: true;
+  assignee?: string;
 }
 export interface Proposal {
   id: string;
   source: string;
+  originalSource?: import("./capture.js").CaptureSource;
   sourceVersion: 1;
   status: "draft" | "applied";
   suggestions: Suggestion[];
   createdAt: string;
   appliedAt?: string;
+  appliedSuggestionIds?: string[];
+  skippedSuggestionIds?: string[];
+  /** Persist exact destinations; titles are not unique identifiers. */
+  appliedResults?: {
+    suggestionId: string;
+    projectId: string;
+    taskId?: string;
+    taskDisposition?: "created" | "linked";
+  }[];
+  createdProjectIds?: string[];
   generator?: {
     provider: "qwen";
     model: string;
     region: string;
-    promptVersion: 1;
+    promptVersion: number;
   };
 }
 export interface AiCapabilities {
@@ -178,6 +218,8 @@ export interface AiCapabilities {
   region: string | null;
   connectionVerified: false;
   remainingAttempts: number;
+  availabilityReason?: "disabled" | "expired" | "exhausted" | null;
+  expiresAt?: string | null;
 }
 export function dayKey(date = new Date(), timeZone = "UTC"): string {
   return timeZone === "UTC"
@@ -192,7 +234,7 @@ export function weekKey(date = new Date(), timeZone = "UTC"): string {
 }
 export function leafTasks(tasks: Task[]): Task[] {
   const parents = new Set(tasks.map((t) => t.parentId).filter(Boolean));
-  return tasks.filter((t) => !parents.has(t.id));
+  return tasks.filter((t) => !t.voided && !parents.has(t.id));
 }
 export function statistics(
   tasks: Task[],
@@ -225,7 +267,18 @@ export function validateGraph(projects: Project[], tasks: Task[]): void {
   )
     throw new DomainError("Duplicate identifiers");
   const byId = new Map(tasks.map((t) => [t.id, t]));
+  const scheduleParents = new Set(
+    tasks.map((task) => task.parentId).filter(Boolean),
+  );
   for (const t of tasks) {
+    validateTaskSchedule(t);
+    if (
+      scheduleParents.has(t.id) &&
+      (t.scheduleStart || t.scheduleEnd || t.milestone)
+    )
+      throw new DomainError(
+        "Parent tasks use aggregate schedules. Clear their independent schedule before adding subtasks.",
+      );
     if (!ids.has(t.projectId))
       throw new DomainError("Task project does not exist");
     if (t.workDates.some((d) => weekKey(new Date(d)) !== t.workWeek))
@@ -236,6 +289,8 @@ export function validateGraph(projects: Project[], tasks: Task[]): void {
       const parent = byId.get(p);
       if (!parent || parent.projectId !== t.projectId)
         throw new DomainError("Parent must belong to the same project");
+      if (!t.voided && parent.voided)
+        throw new DomainError("请先恢复上级任务，再恢复或添加子任务。");
       if (seen.has(p)) throw new DomainError("Circular task hierarchy");
       if (seen.size >= 20)
         throw new DomainError("Task nesting is limited to 20 levels");
@@ -243,38 +298,85 @@ export function validateGraph(projects: Project[], tasks: Task[]): void {
       p = parent.parentId;
     }
   }
+  validateTaskDependencies(tasks);
 }
 export function suggest(source: string, projects: Project[]): Suggestion[] {
-  return source
-    .split(/\r?\n/)
-    .map((line, i) => ({ line, i }))
-    .filter((x) => x.line.trim())
-    .map(({ line, i }) => {
-      const lower = line.toLowerCase();
-      const candidates = projects
-        .filter((p) =>
-          [p.name, ...p.aliases].some((n) => lower.includes(n.toLowerCase())),
-        )
-        .map((p) => ({
-          projectId: p.id,
-          reason: "Project name or alias appears in source",
-        }));
+  const report = parseDailyReport(source);
+  if (report) {
+    return report.map(({ contextText, ...entry }, index) => {
+      const matches = (text: string) =>
+        projects
+          .filter(
+            (p) =>
+              !p.intakeInbox &&
+              [p.name, p.shortName ?? "", ...p.aliases]
+                .filter(Boolean)
+                .some((name) =>
+                  text.toLowerCase().includes(name.toLowerCase()),
+                ),
+          )
+          .map((p) => ({
+            projectId: p.id,
+            reason: "Project name or alias appears in daily report",
+          }));
+      const direct = matches(entry.sourceText);
+      const candidates = direct.length
+        ? direct
+        : matches(contextText ?? entry.sourceText);
       return {
-        id: `line-${i + 1}`,
-        sourceLine: i + 1,
-        sourceText: line,
-        title: line.replace(/^[-*]\s*/, "").slice(0, 240),
+        ...entry,
+        id: `report-${entry.sourceLine}-${index + 1}`,
+        dailyReport: true,
         candidates,
         selectedProjectId:
           candidates.length === 1 ? candidates[0]!.projectId : "",
-        action: "task" as const,
-        status: /\b(done|completed)\b/i.test(line)
-          ? ("done" as const)
-          : ("todo" as const),
         confirmed: false,
         overwriteConfirmed: false,
       };
     });
+  }
+  return (
+    source
+      .split(/\r?\n/)
+      .map((line, i) => ({ line, i }))
+      // assembleCaptureText adds filename-only source headings. They identify
+      // provenance, not work items; preserve original line numbers below.
+      .filter(
+        (x) =>
+          x.line.trim() &&
+          !/^【[^\n]+\.(?:txt|csv|tsv|md|log|json|xlsx?|docx?|pptx?|pdf|png|jpe?g|webp|gif)】$/i.test(
+            x.line.trim(),
+          ),
+      )
+      .map(({ line, i }) => {
+        const lower = line.toLowerCase();
+        const candidates = projects
+          .filter((p) =>
+            [p.name, p.shortName ?? "", ...p.aliases]
+              .filter(Boolean)
+              .some((n) => lower.includes(n.toLowerCase())),
+          )
+          .map((p) => ({
+            projectId: p.id,
+            reason: "Project name or alias appears in source",
+          }));
+        return {
+          id: `line-${i + 1}`,
+          sourceLine: i + 1,
+          sourceText: line,
+          title: line.replace(/^[-*]\s*/, "").slice(0, 240),
+          candidates,
+          selectedProjectId:
+            candidates.length === 1 ? candidates[0]!.projectId : "",
+          action: "task" as const,
+          status: /\b(done|completed)\b/i.test(line)
+            ? ("done" as const)
+            : ("todo" as const),
+          confirmed: false,
+          overwriteConfirmed: false,
+        };
+      })
+  );
 }
 export function parsePaste(
   source: string,

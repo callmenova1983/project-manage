@@ -12,7 +12,12 @@ export const projectDraftFields = projectInput.extend({
   owner: z.string().max(80),
 });
 export const projectEditorDraft = z
-  .object({ fields: projectDraftFields, aliases: z.string().max(2000) })
+  .object({
+    fields: projectDraftFields,
+    aliases: z.string().max(2000),
+    locationText: z.string().max(400).optional(),
+    locationPending: z.boolean().optional(),
+  })
   .strict();
 export const taskEditorDraft = taskInput.extend({
   title: z.string().max(240),

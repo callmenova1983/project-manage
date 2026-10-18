@@ -17,20 +17,36 @@ export const taskFieldCopyInput = z
       .min(1)
       .max(100),
     overwriteConfirmed: z.boolean(),
+    acrossProjects: z.literal(true).optional(),
   })
   .strict();
 export type TaskFieldCopyInput = z.infer<typeof taskFieldCopyInput>;
 export class TaskFieldCopyConflict extends Error {}
+export function hasTaskAssignee(task: Pick<Task, "assignee" | "assigneeId">) {
+  return (
+    !!task.assigneeId ||
+    (!!task.assignee.trim() &&
+      !["unassigned", "未分配", "待补", "未指定"].includes(
+        task.assignee.trim().toLowerCase(),
+      ))
+  );
+}
 export function planTaskFieldCopy(tasks: Task[], raw: TaskFieldCopyInput) {
   const input = taskFieldCopyInput.parse(raw);
   const source = tasks.find((task) => task.id === input.sourceId);
-  if (!source || source.version !== input.sourceVersion)
+  if (!source || source.voided || source.version !== input.sourceVersion)
     throw new TaskFieldCopyConflict(
       "Tasks changed. Close the copy dialog, refresh and try again.",
     );
   const value = source[input.field];
-  if (!value || !value.trim())
+  if (
+    !value ||
+    !value.trim() ||
+    (input.field === "assignee" && !hasTaskAssignee(source))
+  )
     throw new Error("Fill in the source field before copying.");
+  if (input.acrossProjects && input.field !== "assignee")
+    throw new Error("Only assignees can be copied across projects.");
   if (
     new Set(input.targets.map((target) => target.id)).size !==
       input.targets.length ||
@@ -39,9 +55,12 @@ export function planTaskFieldCopy(tasks: Task[], raw: TaskFieldCopyInput) {
     throw new Error("Choose other tasks without duplicates.");
   const targets = input.targets.map((target) => {
     const task = tasks.find(
-      (task) => task.id === target.id && task.projectId === source.projectId,
+      (task) =>
+        task.id === target.id &&
+        (task.projectId === source.projectId ||
+          (input.acrossProjects && input.field === "assignee")),
     );
-    if (!task || task.version !== target.version)
+    if (!task || task.voided || task.version !== target.version)
       throw new TaskFieldCopyConflict(
         "Tasks changed. Close the copy dialog, refresh and try again.",
       );

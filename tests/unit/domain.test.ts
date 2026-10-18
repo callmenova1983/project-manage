@@ -83,4 +83,13 @@ describe("single-source project data", () => {
     ).toContain("<script>");
     expect(dateSchema.safeParse("2026-02-30").success).toBe(false);
   });
+  it("does not turn attachment filename headings into pending tasks", () => {
+    const result = suggest(
+      "【会议记录.txt】\nAtlas: review equipment\n【报价方案.docx】\nMeridian: confirm scope",
+      createSeed(now).projects,
+    );
+    expect(result.map((row) => row.sourceLine)).toEqual([2, 4]);
+    expect(result).toHaveLength(2);
+    expect(result.every((row) => row.selectedProjectId)).toBe(true);
+  });
 });

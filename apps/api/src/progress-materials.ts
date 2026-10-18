@@ -1,4 +1,5 @@
 import type { Mutate } from "./intake.js";
+import { CAPTURE_SCOPE } from "../../../packages/domain/capture.js";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { Worker } from "node:worker_threads";
@@ -11,6 +12,7 @@ import {
 } from "../../../packages/domain/progress-material.js";
 import type { Actor, Project } from "../../../packages/domain/types.js";
 import { HttpError, type Repository } from "./database.js";
+import { parsePdfMaterial } from "./pdf-material.js";
 const require = createRequire(import.meta.url);
 // Fixed worker program: documents are data, never executable HTML/macros/formulas.
 const program = String.raw`
@@ -27,7 +29,16 @@ const {parentPort,workerData:d} = require('node:worker_threads');
   let expanded=0;
   const zip=require(d.fflate).unzipSync(b,{filter:f=>{expanded+=f.originalSize;if(expanded>24*1024*1024)throw Error('The expanded document exceeds 24 MB.');return true;}});
   const required=ext==='xlsx'?'xl/workbook.xml':'word/document.xml';if(!zip[required])throw Error('The Office file does not match its file name.');
-  for(const [name,bytes] of Object.entries(zip))if(/^(word|xl)\/media\//.test(name)){if(!mime(Buffer.from(bytes)))throw Error('An embedded picture format is unsupported. Convert it to PNG or JPEG.');image(Buffer.from(bytes));}
+  let unsupportedPictures=false, extraPictures=false;
+  for(const [name,bytes] of Object.entries(zip))if(/^(word|xl)\/media\//.test(name)){
+   if(bytes.length>8*1024*1024)throw Error('An embedded image exceeds 8 MB.');
+   const picture=Buffer.from(bytes);
+   if(!mime(picture)){unsupportedPictures=true;continue;}
+   if(images.length>=6){extraPictures=true;continue;}
+   image(picture);
+  }
+  if(unsupportedPictures)warnings.push('Some embedded pictures use an unsupported format and were not recognized. Readable text and supported pictures were kept; the original attachment is preserved.');
+  if(extraPictures)warnings.push('Only the first 6 embedded pictures were recognized. Readable text and the original attachment were preserved.');
   if(ext==='docx'){
    kind='word';const {DOMParser}=require(d.xml);
    const plain=(node)=>{if(node.nodeType===3)return node.data;const local=node.localName||'';if(local==='tab')return '\t';if(local==='br')return '\n';if(local==='tr')return Array.from(node.childNodes).filter(n=>n.localName==='tc').map(plain).join('\t')+'\n';let value=Array.from(node.childNodes||[]).map(plain).join('');return value+(local==='p'?'\n':'');};
@@ -44,7 +55,7 @@ const {parentPort,workerData:d} = require('node:worker_threads');
   warnings.push('Legacy Office text was extracted. To recognize embedded pictures, save as XLSX/DOCX or paste their screenshots.');
  }
  else if(['txt','csv','tsv'].includes(ext)){kind='text';text=new TextDecoder('utf-8',{fatal:true}).decode(b);}
- else throw Error('Use PNG, JPEG, WebP, XLS, XLSX, DOC, DOCX, TXT, CSV or TSV.');
+ else throw Error('Use PNG, JPEG, WebP, XLS, XLSX, DOC, DOCX, PDF, TXT, CSV or TSV.');
  if(text.length>16000)throw Error('The document exceeds 16000 characters. Split it into smaller files.');
  if(!text.trim()&&!images.length)throw Error('No readable content was found. Paste a screenshot of the document.');
  parentPort.postMessage({text,kind,images,warnings});
@@ -62,6 +73,8 @@ export async function parseMaterial(
 ): Promise<ParsedMaterial> {
   if (!bytes.length || bytes.length > MATERIAL_LIMIT)
     throw new HttpError(400, "Each file must be no larger than 8 MB.");
+  if (name.split(".").at(-1)?.toLowerCase() === "pdf")
+    return parsePdfMaterial(bytes);
   return new Promise((resolve, reject) => {
     const worker = new Worker(program, {
       eval: true,
@@ -132,93 +145,147 @@ export function registerProgressMaterials(
   const project = (req: FastifyRequest) => {
     const a = actor(req),
       id = (req.params as { id: string }).id;
+    if (!id) return { a, id: CAPTURE_SCOPE };
     repo.get<Project>("projects", a.workspaceId, id);
     return { a, id };
   };
-  app.post(
-    "/api/projects/:id/materials",
-    {
-      bodyLimit: 12 * 1024 * 1024,
-      config: { rateLimit: { max: 12, timeWindow: "1 minute" } },
-    },
-    async (req) => {
-      const { a, id } = project(req),
-        input = materialInput.parse(req.body),
-        bytes = Buffer.from(input.data, "base64");
-      if (bytes.toString("base64") !== input.data)
-        throw new HttpError(400, "Invalid file encoding");
-      const result = await parseMaterial(input.name, bytes);
-      const meta: ProgressMaterial = {
-        id: randomUUID(),
-        name: input.name,
-        kind: result.kind,
-        size: bytes.length,
+  app.post("/api/capture/materials/:materialId/extract", async (req) => {
+    const a = actor(req),
+      key = z
+        .string()
+        .uuid()
+        .parse((req.params as { materialId: string }).materialId);
+    const source = readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, key);
+    const result = source.metadata.referenceOnly
+      ? await parseMaterial(source.metadata.name, source.bytes)
+      : null;
+    return mutate(req, () => {
+      const current = readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, key);
+      if (!result || !current.metadata.referenceOnly) return current.metadata;
+      const meta = {
+        ...current.metadata,
+        referenceOnly: false,
         text: result.text,
+        kind: result.kind,
         imageCount: result.images.length,
         warnings: result.warnings,
       };
-      return mutate(req, () => {
-        repo.get<Project>("projects", a.workspaceId, id);
-        const total = Number(
+      repo.db
+        .prepare(
+          "UPDATE progress_materials SET metadata=?,images=? WHERE id=? AND workspace_id=? AND project_id=?",
+        )
+        .run(
+          JSON.stringify(meta),
+          JSON.stringify(result.images),
+          key,
+          a.workspaceId,
+          CAPTURE_SCOPE,
+        );
+      return meta;
+    });
+  });
+  for (const base of [
+    "/api/projects/:id/materials",
+    "/api/capture/materials",
+  ]) {
+    app.post(
+      base,
+      {
+        bodyLimit: 12 * 1024 * 1024,
+        config: { rateLimit: { max: 12, timeWindow: "1 minute" } },
+      },
+      async (req) => {
+        const { a, id } = project(req),
+          input = (
+            id === CAPTURE_SCOPE
+              ? materialInput
+                  .extend({ referenceOnly: z.boolean().optional() })
+                  .strict()
+              : materialInput
+          ).parse(req.body) as z.infer<typeof materialInput> & {
+            referenceOnly?: boolean;
+          },
+          bytes = Buffer.from(input.data, "base64");
+        if (bytes.toString("base64") !== input.data)
+          throw new HttpError(400, "Invalid file encoding");
+        if (!bytes.length || bytes.length > MATERIAL_LIMIT)
+          throw new HttpError(400, "Each file must be no larger than 8 MB.");
+        const result: ParsedMaterial = input.referenceOnly
+          ? { text: "", kind: "file", images: [], warnings: [] }
+          : await parseMaterial(input.name, bytes);
+        const meta: ProgressMaterial = {
+          id: randomUUID(),
+          name: input.name,
+          kind: result.kind,
+          size: bytes.length,
+          text: result.text,
+          imageCount: result.images.length,
+          warnings: result.warnings,
+          uploadedById: a.id,
+          uploadedBy: a.name,
+          ...(input.referenceOnly ? { referenceOnly: true } : {}),
+        };
+        return mutate(req, () => {
+          if (id !== CAPTURE_SCOPE)
+            repo.get<Project>("projects", a.workspaceId, id);
+          const total = Number(
+            repo.db
+              .prepare(
+                "SELECT coalesce(sum(length(bytes)),0) AS total FROM progress_materials WHERE workspace_id=?",
+              )
+              .get(a.workspaceId)!.total,
+          );
+          if (total + bytes.length > 256 * 1024 * 1024)
+            throw new HttpError(
+              400,
+              "Workspace source files exceed 256 MB. Ask the administrator to archive old files.",
+            );
           repo.db
             .prepare(
-              "SELECT coalesce(sum(length(bytes)),0) AS total FROM progress_materials WHERE workspace_id=?",
+              "INSERT INTO progress_materials(id,workspace_id,project_id,created_at,metadata,bytes,images) VALUES(?,?,?,?,?,?,?)",
             )
-            .get(a.workspaceId)!.total,
+            .run(
+              meta.id,
+              a.workspaceId,
+              id,
+              new Date().toISOString(),
+              JSON.stringify(meta),
+              bytes,
+              JSON.stringify(result.images),
+            );
+          return meta;
+        });
+      },
+    );
+    app.post(`${base}/list`, (req) => {
+      const { a, id } = project(req);
+      return z
+        .object({ ids: z.array(z.string().uuid()).max(6) })
+        .strict()
+        .parse(req.body)
+        .ids.map((key) => readMaterial(repo, a.workspaceId, id, key).metadata);
+    });
+    app.get(`${base}/:materialId`, (req, reply) => {
+      const { a, id } = project(req),
+        m = readMaterial(
+          repo,
+          a.workspaceId,
+          id,
+          z
+            .string()
+            .uuid()
+            .parse((req.params as { materialId: string }).materialId),
         );
-        if (total + bytes.length > 256 * 1024 * 1024)
-          throw new HttpError(
-            400,
-            "Workspace source files exceed 256 MB. Ask the administrator to archive old files.",
-          );
-        repo.db
-          .prepare(
-            "INSERT INTO progress_materials(id,workspace_id,project_id,created_at,metadata,bytes,images) VALUES(?,?,?,?,?,?,?)",
-          )
-          .run(
-            meta.id,
-            a.workspaceId,
-            id,
-            new Date().toISOString(),
-            JSON.stringify(meta),
-            bytes,
-            JSON.stringify(result.images),
-          );
-        return meta;
-      });
-    },
-  );
-  app.post("/api/projects/:id/materials/list", (req) => {
-    const { a, id } = project(req);
-    return z
-      .object({ ids: z.array(z.string().uuid()).max(6) })
-      .strict()
-      .parse(req.body)
-      .ids.map((key) => readMaterial(repo, a.workspaceId, id, key).metadata);
-  });
-  app.get("/api/projects/:id/materials/:materialId", (req, reply) => {
-    const { a, id } = project(req),
-      m = readMaterial(
-        repo,
-        a.workspaceId,
-        id,
-        z
-          .string()
-          .uuid()
-          .parse((req.params as { materialId: string }).materialId),
-      );
-    reply.header("Cache-Control", "private, no-store");
-    reply
-      .type("application/octet-stream")
-      .header(
-        "Content-Disposition",
-        `attachment; filename*=UTF-8''${encodeURIComponent(m.metadata.name)}`,
-      );
-    return reply.send(m.bytes);
-  });
-  app.get(
-    "/api/projects/:id/materials/:materialId/images/:index",
-    (req, reply) => {
+      reply.header("Cache-Control", "private, no-store");
+      reply
+        .type("application/octet-stream")
+        .header(
+          "Content-Disposition",
+          `attachment; filename*=UTF-8''${encodeURIComponent(m.metadata.name)}`,
+        );
+      return reply.send(m.bytes);
+    });
+    app.get(`${base}/:materialId/images/:index`, (req, reply) => {
       const { a, id } = project(req),
         p = req.params as { materialId: string; index: string },
         m = readMaterial(
@@ -234,6 +301,6 @@ export function registerProgressMaterials(
       return reply
         .type(header!.slice(5, -7))
         .send(Buffer.from(data!, "base64"));
-    },
-  );
+    });
+  }
 }

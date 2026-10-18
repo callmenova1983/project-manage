@@ -1,4 +1,4 @@
-export const QWEN_MODEL = "qwen3.6-35b-a3b";
+export const QWEN_MODEL = "qwen3.8-max";
 export const regions = [
   "cn-beijing",
   "ap-southeast-1",
@@ -7,10 +7,11 @@ export const regions = [
 ] as const;
 export type QwenRegion = (typeof regions)[number];
 export interface QwenConfig {
+  runtime?: "legacy" | "sdk";
   region: QwenRegion;
   baseUrl: string;
   apiKey: string;
-  model: typeof QWEN_MODEL;
+  model: string;
   budgetId: string;
   maxRequests: number;
   expiresAt: number;
@@ -22,12 +23,20 @@ function invalid(field: string): never {
   // Never include the submitted value (especially secrets) in errors.
   throw new Error(`Invalid or missing server AI configuration: ${field}`);
 }
+export function readAiRuntime(
+  env: Record<string, string | undefined>,
+): "legacy" | "sdk" {
+  const runtime = env.AI_RUNTIME ?? "legacy";
+  if (runtime !== "legacy" && runtime !== "sdk") invalid("AI_RUNTIME");
+  return runtime;
+}
 export function readQwenConfig(
   env: Record<string, string | undefined>,
 ): QwenConfig | undefined {
   const provider = env.AI_PROVIDER ?? "rules";
   if (provider === "rules") return undefined;
   if (provider !== "qwen") invalid("AI_PROVIDER");
+  const runtime = readAiRuntime(env);
   if (env.AI_CALLS_ENABLED !== "true") invalid("AI_CALLS_ENABLED");
   const region = env.QWEN_REGION as QwenRegion;
   if (!regions.includes(region)) invalid("QWEN_REGION");
@@ -61,7 +70,8 @@ export function readQwenConfig(
     !(url.hostname === shared[region] || dedicated)
   )
     invalid("QWEN_BASE_URL");
-  if (env.QWEN_MODEL && env.QWEN_MODEL !== QWEN_MODEL) invalid("QWEN_MODEL");
+  if (env.QWEN_MODEL && !/^qwen[a-z0-9._-]{0,99}$/.test(env.QWEN_MODEL))
+    invalid("QWEN_MODEL");
   const apiKey = env.DASHSCOPE_API_KEY ?? "";
   if (!apiKey || apiKey.length > 1024 || /\s/.test(apiKey))
     invalid("DASHSCOPE_API_KEY");
@@ -82,10 +92,11 @@ export function readQwenConfig(
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now())
     invalid("AI_BUDGET_EXPIRES_AT");
   return {
+    runtime,
     region,
     baseUrl: url.href.replace(/\/$/, ""),
     apiKey,
-    model: QWEN_MODEL,
+    model: env.QWEN_MODEL ?? QWEN_MODEL,
     budgetId,
     expiresAt,
     maxRequests: number("AI_MAX_REQUESTS", 1, 1000),

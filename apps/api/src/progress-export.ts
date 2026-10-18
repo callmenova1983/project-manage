@@ -5,13 +5,15 @@ import type { Activity, Project } from "../../../packages/domain/types.js";
 import { z } from "zod";
 import { HttpError, type Repository } from "./database.js";
 export function exportProgress(repo: Repository, ws: string) {
+  const projects = repo.read<Project>("projects", ws);
+  const projectIds = new Set(projects.map((project) => project.id));
   const activities = repo.db
     .prepare(
       "SELECT data FROM activities WHERE workspace_id=? ORDER BY created_at",
     )
     .all(ws)
     .map((r) => JSON.parse(String(r.data)) as Activity);
-  const archive = repo.read<Project>("projects", ws).flatMap((project) =>
+  const archive = projects.flatMap((project) =>
     progressHistory(project, activities).map((entry) => ({
       ...entry,
       projectId: project.id,
@@ -23,7 +25,9 @@ export function exportProgress(repo: Repository, ws: string) {
   const files = repo.db
     .prepare("SELECT * FROM progress_materials WHERE workspace_id=?")
     .all(ws)
-    .filter((r) => ids.has(String(r.id)))
+    .filter(
+      (r) => projectIds.has(String(r.project_id)) || ids.has(String(r.id)),
+    )
     .map((r) => ({
       projectId: String(r.project_id),
       metadata: JSON.parse(String(r.metadata)),
@@ -74,7 +78,7 @@ export function importProgress(
           file.metadata.id,
           ws,
           file.projectId,
-          new Date().toISOString(),
+          file.metadata.createdAt ?? new Date().toISOString(),
           JSON.stringify(file.metadata),
           bytes,
           JSON.stringify(file.images),

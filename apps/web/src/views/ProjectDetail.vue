@@ -1,44 +1,90 @@
 <script setup lang="ts">
-import { ElDialog } from "element-plus";
-import "element-plus/es/components/dialog/style/css";
+import {
+  projectViewQuery,
+  type ProjectViewFilters,
+} from "../../../../packages/domain/project-view";
 import ProjectFollow from "../components/ProjectFollow.vue";
 import { memberName } from "../../../../packages/domain/members";
 import ProgressHistory from "../components/ProgressHistory.vue";
+import ProjectFiles from "../components/ProjectFiles.vue";
 import InlineUpdate from "../components/InlineUpdate.vue";
 import InlineNotes from "../components/InlineNotes.vue";
-import TaskDistribution from "../components/TaskDistribution.vue";
+import ProjectWorkspacePane from "../components/ProjectWorkspacePane.vue";
+import WorkspaceDialog from "../components/WorkspaceDialog.vue";
+import ProjectQuickField from "../components/ProjectQuickField.vue";
+import ProjectOwner from "../components/ProjectOwner.vue";
 import { catalogLabel } from "../composables/catalogs";
 import { t, formatDate, formatNumber } from "../locales";
-import { computed, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue";
+import { onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
+import { confirmDiscard, confirmRetainedDiscard } from "../composables/unsaved";
 import {
   PhArrowLeft,
   PhPencilSimple,
-  PhClipboardText,
   PhChartLineUp,
-  PhUserCircle,
+  PhDotsThree,
+  PhInfo,
+  PhMapPin,
 } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
-import { statistics, statuses } from "../../../../packages/domain/types";
+import { statistics } from "../../../../packages/domain/types";
+import {
+  locationLabel,
+  locationPrecisionLabel,
+} from "../../../../packages/domain/project-location";
 import ProjectEditor from "../components/ProjectEditor.vue";
-import ClientLabel from "../components/ClientLabel.vue";
 import ProjectQuickActions from "../components/ProjectQuickActions.vue";
 import ProjectMembers from "../components/ProjectMembers.vue";
-import TaskList from "../components/TaskList.vue";
-import PasteTasks from "../components/PasteTasks.vue";
-import StatusBadge from "../components/StatusBadge.vue";
+import ProjectTaskWorkspace from "../components/ProjectTaskWorkspace.vue";
+const SingleProjectOverview = defineAsyncComponent(
+  () => import("../components/SingleProjectOverview.vue"),
+);
 const store = useWorkspace(),
   route = useRoute();
 const sourceOpen = ref(false);
+const tab = ref<"tasks" | "progress" | "materials">("tasks");
+const infoOpen = ref(false),
+  moreOpen = ref(false);
+const progressEditor = ref<InstanceType<typeof InlineUpdate>>();
+function selectTab(value: typeof tab.value) {
+  tab.value = value;
+}
+function tabKey(event: KeyboardEvent, value: typeof tab.value) {
+  const values = ["tasks", "progress", "materials"] as const;
+  const index = values.indexOf(value);
+  const next =
+    event.key === "ArrowRight"
+      ? values[(index + 1) % 3]
+      : event.key === "ArrowLeft"
+        ? values[(index + 2) % 3]
+        : event.key === "Home"
+          ? values[0]
+          : event.key === "End"
+            ? values[2]
+            : undefined;
+  if (!next) return;
+  event.preventDefault();
+  selectTab(next);
+  void nextTick(() => document.getElementById(`project-tab-${next}`)?.focus());
+}
+function reportProgress() {
+  if (!confirmDiscard()) return;
+  tab.value = "progress";
+  void nextTick(() => progressEditor.value?.edit());
+}
 watch(
   () => route.hash,
   (hash) => {
-    if (hash === "#source-records") sourceOpen.value = true;
+    if (hash === "#source-records" || hash === "#project-files") {
+      sourceOpen.value = hash === "#source-records";
+      tab.value = "materials";
+    }
+    if (hash === "#progress-history") tab.value = "progress";
+    if (hash.startsWith("#task-")) tab.value = "tasks";
   },
   { immediate: true },
 );
-const editing = ref(false),
-  paste = ref(false);
+const editing = ref(false);
 const router = useRouter();
 const quickActions = ref<InstanceType<typeof ProjectQuickActions> | null>(null);
 const project = computed(() =>
@@ -47,267 +93,356 @@ const project = computed(() =>
 const tasks = computed(() =>
   store.data.tasks.filter((t) => t.projectId === project.value?.id),
 );
-const taskFilter = ref("all");
-const filteredTasks = computed(() => {
-  if (taskFilter.value === "all") return tasks.value;
-  const included = new Set(
-    tasks.value.filter((t) => t.status === taskFilter.value).map((t) => t.id),
-  );
-  for (const task of tasks.value) {
-    if (!included.has(task.id)) continue;
-    let parent = tasks.value.find((t) => t.id === task.parentId);
-    while (parent) {
-      included.add(parent.id);
-      parent = tasks.value.find((t) => t.id === parent!.parentId);
-    }
-  }
-  return tasks.value.filter((t) => included.has(t.id));
-});
-const counts = computed(() => statistics(tasks.value));
-const activity = computed(() =>
-  store.data.activities
-    .filter((a) => a.projectId === project.value?.id)
-    .slice(0, 8),
+onBeforeRouteUpdate((to, from) =>
+  to.params.id !== from.params.id ? confirmRetainedDiscard() : confirmDiscard(),
 );
-
-function activityLabel(action: string) {
-  const imported =
-    /^Replaced workspace with (\d+) projects and (\d+) tasks$/.exec(action);
-  return imported
-    ? t("Replaced workspace with {projects} projects and {tasks} tasks", {
-        projects: Number(imported[1]),
-        tasks: Number(imported[2]),
-      })
-    : t(action);
-}
+const counts = computed(() => statistics(tasks.value));
+watch(
+  () => route.params.id,
+  (value, previous) => {
+    if (value !== previous) {
+      tab.value = ["#source-records", "#project-files"].includes(route.hash)
+        ? "materials"
+        : route.hash === "#progress-history"
+          ? "progress"
+          : "tasks";
+      infoOpen.value = moreOpen.value = editing.value = false;
+      sourceOpen.value = route.hash === "#source-records";
+    }
+  },
+);
 </script>
 <template>
-  <section v-if="project" class="page detail-page">
-    <RouterLink to="/projects" class="back-link"
+  <section v-if="project" :key="project.id" class="page detail-page">
+    <RouterLink
+      :to="{
+        path: '/projects',
+        query: {
+          ...projectViewQuery(store.projectNavigation as ProjectViewFilters),
+          view: ['board', 'cards'].includes(String(route.query.returnView))
+            ? String(route.query.returnView)
+            : undefined,
+        },
+      }"
+      class="back-link"
       ><PhArrowLeft :size="16" />{{ t("All projects") }}</RouterLink
     >
-    <p v-if="project.categoryIds?.length" class="muted">
-      {{
-        project.categoryIds
-          .map((id) => catalogLabel("categories", id))
-          .join(" · ")
-      }}
-    </p>
-    <div class="page-heading">
-      <div>
+    <header class="project-header">
+      <div class="project-heading">
         <h1
           :title="t('Double-click to edit name and short name')"
           @dblclick="quickActions?.rename()"
         >
           {{ project.name }}
         </h1>
-        <p v-if="project.shortName" class="muted">
-          {{ t("Short name") }}：{{ project.shortName }}
-        </p>
-        <p class="page-subtitle">
-          <ClientLabel :client="project.client" />
-          <span v-if="project.client.trim()" class="dot-separator">·</span>
-          {{ t(project.discipline) }}
-        </p>
-      </div>
-      <div class="heading-actions">
         <ProjectFollow :id="project.id" :name="project.name" />
+        <span class="heading-spacer"></span>
+        <button @click="infoOpen = true">
+          <PhInfo :size="17" />{{ t("Project details") }}
+        </button>
+        <button
+          :aria-label="t('More project actions')"
+          class="icon-button"
+          @click="moreOpen = true"
+        >
+          <PhDotsThree :size="22" />
+        </button>
+      </div>
+      <div class="project-metadata">
+        <ProjectQuickField :project="project" field="stage" />
+        <ProjectOwner :project="project" />
+        <ProjectQuickField :project="project" field="client" />
+        <ProjectQuickField :project="project" field="channelId" />
+        <span class="completion-label">{{
+          t("{done} of {total} tasks completed", {
+            done: formatNumber(counts.done),
+            total: formatNumber(counts.total),
+          })
+        }}</span>
+      </div>
+    </header>
+    <div class="latest-progress-summary">
+      <PhChartLineUp :size="17" aria-hidden="true" />
+      <button
+        class="text-button progress-summary-text"
+        :title="project.latestUpdate"
+        @click="selectTab('progress')"
+      >
+        <strong>{{ t("Latest progress log") }}</strong>
+        <span>{{ project.latestUpdate || t("No update reported yet.") }}</span>
+      </button>
+      <time v-if="project.reportedAt" :datetime="project.reportedAt">{{
+        formatDate(project.reportedAt, { month: "short", day: "numeric" })
+      }}</time>
+      <button class="text-button report-progress" @click="reportProgress">
+        {{ t("Record progress") }}
+      </button>
+    </div>
+    <div
+      class="project-tabs"
+      role="tablist"
+      :aria-label="t('Project workspace')"
+    >
+      <button
+        v-for="item in [
+          ['tasks', 'Tasks'],
+          ['progress', 'Progress'],
+          ['materials', 'Materials'],
+        ] as const"
+        :id="`project-tab-${item[0]}`"
+        :key="item[0]"
+        role="tab"
+        :aria-selected="tab === item[0]"
+        :aria-controls="`project-panel-${item[0]}`"
+        :tabindex="tab === item[0] ? 0 : -1"
+        @keydown="tabKey($event, item[0])"
+        @click="selectTab(item[0])"
+      >
+        {{ t(item[1])
+        }}<span v-if="item[0] === 'tasks'">{{
+          formatNumber(counts.total)
+        }}</span>
+      </button>
+    </div>
+    <ProjectWorkspacePane
+      :active="tab === 'tasks'"
+      id="project-panel-tasks"
+      class="project-tab-panel"
+      role="tabpanel"
+      aria-labelledby="project-tab-tasks"
+    >
+      <ProjectTaskWorkspace :key="project.id" :project-id="project.id" />
+    </ProjectWorkspacePane>
+    <ProjectWorkspacePane
+      :active="tab === 'progress'"
+      id="project-panel-progress"
+      class="project-tab-panel progress-panel"
+      role="tabpanel"
+      aria-labelledby="project-tab-progress"
+    >
+      <section class="panel progress-composer">
+        <div class="section-heading">
+          <h2>{{ t("Latest progress log") }}</h2>
+        </div>
+        <InlineUpdate ref="progressEditor" :project="project" />
+        <small class="muted" v-if="project.reportedAt"
+          >{{
+            formatDate(project.reportedAt, {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })
+          }}<template v-if="project.reportedBy">
+            · {{ project.reportedBy }}</template
+          ></small
+        >
+      </section>
+      <ProgressHistory
+        :project="project"
+        expanded
+        :active="tab === 'progress'"
+      />
+    </ProjectWorkspacePane>
+    <ProjectWorkspacePane
+      :active="tab === 'materials'"
+      id="project-panel-materials"
+      class="project-tab-panel materials-panel"
+      role="tabpanel"
+      aria-labelledby="project-tab-materials"
+    >
+      <ProjectFiles
+        v-if="tab === 'materials'"
+        :key="project.id"
+        :project-id="project.id"
+      />
+      <section class="panel project-background">
+        <h2>{{ t("Project context") }}</h2>
+        <p v-if="project.description">{{ project.description }}</p>
+        <p v-else class="muted">{{ t("No project context yet.") }}</p>
+        <button class="text-button" @click="editing = true">
+          {{ t("Edit project context") }}
+        </button>
+      </section>
+      <details
+        id="source-records"
+        class="panel source-records"
+        :open="sourceOpen"
+        @toggle="sourceOpen = ($event.currentTarget as HTMLDetailsElement).open"
+      >
+        <summary>
+          {{ t("Source records")
+          }}<span>{{ t("Meeting text and earlier context") }}</span>
+        </summary>
+        <InlineNotes :project="project" />
+      </details>
+    </ProjectWorkspacePane>
+    <WorkspaceDialog
+      :open="infoOpen"
+      :title="t('Project details')"
+      variant="drawer"
+      @close="confirmDiscard() && (infoOpen = false)"
+    >
+      <div class="project-facts">
+        <h3>{{ project.name }}</h3>
+        <dl>
+          <dt>{{ t("Stage") }}</dt>
+          <dd><ProjectQuickField :project="project" field="stage" /></dd>
+          <dt>{{ t("Project owner") }}</dt>
+          <dd><ProjectOwner :project="project" /></dd>
+          <dt>{{ t("Client") }}</dt>
+          <dd><ProjectQuickField :project="project" field="client" /></dd>
+          <dt>{{ t("Channel") }}</dt>
+          <dd><ProjectQuickField :project="project" field="channelId" /></dd>
+          <dt>{{ t("Project location") }}</dt>
+          <dd class="project-city-fact">
+            <template v-if="project.location">
+              <strong
+                ><PhMapPin :size="15" aria-hidden="true" />{{
+                  locationLabel(project.location)
+                }}</strong
+              >
+              <small
+                >{{
+                  t(
+                    project.location.confirmed
+                      ? "Location confirmed"
+                      : "Location confirmation pending",
+                  )
+                }}
+                · {{ t(locationPrecisionLabel(project.location)) }}</small
+              >
+              <small v-if="project.location.precision === 'point'">{{
+                t(
+                  "Coordinates are supplied by the user; accuracy depends on the entered or selected position.",
+                )
+              }}</small>
+            </template>
+            <span v-else class="muted">{{ t("No location set") }}</span>
+            <div class="project-city-actions">
+              <button
+                type="button"
+                class="text-button"
+                @click="
+                  if (confirmDiscard()) {
+                    infoOpen = false;
+                    editing = true;
+                  }
+                "
+              >
+                {{
+                  t(
+                    project.location
+                      ? "Change project location"
+                      : "Set project location",
+                  )
+                }}
+              </button>
+              <RouterLink
+                :to="{ path: '/project-map', query: { project: project.id } }"
+                @click="infoOpen = false"
+                >{{ t("Open project map") }}</RouterLink
+              >
+            </div>
+          </dd>
+          <dt>{{ t("Discipline") }}</dt>
+          <dd>{{ t(project.discipline) }}</dd>
+          <template v-if="project.shortName"
+            ><dt>{{ t("Short name") }}</dt>
+            <dd>{{ project.shortName }}</dd></template
+          >
+          <template v-if="project.aliases.length"
+            ><dt>{{ t("Aliases:") }}</dt>
+            <dd>{{ project.aliases.join(" · ") }}</dd></template
+          >
+          <template v-if="project.categoryIds?.length"
+            ><dt>{{ t("Categories") }}</dt>
+            <dd>
+              {{
+                project.categoryIds
+                  .map((id) => catalogLabel("categories", id))
+                  .join(" · ")
+              }}
+            </dd></template
+          >
+        </dl>
+        <button
+          @click="
+            if (confirmDiscard()) {
+              infoOpen = false;
+              editing = true;
+            }
+          "
+        >
+          <PhPencilSimple :size="16" />{{ t("Edit project") }}
+        </button>
+        <section
+          v-if="project.participantIds?.length"
+          class="project-participants"
+        >
+          <h3>{{ t("Project participants:") }}</h3>
+          <p>
+            {{
+              project.participantIds
+                .map((id) =>
+                  memberName(
+                    id,
+                    "Member unavailable",
+                    store.data.members ?? [],
+                  ),
+                )
+                .join(" · ")
+            }}
+          </p>
+        </section>
+        <ProjectMembers :project-id="project.id" />
+        <SingleProjectOverview
+          v-if="infoOpen"
+          :key="project.id"
+          :project="project"
+        />
+      </div>
+    </WorkspaceDialog>
+    <WorkspaceDialog
+      :open="moreOpen"
+      :title="t('More project actions')"
+      variant="sheet"
+      @close="moreOpen = false"
+    >
+      <div class="project-action-list">
+        <button
+          @click="
+            moreOpen = false;
+            editing = true;
+          "
+        >
+          <PhPencilSimple :size="18" />{{ t("Edit project") }}
+        </button>
         <ProjectQuickActions
           ref="quickActions"
           :project="project"
-          @merged="router.replace(`/projects/${$event.id}`)"
-        /><button :disabled="editing" @click="editing = true">
-          <PhPencilSimple :size="16" />{{ t("Edit project") }}
-        </button>
+          labeled
+          @merged="
+            moreOpen = false;
+            router.replace(`/projects/${$event.id}`);
+          "
+        />
+        <RouterLink :to="`/activity?project=${project.id}`">{{
+          t("Recent activity")
+        }}</RouterLink>
       </div>
-    </div>
-    <ElDialog
-      v-model="editing"
+    </WorkspaceDialog>
+    <WorkspaceDialog
+      :open="editing"
       :title="t('Edit project')"
-      width="min(780px, calc(100vw - 24px))"
-      :close-on-click-modal="false"
-      :close-on-press-escape="false"
-      :show-close="false"
-      destroy-on-close
+      :busy="store.busy"
+      @close="confirmDiscard() && (editing = false)"
     >
       <ProjectEditor
+        v-if="editing"
         :project="project"
         @close="editing = false"
         @saved="editing = false"
       />
-    </ElDialog>
-    <div class="project-overview-strip">
-      <StatusBadge :stage="project.stage" />
-      <span
-        ><PhUserCircle :size="16" />{{ t("Owner") }} ·
-        {{
-          t(
-            memberName(
-              project.ownerId,
-              project.owner,
-              store.data.members ?? [],
-            ),
-          )
-        }}</span
-      >
-      <span class="completion-label">{{
-        t("{done} of {total} tasks completed", {
-          done: formatNumber(counts.done),
-          total: formatNumber(counts.total),
-        })
-      }}</span>
-      <TaskDistribution :tasks="tasks" compact :showLegend="false" />
-    </div>
-    <div class="project-workspace">
-      <div class="project-main">
-        <section class="update-card">
-          <div class="update-heading">
-            <PhChartLineUp :size="18" />
-            <h3>{{ t("Latest progress log") }}</h3>
-          </div>
-          <div class="report-text"><InlineUpdate :project="project" /></div>
-          <small class="muted"
-            >{{
-              project.reportedAt
-                ? formatDate(project.reportedAt, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })
-                : t("Report time unavailable")
-            }}<template v-if="project.reportedBy">
-              · {{ project.reportedBy }}</template
-            ></small
-          >
-        </section>
-        <section class="panel tasks-panel">
-          <div class="section-heading">
-            <h2>
-              {{ t("Tasks") }}
-              <span class="title-count">{{ formatNumber(counts.total) }}</span>
-            </h2>
-            <button class="text-button" :disabled="paste" @click="paste = true">
-              <PhClipboardText :size="16" />{{ t("Paste tasks") }}
-            </button>
-          </div>
-          <div
-            class="detail-task-filters"
-            role="group"
-            :aria-label="t('Filter tasks')"
-          >
-            <button
-              :aria-pressed="taskFilter === 'all'"
-              @click="taskFilter = 'all'"
-            >
-              {{ t("All") }} {{ formatNumber(counts.total) }}
-            </button>
-            <button
-              v-for="status in statuses"
-              :key="status"
-              :aria-pressed="taskFilter === status"
-              @click="taskFilter = status"
-            >
-              <StatusBadge :status="status" />{{ formatNumber(counts[status]) }}
-            </button>
-          </div>
-          <PasteTasks
-            v-if="paste"
-            :projectId="project.id"
-            @close="paste = false"
-          />
-          <TaskList :tasks="filteredTasks" :projectId="project.id" />
-        </section>
-        <ProgressHistory :project="project" />
-        <details
-          id="source-records"
-          class="panel source-records"
-          :open="sourceOpen"
-          @toggle="
-            sourceOpen = ($event.currentTarget as HTMLDetailsElement).open
-          "
-        >
-          <summary>
-            {{ t("Source records") }}
-            <span>{{ t("Meeting text and earlier context") }}</span>
-          </summary>
-          <InlineNotes :project="project" />
-        </details>
-        <details class="panel detail-history">
-          <summary>
-            {{ t("Recent activity") }}
-            <span>{{ formatNumber(activity.length) }}</span>
-          </summary>
-          <RouterLink :to="`/activity?project=${project.id}`">{{
-            t("View history")
-          }}</RouterLink>
-          <div v-for="event in activity" :key="event.id" class="activity-mini">
-            <span class="avatar small">{{ event.actor.slice(0, 1) }}</span>
-            <div>
-              <strong>{{ event.actor }}</strong> {{ activityLabel(event.action)
-              }}<small>{{
-                formatDate(event.createdAt, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                })
-              }}</small>
-            </div>
-          </div>
-        </details>
-      </div>
-      <aside class="project-sidebar">
-        <section class="panel project-facts">
-          <h3>{{ t("Project overview") }}</h3>
-          <dl>
-            <dt>{{ t("Client") }}</dt>
-            <dd>
-              <ClientLabel
-                v-if="project.client.trim()"
-                :client="project.client"
-              /><button v-else class="text-button" @click="editing = true">
-                {{ t("Add client") }}
-              </button>
-            </dd>
-            <dt>{{ t("Discipline") }}</dt>
-            <dd>{{ t(project.discipline) }}</dd>
-            <template v-if="project.shortName"
-              ><dt>{{ t("Short name") }}</dt>
-              <dd>{{ project.shortName }}</dd></template
-            >
-            <template v-if="project.aliases.length"
-              ><dt>{{ t("Aliases:") }}</dt>
-              <dd class="alias-tags">
-                <span v-for="alias in project.aliases" :key="alias">{{
-                  alias
-                }}</span>
-              </dd></template
-            >
-          </dl>
-          <details
-            v-if="
-              project.description &&
-              project.description.trim() !== project.latestUpdate.trim()
-            "
-            class="project-background"
-          >
-            <summary>{{ t("Project context") }}</summary>
-            <p>{{ project.description }}</p>
-          </details>
-        </section>
-        <section
-          v-if="project.participantIds?.length"
-          class="panel project-participants"
-        >
-          {{ t("Project participants:") }}
-          {{
-            project.participantIds
-              .map((id) =>
-                memberName(id, "Member unavailable", store.data.members ?? []),
-              )
-              .join(" · ")
-          }}
-        </section>
-        <ProjectMembers :projectId="project.id" />
-      </aside>
-    </div>
+    </WorkspaceDialog>
   </section>
   <section v-else class="empty">
     <h1>{{ t("Project not found") }}</h1>
@@ -318,123 +453,190 @@ function activityLabel(action: string) {
 </template>
 
 <style scoped>
-.detail-page {
-  max-width: 1560px;
-  margin: 0 auto;
-  padding: 22px 24px;
+.project-city-fact {
+  display: grid;
+  gap: 6px;
 }
-.back-link {
-  margin-bottom: 14px;
-}
-.page-heading {
-  margin-bottom: 18px;
-}
-h1 {
-  font-size: 25px;
-}
-.project-overview-strip {
+.project-city-fact strong,
+.project-city-actions {
   display: flex;
   align-items: center;
-  gap: 18px;
   flex-wrap: wrap;
-  padding: 12px 16px;
-  margin-bottom: 20px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  gap: 8px;
+}
+.project-city-fact small {
+  color: var(--muted);
+}
+.project-city-actions {
   font-size: 12px;
 }
-.project-overview-strip > span {
+.back-link {
+  margin-bottom: 4px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+  min-height: 32px;
 }
-.project-overview-strip .task-distribution {
-  width: 150px;
-  margin-left: auto;
+.project-header {
+  padding: 4px 0 10px;
 }
-.project-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  gap: 20px;
-  align-items: start;
-}
-.project-main,
-.project-sidebar {
-  min-width: 0;
-}
-.project-workspace .panel {
-  padding: 18px;
-  margin-bottom: 16px;
-}
-.update-card {
-  padding: 18px 20px;
-  border: 1px solid var(--accent-border);
-  background: var(--accent-bg);
-  border-radius: 10px;
-  margin-bottom: 18px;
-}
-.update-heading {
+.project-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--accent);
+  gap: 10px;
+  min-width: 0;
 }
-.update-heading h3 {
+.project-heading h1 {
   margin: 0;
-  font-size: 13px;
-}
-.report-text {
-  font-size: 14px;
-  line-height: 1.8;
-  margin: 12px 0;
-  white-space: pre-wrap;
+  font-size: 25px;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
-.tasks-panel .section-heading {
-  margin-bottom: 12px;
+.heading-spacer {
+  flex: 1;
 }
-.tasks-panel h2 {
-  font-size: 18px;
+.project-heading > button {
+  flex: none;
 }
-.detail-task-filters {
+.project-metadata {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 4px 16px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin-top: 6px;
 }
-.detail-task-filters button {
+.completion-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.latest-progress-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.latest-progress-summary > svg {
+  color: var(--accent);
+  flex: none;
+}
+.progress-summary-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 0;
+  text-align: left;
+  color: var(--text);
+}
+.progress-summary-text strong {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.progress-summary-text span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.latest-progress-summary time {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.report-progress {
+  flex: none;
+  color: var(--accent);
+  font-size: 13px;
+}
+.project-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  margin: 14px 0 0;
+  gap: 20px;
+}
+.project-tabs button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 4px;
+  min-height: 44px;
+  color: var(--muted);
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 9px;
-  font-size: 11px;
-  min-height: 30px;
-  background: transparent;
-  border-color: transparent;
-  color: var(--muted);
 }
-.detail-task-filters button[aria-pressed="true"] {
-  border-color: var(--accent-border);
-  background: var(--accent-bg);
+.project-tabs button[aria-selected="true"] {
   color: var(--accent);
+  box-shadow: inset 0 -2px var(--accent);
 }
-.detail-task-filters :deep(.status-badge) {
-  background: transparent;
-  border: 0;
-  padding: 0;
+.project-tabs span {
+  font-size: 11px;
+  background: var(--surface-subtle);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.project-tab-panel {
+  padding-top: 14px;
+}
+.progress-panel,
+.materials-panel {
+  max-width: 1000px;
+}
+.project-tab-panel[style*="display: none"] {
+  display: none;
+}
+.progress-composer {
+  margin-bottom: 14px;
+}
+.progress-composer h2,
+.project-background h2 {
+  font-size: 16px;
+  margin: 0;
+}
+.progress-composer small {
+  display: block;
+  margin-top: 8px;
+}
+.project-background p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.source-records summary {
+  cursor: pointer;
+  font-size: 14px;
+}
+.source-records summary span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: 12px;
 }
 .project-facts h3 {
-  font-size: 13px;
-  margin-bottom: 18px;
+  font-size: 17px;
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
 }
 .project-facts dl {
   display: grid;
-  grid-template-columns: 68px minmax(0, 1fr);
-  gap: 14px 10px;
-  font-size: 12px;
-  margin: 0;
+  grid-template-columns: 80px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
 }
 .project-facts dt {
   color: var(--muted);
@@ -443,128 +645,85 @@ h1 {
   margin: 0;
   overflow-wrap: anywhere;
 }
-.alias-tags {
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-.alias-tags span {
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-.project-background {
-  margin-top: 20px;
-  padding-top: 14px;
+.project-participants {
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  margin-top: 24px;
+  padding-top: 16px;
 }
-.project-background p {
-  line-height: 1.8;
-  overflow-wrap: anywhere;
+.project-participants h3 {
+  font-size: 14px;
 }
-summary {
-  cursor: pointer;
-  font-size: 13px;
+.project-facts :deep(.project-team) {
+  margin-top: 20px;
+  padding: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
 }
-summary > span {
-  color: var(--muted);
-  font-size: 11px;
-  margin-left: 10px;
+.project-action-list {
+  display: grid;
+  gap: 6px;
 }
-.source-records[open] summary,
-.detail-history[open] summary {
-  margin-bottom: 18px;
+.project-action-list > button,
+.project-action-list > a {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 12px;
+  text-align: left;
+  text-decoration: none;
 }
-.detail-history > a {
-  display: inline-flex;
-  font-size: 12px;
-  margin-bottom: 12px;
-}
-.project-sidebar :deep(.project-team summary .muted) {
-  display: block;
-  margin: 8px 0 0;
-}
-@media (max-width: 1100px) {
-  .project-workspace {
-    grid-template-columns: minmax(0, 1fr) 240px;
-    gap: 14px;
+@media (max-width: 760px) {
+  .back-link,
+  .project-metadata :deep(.owner-value),
+  .project-facts :deep(.owner-value) {
+    min-height: 44px;
   }
-}
-@media (max-width: 850px) {
-  .project-workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .project-sidebar {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-  }
-}
-@media (max-width: 600px) {
   .detail-page {
-    padding: 16px 12px;
+    padding-block: 12px 24px;
   }
-  .page-heading {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
+  .project-heading {
+    gap: 4px;
   }
-  h1 {
-    font-size: 22px;
+  .project-heading h1 {
+    font-size: 21px;
   }
-  .project-overview-strip {
-    gap: 10px;
+  .project-heading > button {
+    min-height: 44px;
   }
-  .project-overview-strip .task-distribution {
+  .project-metadata {
+    gap: 0 8px;
+  }
+  .project-metadata > :nth-child(3),
+  .project-metadata > :nth-child(4) {
+    display: none;
+  }
+  .completion-label {
     width: 100%;
+    margin: 0 0 4px 6px;
   }
-  .project-sidebar {
+  .latest-progress-summary {
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  .progress-summary-text {
     display: block;
   }
-  .project-workspace .panel {
-    padding: 14px;
+  .progress-summary-text strong,
+  .latest-progress-summary time {
+    display: none;
   }
-  .detail-task-filters {
-    gap: 2px;
+  .report-progress {
+    min-height: 44px;
+    padding: 4px;
   }
-}
-/* Keep task editing compact without shrinking touch targets. */
-.tasks-panel :deep(.task-row) {
-  min-height: 40px;
-  padding: 5px 0;
-  gap: 8px;
-}
-.tasks-panel :deep(.task-status select) {
-  min-height: 28px;
-  height: 28px;
-  padding: 3px 8px;
-  font-size: 11px;
-}
-.tasks-panel :deep(.task-row .icon-button) {
-  min-height: 28px;
-  width: 28px;
-  height: 28px;
-  padding: 4px;
-}
-.tasks-panel :deep(.field-value) {
-  padding: 3px 4px;
-  min-height: 28px;
-  font-size: 12px;
-}
-.tasks-panel :deep(.add-task) {
-  padding: 6px 0;
-  margin-top: 6px;
-}
-@media (pointer: coarse) {
-  .tasks-panel :deep(.task-row) {
-    min-height: 48px;
+  .project-tabs {
+    margin-top: 8px;
+    gap: 24px;
   }
-  .tasks-panel :deep(.task-row .icon-button),
-  .tasks-panel :deep(.field-value) {
-    min-height: 36px;
+  .project-tab-panel {
+    padding-top: 10px;
   }
 }
 </style>

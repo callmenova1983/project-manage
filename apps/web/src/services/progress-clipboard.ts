@@ -1,6 +1,13 @@
 export function clipboardContent(data: DataTransfer) {
   const files = Array.from(data.files),
     html = data.getData("text/html");
+  if (!files.length)
+    for (const item of Array.from(data.items)) {
+      if (item.kind === "file") {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
   let text = data.getData("text/plain"),
     remoteImages = false;
   if (html) {

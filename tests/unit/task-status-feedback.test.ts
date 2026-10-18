@@ -14,6 +14,12 @@ const api = vi.hoisted(() => ({
   saveTask: vi.fn(),
   restore: vi.fn(),
   session: vi.fn(),
+  copyTaskField: vi.fn(),
+  saveProject: vi.fn(),
+  saveTaskSchedule: vi.fn(),
+  saveTaskScheduleBatch: vi.fn(),
+  saveTaskDependencies: vi.fn(),
+  bulkUpdateTasks: vi.fn(),
 }));
 vi.mock("../../apps/web/src/services/api", async () => ({
   api,
@@ -23,6 +29,50 @@ import { ApiError } from "../../apps/web/src/services/contracts";
 import { useWorkspace } from "../../apps/web/src/stores/workspace";
 let snapshot: Snapshot;
 let task: Task;
+it("keeps confirmed bulk entities when the subsequent snapshot read fails", async () => {
+  const store = useWorkspace();
+  await store.initialize();
+  const updated = { ...task, dueDate: "2027-01-01", version: task.version + 1 };
+  api.bulkUpdateTasks.mockResolvedValueOnce([updated]);
+  api.snapshot.mockRejectedValueOnce(new ApiError("Read unavailable", 503));
+  await store.bulkUpdateTasks({
+    targets: [{ id: task.id, version: task.version }],
+    change: { field: "dueDate", value: updated.dueDate },
+  });
+  expect(store.data.tasks.find((row) => row.id === task.id)).toMatchObject(
+    updated,
+  );
+  expect(store.busy).toBe(false);
+});
+it("does not apply a late bulk acknowledgement to a newly initialized account", async () => {
+  const store = useWorkspace();
+  await store.initialize();
+  let finish!: (tasks: Task[]) => void;
+  api.bulkUpdateTasks.mockImplementationOnce(
+    () =>
+      new Promise<Task[]>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const saving = store.bulkUpdateTasks({
+    targets: [{ id: task.id, version: task.version }],
+    change: { field: "dueDate", value: "2027-01-01" },
+  });
+  api.session.mockResolvedValueOnce({
+    actor: {
+      id: "other-account",
+      workspaceId: "other-workspace",
+      name: "Other",
+      email: "other@example.test",
+    },
+  });
+  await store.initialize();
+  finish([{ ...task, dueDate: "2027-01-01", version: task.version + 1 }]);
+  await saving;
+  expect(store.user?.id).toBe("other-account");
+  expect(store.data.tasks.find((row) => row.id === task.id)).toEqual(task);
+  expect(store.toast).toBe("");
+});
 beforeEach(() => {
   vi.resetAllMocks();
   setActivePinia(createPinia());
@@ -67,6 +117,72 @@ beforeEach(() => {
       return after;
     },
   );
+});
+it("keeps an assignment drag receipt and undoes only the version that was actually saved", async () => {
+  const store = useWorkspace();
+  await store.initialize();
+  const source = leafTasks(snapshot.tasks)[0]!,
+    target = leafTasks(snapshot.tasks).find(
+      (t) => t.projectId !== source.projectId,
+    )!;
+  api.copyTaskField.mockImplementation(async (input) => {
+    expect(input).toMatchObject({
+      sourceId: source.id,
+      sourceVersion: source.version,
+      acrossProjects: true,
+      overwriteConfirmed: true,
+      targets: [{ id: target.id, version: target.version }],
+    });
+    const after = {
+      ...target,
+      assignee: source.assignee,
+      assigneeId: source.assigneeId ?? null,
+      version: target.version + 1,
+    };
+    snapshot.tasks = snapshot.tasks.map((t) =>
+      t.id === target.id ? after : t,
+    );
+    snapshot.activities.unshift({
+      id: "assignment-event",
+      projectId: target.projectId,
+      entityId: target.id,
+      kind: "task",
+      action: "Copied task assignee",
+      actor: "Member",
+      source: "Task field copy",
+      createdAt: new Date().toISOString(),
+      before: target,
+      after,
+    });
+    return [after];
+  });
+  await store.copyTaskAssignee(
+    source.id,
+    source.version,
+    target.id,
+    target.version,
+  );
+  expect(store.taskFeedback).toMatchObject({
+    kind: "assignee",
+    previousAssignee: target.assignee,
+    undone: false,
+  });
+  expect(store.undoState).toBe("ready");
+  expect(store.data.tasks.find((t) => t.id === source.id)).toEqual(source);
+  api.restore.mockImplementation(async (id, version) => {
+    expect(id).toBe("assignment-event");
+    expect(version).toBe(target.version + 1);
+    const restored = { ...target, version: version + 1 };
+    snapshot.tasks = snapshot.tasks.map((t) =>
+      t.id === target.id ? restored : t,
+    );
+    return restored;
+  });
+  await store.undoTaskStatus();
+  expect(store.data.tasks.find((t) => t.id === target.id)?.assignee).toBe(
+    target.assignee,
+  );
+  expect(store.taskFeedback?.undone).toBe(true);
 });
 it("links acknowledged completion, real history and version-protected restoration", async () => {
   const store = useWorkspace();
@@ -189,6 +305,76 @@ it("clears feedback and project navigation when the session changes", async () =
   expect(store.projectNavigation.query).toBe("");
   expect(store.projectNavigation.expanded).toBe("");
 });
+it("keeps acknowledged assignee and date edits when the following snapshot fails", async () => {
+  const store = useWorkspace();
+  await store.initialize();
+  api.snapshot.mockRejectedValueOnce(new ApiError("Read unavailable", 503));
+  await store.saveTask(
+    {
+      ...task,
+      assignee: "Explicit person",
+      assigneeId: null,
+      dueDate: "2026-11-10",
+    },
+    task,
+  );
+  expect(store.data.tasks.find((row) => row.id === task.id)).toMatchObject({
+    assignee: "Explicit person",
+    assigneeId: null,
+    dueDate: "2026-11-10",
+    version: task.version + 1,
+  });
+  expect(store.error).toBe("Read unavailable");
+  expect(store.data.activities).toEqual([]);
+});
+it("keeps confirmed newly created tasks and project edits through a read outage", async () => {
+  const store = useWorkspace();
+  await store.initialize();
+  const created = { ...task, id: "new-task", title: "New work" };
+  api.saveTask.mockResolvedValueOnce(created);
+  api.snapshot.mockRejectedValueOnce(new ApiError("Read unavailable", 503));
+  await store.saveTask(created);
+  expect(store.data.tasks.filter((row) => row.id === created.id)).toHaveLength(
+    1,
+  );
+  const project = store.data.projects[0]!;
+  api.saveProject.mockResolvedValueOnce({
+    ...project,
+    owner: "New owner",
+    version: project.version + 1,
+  });
+  api.snapshot.mockRejectedValueOnce(new ApiError("Read unavailable", 503));
+  await store.saveProject({ ...project, owner: "New owner" }, project);
+  expect(store.data.projects.find((row) => row.id === project.id)?.owner).toBe(
+    "New owner",
+  );
+});
+it("does not let a previous session's late write refresh, notify or clear a new session's busy state", async () => {
+  const store = useWorkspace();
+  await store.initialize();
+  let finish!: (value: Task) => void;
+  api.saveTask.mockImplementationOnce(
+    () =>
+      new Promise<Task>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = store.saveTask(
+    { ...task, assignee: "Old session write" },
+    task,
+  );
+  await store.initialize();
+  const reads = api.snapshot.mock.calls.length;
+  store.busy = true;
+  finish({ ...task, assignee: "Old session write", version: task.version + 1 });
+  await pending;
+  expect(api.snapshot.mock.calls.length).toBe(reads);
+  expect(store.data.tasks.find((row) => row.id === task.id)?.assignee).not.toBe(
+    "Old session write",
+  );
+  expect(store.toast).toBe("");
+  expect(store.busy).toBe(true);
+});
 it("ignores a pre-write snapshot that returns after the acknowledged status change", async () => {
   const store = useWorkspace();
   await store.initialize();
@@ -208,4 +394,77 @@ it("ignores a pre-write snapshot that returns after the acknowledged status chan
     "done",
   );
   expect(store.undoState).toBe("ready");
+});
+
+it("keeps confirmed single and batch schedule acknowledgements when snapshot refresh fails", async () => {
+  const store = useWorkspace();
+  await store.initialize();
+  const scheduled = {
+    ...task,
+    scheduleStart: "2027-02-01",
+    scheduleEnd: "2027-02-02",
+    milestone: false,
+    version: task.version + 1,
+  };
+  api.saveTaskSchedule.mockResolvedValueOnce(scheduled);
+  api.snapshot.mockRejectedValueOnce(new ApiError("Read unavailable", 503));
+  await store.saveTaskSchedule(task, {
+    scheduleStart: scheduled.scheduleStart,
+    scheduleEnd: scheduled.scheduleEnd,
+  });
+  expect(api.saveTaskSchedule).toHaveBeenCalledWith(task.id, {
+    version: task.version,
+    scheduleStart: scheduled.scheduleStart,
+    scheduleEnd: scheduled.scheduleEnd,
+  });
+  expect(store.data.tasks.find((row) => row.id === task.id)).toMatchObject(
+    scheduled,
+  );
+  const other = leafTasks(snapshot.tasks).find((row) => row.id !== task.id)!;
+  const updated = {
+    ...other,
+    scheduleStart: "2027-02-03",
+    scheduleEnd: "2027-02-03",
+    milestone: true,
+    version: other.version + 1,
+  };
+  api.saveTaskScheduleBatch.mockResolvedValueOnce([scheduled, updated]);
+  api.snapshot.mockRejectedValueOnce(new ApiError("Read unavailable", 503));
+  await store.saveTaskScheduleBatch({
+    revision: store.data.revision,
+    changes: [
+      {
+        id: updated.id,
+        version: other.version,
+        scheduleStart: updated.scheduleStart,
+        scheduleEnd: updated.scheduleEnd,
+        milestone: true,
+      },
+    ],
+  });
+  expect(store.data.tasks.find((row) => row.id === updated.id)).toMatchObject(
+    updated,
+  );
+  const predecessor = leafTasks(snapshot.tasks).find(
+    (row) => row.id !== task.id && row.projectId === task.projectId,
+  )!;
+  const dependencies = [
+    { taskId: predecessor.id, type: "finish_to_start" as const },
+  ];
+  const linked = {
+    ...scheduled,
+    dependencies,
+    version: scheduled.version + 1,
+  };
+  api.saveTaskDependencies.mockResolvedValueOnce(linked);
+  api.snapshot.mockRejectedValueOnce(new ApiError("Read unavailable", 503));
+  await store.saveTaskDependencies(scheduled, dependencies);
+  expect(api.saveTaskDependencies).toHaveBeenCalledWith(task.id, {
+    version: scheduled.version,
+    dependencies,
+  });
+  expect(store.data.tasks.find((row) => row.id === task.id)).toMatchObject(
+    linked,
+  );
+  expect(store.busy).toBe(false);
 });

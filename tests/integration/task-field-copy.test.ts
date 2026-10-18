@@ -157,3 +157,122 @@ it("preserves an explicitly linked assignee when copying, and clears an older li
   current = context.repo.snapshot("team").tasks;
   expect(current.find((t) => t.id === target.id)!.assigneeId).toBeNull();
 });
+it("undoes a copied identity even when the previous text-only assignee had the same name", async () => {
+  const member = context.repo.members("team")[0]!;
+  context.repo.putTask("team", {
+    ...tasks[0]!,
+    assignee: member.name,
+    assigneeId: member.id,
+  });
+  const target = { ...tasks[1]!, assignee: member.name };
+  delete target.assigneeId;
+  context.repo.db
+    .prepare("UPDATE tasks SET data=? WHERE id=?")
+    .run(JSON.stringify(target), target.id);
+  const response = await request({
+    ...input(),
+    targets: [{ id: target.id, version: target.version }],
+    overwriteConfirmed: true,
+  });
+  expect(response.statusCode).toBe(200);
+  const event = context.repo.snapshot("team").activities[0]!;
+  const restored = await context.app.inject({
+    method: "POST",
+    url: `/api/activities/${event.id}/restore`,
+    headers: {
+      origin,
+      cookie,
+      "x-csrf-token": csrf,
+      "idempotency-key": randomUUID(),
+    },
+    payload: { version: target.version + 1 },
+  });
+  expect(restored.statusCode).toBe(200);
+  expect(restored.json()).toMatchObject({
+    assignee: member.name,
+    assigneeId: null,
+  });
+  expect(
+    context.repo.get<Task>("tasks", "team", target.id).assigneeId,
+  ).toBeNull();
+});
+it("copies an assignee across projects only when explicitly requested, leaving source and all other fields unchanged", async () => {
+  const target = context.repo
+    .snapshot("team")
+    .tasks.find((task) => task.projectId !== tasks[0]!.projectId)!;
+  const before = context.repo.snapshot("team");
+  const response = await request({
+    ...input(),
+    targets: [{ id: target.id, version: target.version }],
+    overwriteConfirmed: true,
+    acrossProjects: true,
+  });
+  expect(response.statusCode).toBe(200);
+  const saved = response.json<Task[]>()[0]!;
+  expect(saved).toEqual({
+    ...target,
+    assignee: "Copy source",
+    assigneeId: null,
+    version: target.version + 1,
+    updatedAt: expect.any(String),
+  });
+  const after = context.repo.snapshot("team");
+  expect(after.tasks.find((task) => task.id === tasks[0]!.id)).toEqual(
+    before.tasks.find((task) => task.id === tasks[0]!.id),
+  );
+  expect(after.activities[0]).toMatchObject({
+    projectId: target.projectId,
+    action: "Copied task assignee",
+    before: target,
+    after: saved,
+  });
+  expect(
+    (
+      await request({
+        ...input(),
+        field: "dueDate",
+        targets: [{ id: target.id, version: saved.version }],
+        overwriteConfirmed: true,
+        acrossProjects: true,
+      })
+    ).statusCode,
+  ).toBe(400);
+  context.repo.seed("outside");
+  context.repo.putTask("outside", { ...target, id: "outside-task" });
+  expect(
+    (
+      await request({
+        ...input(),
+        targets: [{ id: "outside-task", version: 1 }],
+        overwriteConfirmed: true,
+        acrossProjects: true,
+      })
+    ).statusCode,
+  ).toBe(409);
+});
+it("rejects blank assignments and changed drag snapshots without partial writes", async () => {
+  const target = context.repo
+    .snapshot("team")
+    .tasks.find((task) => task.projectId !== tasks[0]!.projectId)!;
+  const payload = {
+    ...input(),
+    targets: [{ id: target.id, version: target.version }],
+    overwriteConfirmed: true,
+    acrossProjects: true,
+  };
+  const before = context.repo.snapshot("team");
+  expect((await request({ ...payload, sourceVersion: 999 })).statusCode).toBe(
+    409,
+  );
+  expect(
+    (await request({ ...payload, targets: [{ id: target.id, version: 999 }] }))
+      .statusCode,
+  ).toBe(409);
+  expect(context.repo.snapshot("team")).toEqual(before);
+  context.repo.putTask("team", {
+    ...tasks[0]!,
+    assignee: "Unassigned",
+    assigneeId: null,
+  });
+  expect((await request(payload)).statusCode).toBe(400);
+});

@@ -1,3 +1,4 @@
+import { validateTaskDependencies } from "./task-dependencies.js";
 import {
   fieldAliases as aliases,
   normalizeName,
@@ -6,6 +7,8 @@ import {
 } from "./intake-text.js";
 export { normalizeName } from "./intake-text.js";
 import { defaultCatalogs, type Catalogs } from "./admin.js";
+import { captureSourceSchema } from "./capture.js";
+import { channelEntries } from "./channels.js";
 import { z } from "zod";
 import {
   dateSchema,
@@ -29,6 +32,7 @@ export const intakeSourceSchema = z
     name: z.string().max(180),
     sheet: z.string().max(120).default(""),
     text: z.string().max(200000),
+    originalSource: captureSourceSchema.optional(),
     rows: z
       .array(z.array(z.string().max(20000)).max(30))
       .max(201)
@@ -39,6 +43,9 @@ export type IntakeSource = z.infer<typeof intakeSourceSchema>;
 export const intakeFields = [
   "ignore",
   "project",
+  "channel",
+  "shortName",
+  "aliases",
   "client",
   "owner",
   "stage",
@@ -60,6 +67,7 @@ export interface IntakeCandidate {
     value: string;
   }[];
   sourceText: string;
+  requestedChannel?: string;
   selected: boolean;
   project: ProjectInput;
   task: Omit<TaskInput, "projectId"> | null;
@@ -357,6 +365,19 @@ export function intakeCandidates(
       );
     if (fields.stage && !stage)
       warnings.push("Unrecognized stage. Choose a stage.");
+    if (
+      fields.channel &&
+      !channelEntries(catalog).some(
+        (channel) =>
+          !channel.archived &&
+          [channel.id, channel.name, channel.shortName].some(
+            (name) => normalizeName(name) === normalizeName(fields.channel!),
+          ),
+      )
+    )
+      warnings.push(
+        `未找到渠道“${fields.channel}”，请明确选择渠道；不会自动改为公司。`,
+      );
     if (fields.status && !status)
       warnings.push("Unrecognized task status. Choose a status.");
     if (date && !dateSchema.safeParse(date).success)
@@ -380,21 +401,43 @@ export function intakeCandidates(
       contextRows,
       matchEvidence: evidence,
       sourceText: sourceAt(source, index + 1),
+      requestedChannel: fields.channel,
       selected: true,
       project: {
         name: target?.name ?? (needsInbox ? "Intake inbox" : name),
+        channelId:
+          target?.channelId ??
+          (Object.hasOwn(fields, "channel")
+            ? (channelEntries(catalog).find(
+                (channel) =>
+                  !channel.archived &&
+                  [channel.id, channel.name, channel.shortName].some(
+                    (name) =>
+                      normalizeName(name) === normalizeName(fields.channel!),
+                  ),
+              )?.id ?? "")
+            : "company"),
+        shortName: target?.shortName ?? fields.shortName ?? "",
         client: target?.client ?? (needsInbox ? "" : client),
         owner:
           target?.owner ??
           (needsInbox ? "Unassigned" : fields.owner || "Unassigned"),
         stage:
           target?.stage ??
-          (needsInbox ? "unclassified" : (stage ?? "unclassified")),
+          (needsInbox
+            ? "unclassified"
+            : (stage ?? (fields.stage ? "" : "unclassified"))),
         discipline: target?.discipline ?? "Unassigned",
         description: needsInbox ? "" : (fields.description ?? ""),
         latestUpdate: "",
         notes: "",
-        aliases: target?.aliases ?? [],
+        aliases:
+          target?.aliases ??
+          fields.aliases
+            ?.split(/[、，,|]/)
+            .map((value) => value.trim())
+            .filter(Boolean) ??
+          [],
         ...(needsInbox ? { intakeInbox: true } : {}),
       },
       task: fields.task
@@ -466,10 +509,13 @@ export function planIntake(
   const seenRows = new Set<string>();
   const derived = !input.source.rows
     ? new Map(
-        intakeCandidates(input.source, snapshot.projects).map((c) => [
-          `${c.sourceRow}:${c.sourcePart ?? 0}`,
-          c,
-        ]),
+        intakeCandidates(
+          input.source,
+          snapshot.projects,
+          undefined,
+          true,
+          snapshot.catalogs ?? defaultCatalogs,
+        ).map((c) => [`${c.sourceRow}:${c.sourcePart ?? 0}`, c]),
       )
     : null;
   for (const row of input.rows) {
@@ -609,16 +655,20 @@ export function verifyIntakeUndo(batch: IntakeBatch, snapshot: Snapshot) {
       throw new DomainError(
         "An imported project changed. Undo would overwrite newer work.",
       );
-  for (const t of batch.tasks)
+  for (const t of batch.tasks) {
+    const current = snapshot.tasks.find((task) => task.id === t.id);
+    const normalized = current ? taskSchema.parse(current) : undefined;
+    // Migration adds order metadata without changing the task version. Legacy
+    // receipts did not capture it; a real move still increments the version.
+    if (normalized && t.sortOrder === undefined) delete normalized.sortOrder;
     if (
-      !snapshot.tasks.some((x) => x.id === t.id) ||
-      JSON.stringify(
-        taskSchema.parse(snapshot.tasks.find((x) => x.id === t.id)),
-      ) !== JSON.stringify(taskSchema.parse(t))
+      !normalized ||
+      JSON.stringify(normalized) !== JSON.stringify(taskSchema.parse(t))
     )
       throw new DomainError(
         "An imported task changed. Undo would overwrite newer work.",
       );
+  }
   const pids = new Set(batch.projects.map((p) => p.id)),
     tids = new Set(batch.tasks.map((t) => t.id));
   if (
@@ -629,4 +679,14 @@ export function verifyIntakeUndo(batch: IntakeBatch, snapshot: Snapshot) {
     )
   )
     throw new DomainError("New tasks depend on this intake. Undo is blocked.");
+  const remaining = snapshot.tasks.filter((task) => !tids.has(task.id));
+  if (
+    remaining.some((task) =>
+      task.dependencies?.some((edge) => tids.has(edge.taskId)),
+    )
+  )
+    throw new DomainError(
+      "Tasks outside this intake still reference its tasks. Remove those dependencies before undo.",
+    );
+  validateTaskDependencies(remaining);
 }
