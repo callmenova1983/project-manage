@@ -47,9 +47,26 @@ function item(sourceLine: number, quote: string, overrides = {}) {
 }
 
 describe("source-backed daily reports in the Qwen provider", () => {
+  it.each([
+    ["示例运维平台明天继续排查", "unfinished", "task", "todo"],
+    ["示例运维平台取消下周培训", "performed", "update", "in_progress"],
+    ["示例运维平台取消下周培训", "planned", "update", "in_progress"],
+    ["示例运维平台尚未修复", "performed", "update", "in_progress"],
+    ["示例运维平台等待客户批准", "performed", "update", "blocked"],
+  ])(
+    "keeps explicit source constraints when the model misclassifies %s as %s",
+    (text, reportMeaning, action, status) => {
+      const [result] = validateSuggestions(
+        { suggestions: [item(3, text, { reportMeaning })] },
+        `李明\n今日工作总结\n1. ${text}`,
+        projects,
+      );
+      expect(result).toMatchObject({ action, status, assignee: "李明" });
+    },
+  );
   it("accepts a source-complete model split beyond the keyword parser", () => {
     const current = "青禾学校已核对设备清单";
-    const future = "约好周五到场联调";
+    const future = "约好月底到场联调";
     const source = `李明\nReport to:王经理\n今日工作总结\n1. ${current}，${future}`;
     const results = validateSuggestions(
       {
@@ -79,13 +96,13 @@ describe("source-backed daily reports in the Qwen provider", () => {
     ).toBe(true);
   });
   it.each([
-    ["青禾学校已核对设备清单", "周五到场联调"],
-    ["青禾学校已核对设备清单，约好", "约好周五到场联调"],
+    ["青禾学校已核对设备清单", "月底到场联调"],
+    ["青禾学校已核对设备清单，约好", "约好月底到场联调"],
   ])(
     "rejects missing or overlapping source in model splits",
     (first, second) => {
       const source =
-        "李明\n今日工作总结\n1. 青禾学校已核对设备清单，约好周五到场联调";
+        "李明\n今日工作总结\n1. 青禾学校已核对设备清单，约好月底到场联调";
       expect(() =>
         validateSuggestions(
           {

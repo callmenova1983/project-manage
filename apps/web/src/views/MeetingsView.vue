@@ -45,10 +45,12 @@ import type {
 import {
   pendingMeetingItems,
   meetingReplyProjects,
+  meetingAutomaticProjects,
   meetingReplyDraft,
   groupMeetingItems,
   type MeetingNewProject,
 } from "../../../../packages/domain/meeting-completion";
+import { hasUnspecifiedOtherProject } from "../../../../packages/domain/meeting-sections";
 import { useUnsaved } from "../composables/unsaved";
 const props = withDefaults(
   defineProps<{
@@ -107,6 +109,22 @@ const pending = computed(() =>
   proposal.value ? pendingMeetingItems(proposal.value) : [],
 );
 const current = computed(() => pending.value[0]);
+const resolvedPending = computed(() =>
+  pending.value.filter(
+    (item) =>
+      !hasUnspecifiedOtherProject(item.sourceText) &&
+      item.sourceHeading !== "其他项目（需明确）" &&
+      item.candidates.length === 1 &&
+      available.value.some(
+        (project) => project.id === item.candidates[0]!.projectId,
+      ),
+  ),
+);
+const saveResolvedLabel = computed(() =>
+  locale.value === "en"
+    ? `Save ${resolvedPending.value.length} matched items`
+    : `保存 ${resolvedPending.value.length} 条已明确事项`,
+);
 const groups = computed(() =>
   groupMeetingItems(pending.value, available.value),
 );
@@ -358,12 +376,7 @@ function reviewed(
     selectedProjectId: projectId,
     title: suggestion.title,
     action: suggestion.action,
-    status:
-      !proposal.value?.generator &&
-      /已完成|已交付|已验收/.test(suggestion.sourceText) &&
-      !/尚未|未完成|未交付|未验收/.test(suggestion.sourceText)
-        ? "done"
-        : suggestion.status,
+    status: suggestion.status,
     confirmed: true,
     overwriteConfirmed: false,
     projectVersion: store.data.projects.find((p) => p.id === projectId)
@@ -600,10 +613,17 @@ async function submitNotes() {
       phase.value = t("AI 正在识别事项与归属…");
       try {
         proposal.value = await api.proposeQwen(source, true, originalSource);
-      } catch {
+      } catch (failure) {
+        if (
+          typeof failure === "object" &&
+          failure !== null &&
+          "code" in failure &&
+          failure.code === "AI_CONNECTION"
+        )
+          say(t(captureErrorMessage(failure)));
         say(
           t(
-            "纪要已保存。智能整理暂时不可用，我先按原文里的项目名称整理；不明确的地方会请你确认。",
+            "纪要原文已保存。AI 整理未完成，本次采用规则整理；项目不明确的事项只提醒，不创建记录。",
           ),
         );
       }
@@ -613,10 +633,31 @@ async function submitNotes() {
         /* Preserve saved notes. */
       }
     }
+    const unspecified = pending.value.filter(
+      (item) =>
+        hasUnspecifiedOtherProject(item.sourceText) ||
+        item.sourceHeading === "其他项目（需明确）" ||
+        (item.candidates.length !== 1 &&
+          !(
+            item.candidates.length === 0 &&
+            meetingAutomaticProjects(item, available.value).length === 1
+          )),
+    );
+    if (unspecified.length) {
+      await record(
+        [],
+        unspecified.map((item) => item.id),
+      );
+      say(
+        locale.value === "en"
+          ? "Some project names are unspecified. Those items were skipped; no projects, tasks or progress records were created."
+          : "有些事项未明确项目，已跳过，仅保留原文提醒；没有为这些事项创建项目、任务或进展。",
+      );
+    }
     const ready = pending.value
       .map((s) => ({
         suggestion: s,
-        matches: meetingReplyProjects(s.sourceText, available.value),
+        matches: meetingAutomaticProjects(s, available.value),
       }))
       .filter(
         ({ suggestion, matches }) =>
@@ -660,6 +701,19 @@ async function retryCompletion() {
     working.value = false;
     await focusReply();
   }
+}
+async function saveResolved() {
+  if (
+    working.value ||
+    store.busy ||
+    retryItems.value ||
+    !resolvedPending.value.length
+  )
+    return;
+  retryItems.value = resolvedPending.value.map((item) =>
+    reviewed(item, item.candidates[0]!.projectId),
+  );
+  await retryCompletion();
 }
 async function assign(project: Project) {
   if (!current.value || working.value || store.busy) return;
@@ -1121,6 +1175,14 @@ async function submit() {
                 {{ t("条") }}</span
               >
             </div>
+            <button
+              v-if="resolvedPending.length"
+              type="button"
+              :disabled="store.busy"
+              @click="saveResolved"
+            >
+              {{ saveResolvedLabel }}
+            </button>
             <div v-if="choices.length" class="project-answers">
               <button
                 v-for="project in choices"

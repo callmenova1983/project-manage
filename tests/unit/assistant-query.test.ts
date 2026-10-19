@@ -32,6 +32,15 @@ snapshot.tasks = [
   },
 ];
 const actor = { id: "tester", name: "测试人" };
+it("leaves a structured meeting containing query words for capture", () => {
+  expect(
+    answerAssistantQuery(
+      { text: `### ${project.name}\n- 设备已上线，下周继续检查运行情况。` },
+      snapshot,
+      actor,
+    ).handled,
+  ).toBe(false);
+});
 const query = (text: string) =>
   answerAssistantQuery({ text, projectId: project.id }, snapshot, actor);
 

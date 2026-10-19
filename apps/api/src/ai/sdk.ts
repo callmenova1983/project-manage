@@ -134,7 +134,14 @@ export async function generateSdkJson<T>(
             },
             stopWhen: isStepCount(2),
             prepareStep: ({ stepNumber }: { stepNumber: number }) =>
-              stepNumber > 0 ? { toolChoice: "none" as const } : {},
+              stepNumber > 0
+                ? { toolChoice: "none" as const }
+                : {
+                    toolChoice: {
+                      type: "tool" as const,
+                      toolName: "searchProjects" as const,
+                    },
+                  },
           }
         : {}),
       maxRetries: 0,

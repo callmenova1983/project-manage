@@ -22,7 +22,6 @@ export const workbenchZh: Record<string, string> = {
   "Scheduled work": "已安排",
   "This week · day to arrange": "本周待定日期",
   "Dates to arrange": "日期待安排",
-  "{count} tasks": "{count} 项任务",
   "No work planned in this scope.": "当前范围暂无工作安排。",
   "No work planned for this day.": "当天暂无工作安排。",
   "No completed work in this scope.": "当前范围暂无已完成事项。",

@@ -5,6 +5,12 @@ import { progressArchiveInput } from "./progress-material.js";
 import type { ProgressSource } from "./progress-material.js";
 import { z } from "zod";
 import {
+  meetingSections,
+  hasUnspecifiedOtherProject,
+  meetingFactStatus,
+  splitMeetingFollowup,
+} from "./meeting-sections.js";
+import {
   zonedDay,
   zonedWeek,
   workspaceSettingsInput,
@@ -170,6 +176,7 @@ export interface Suggestion {
   id: string;
   sourceLine: number;
   sourceText: string;
+  sourceHeading?: string;
   title: string;
   candidates: { projectId: string; reason: string }[];
   selectedProjectId: string;
@@ -213,6 +220,7 @@ export interface Proposal {
 }
 export interface AiCapabilities {
   enabled: boolean;
+  runtime?: "legacy" | "sdk" | null;
   provider: "rules" | "qwen";
   model: string | null;
   region: string | null;
@@ -336,9 +344,13 @@ export function suggest(source: string, projects: Project[]): Suggestion[] {
     });
   }
   return (
-    source
-      .split(/\r?\n/)
-      .map((line, i) => ({ line, i }))
+    meetingSections(source)
+      .filter((entry) => !entry.isHeading)
+      .map((entry) => ({
+        line: entry.text,
+        i: entry.sourceLine - 1,
+        heading: entry.heading,
+      }))
       // assembleCaptureText adds filename-only source headings. They identify
       // provenance, not work items; preserve original line numbers below.
       .filter(
@@ -348,9 +360,10 @@ export function suggest(source: string, projects: Project[]): Suggestion[] {
             x.line.trim(),
           ),
       )
-      .map(({ line, i }) => {
+      .map(({ line, i, heading }) => {
+        const factStatus = heading ? meetingFactStatus(line) : undefined;
         const lower = line.toLowerCase();
-        const candidates = projects
+        let candidates = projects
           .filter((p) =>
             [p.name, p.shortName ?? "", ...p.aliases]
               .filter(Boolean)
@@ -360,21 +373,67 @@ export function suggest(source: string, projects: Project[]): Suggestion[] {
             projectId: p.id,
             reason: "Project name or alias appears in source",
           }));
+        const unspecifiedProject = hasUnspecifiedOtherProject(line);
+        if (heading && unspecifiedProject) candidates = [];
+        if (!candidates.length && heading && !unspecifiedProject) {
+          candidates = projects
+            .filter(
+              (p) =>
+                !p.intakeInbox &&
+                [p.name, p.shortName ?? "", ...p.aliases]
+                  .filter(Boolean)
+                  .some((name) =>
+                    heading.toLowerCase().includes(name.toLowerCase()),
+                  ),
+            )
+            .map((p) => ({
+              projectId: p.id,
+              reason: "Project name or alias appears in section heading",
+            }));
+        }
         return {
           id: `line-${i + 1}`,
           sourceLine: i + 1,
           sourceText: line,
+          ...(heading
+            ? {
+                sourceHeading: unspecifiedProject
+                  ? "其他项目（需明确）"
+                  : heading,
+              }
+            : {}),
           title: line.replace(/^[-*]\s*/, "").slice(0, 240),
           candidates,
           selectedProjectId:
             candidates.length === 1 ? candidates[0]!.projectId : "",
-          action: "task" as const,
-          status: /\b(done|completed)\b/i.test(line)
-            ? ("done" as const)
-            : ("todo" as const),
+          action: factStatus ? ("update" as const) : ("task" as const),
+          status:
+            factStatus ??
+            (/\b(done|completed)\b/i.test(line)
+              ? ("done" as const)
+              : ("todo" as const)),
           confirmed: false,
           overwriteConfirmed: false,
         };
+      })
+      .flatMap<Suggestion>((item) => {
+        const split = item.sourceHeading && splitMeetingFollowup(item.title);
+        if (!split) return [item];
+        return [
+          {
+            ...item,
+            title: split.fact,
+            action: "update" as const,
+            status: meetingFactStatus(split.fact) ?? ("in_progress" as const),
+          },
+          {
+            ...item,
+            id: `${item.id}-followup`,
+            title: split.followup,
+            action: "task" as const,
+            status: "todo" as const,
+          },
+        ];
       })
   );
 }

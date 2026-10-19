@@ -38,6 +38,9 @@ export function answerAssistantQuery(
   const en = input.locale === "en";
   const label = (zh: string, english: string) => (en ? english : zh);
   const unhandled: AssistantAnswer = { handled: false, text: "", links: [] };
+  // A structured note may contain words like “进展/情况”; those are not queries.
+  if (/^\s*#{1,6}\s+.+/m.test(text) && /^\s*[-*•]\s+\S/m.test(text))
+    return unhandled;
   const asking =
     /\?|？|哪些|多少|怎么样|如何|情况|进展|查询|查一下|查找|列出|看看|搜索|有什么|要做什么|待办|what|which|show|list|find|status of/i.test(
       text,

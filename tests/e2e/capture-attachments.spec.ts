@@ -503,39 +503,71 @@ test("shows one localized budget failure and retains the input and image for ret
   await expect(dialog.locator(".capture-material")).toHaveCount(1);
 });
 
-test("separates reference documents from meeting text and does not create filename tasks", async ({
-  page,
-}) => {
-  const pane = page.locator("#global-ai-assistant");
-  const input = pane.getByRole("textbox", { name: "录入内容", exact: true });
-  await pasteFiles(input, [
-    {
-      name: "Atlas Customer Portal报价方案.docx",
-      mimeType:
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      data: (await readFile(fixture("contract.docx"))).toString("base64"),
-    },
-    {
-      name: "会议记录.txt",
-      mimeType: "text/plain",
-      data: Buffer.from("Atlas Customer Portal：需核对现场验收设备。").toString(
-        "base64",
-      ),
-    },
-  ]);
-  await expect(pane).toContainText("将归档 1 份资料，并识别 1 份记录");
-  await expect(pane).toContainText("归到 Atlas Customer Portal");
-  await pane.locator(".capture-submit-actions button[type=submit]").click();
-  await expect(pane).toContainText("已归档 1 份资料");
-  await expect(pane).toContainText("已完成：新增 1 项任务");
-  await expect(
-    pane.getByRole("region", { name: "处理明细", exact: true }),
-  ).toContainText("核对现场验收设备");
-  await expect(
-    pane.getByRole("region", { name: "待确认项目", exact: true }),
-  ).toHaveCount(0);
-  await expect(pane.locator(".capture-material")).toHaveCount(0);
-  await page.reload();
-  await expect(pane).toContainText("已完成：新增 1 项任务");
-  await expect(pane).toContainText("已归档 1 份资料");
-});
+for (const recover of [false, true])
+  test(`separates reference documents from meeting text with recovery=${recover}`, async ({
+    page,
+  }) => {
+    const pane = page.locator("#global-ai-assistant");
+    const taskCount = () =>
+      page.evaluate(async () => {
+        const response = await fetch("/api/workspace");
+        if (!response.ok) throw new Error("Cannot read isolated workspace");
+        return (await response.json()).tasks.length as number;
+      });
+    const beforeTasks = await taskCount();
+    const input = pane.getByRole("textbox", { name: "录入内容", exact: true });
+    let archiveRequests = 0;
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/capture/archive")
+        archiveRequests++;
+    });
+    if (recover)
+      await page.route(
+        "**/api/proposals",
+        async (route) => {
+          await route.fulfill({
+            status: 503,
+            json: { message: "测试记录处理失败，请重试" },
+          });
+        },
+        { times: 1 },
+      );
+    await pasteFiles(input, [
+      {
+        name: "Atlas Customer Portal报价方案.docx",
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        data: (await readFile(fixture("contract.docx"))).toString("base64"),
+      },
+      {
+        name: "会议记录.txt",
+        mimeType: "text/plain",
+        data: Buffer.from(
+          "Atlas Customer Portal：需核对现场验收设备。",
+        ).toString("base64"),
+      },
+    ]);
+    await expect(pane).toContainText("将归档 1 份资料，并识别 1 份记录");
+    await expect(pane).toContainText("归到 Atlas Customer Portal");
+    await pane.locator(".capture-submit-actions button[type=submit]").click();
+    await expect(pane).toContainText("已归档 1 份资料");
+    if (recover) {
+      await expect(pane).toContainText("测试记录处理失败，请重试");
+      await page.reload();
+      await expect(pane).toContainText("已归档 1 份资料");
+      await pane.locator(".capture-submit-actions button[type=submit]").click();
+    }
+    await expect(pane).toContainText("已完成：新增 1 项任务");
+    await expect(
+      pane.getByRole("region", { name: "处理明细", exact: true }),
+    ).toContainText("核对现场验收设备");
+    await expect(
+      pane.getByRole("region", { name: "待确认项目", exact: true }),
+    ).toHaveCount(0);
+    await expect(pane.locator(".capture-material")).toHaveCount(0);
+    await page.reload();
+    await expect(pane).toContainText("已完成：新增 1 项任务");
+    await expect(pane).toContainText("已归档 1 份资料");
+    expect(archiveRequests).toBe(1);
+    expect(await taskCount()).toBe(beforeTasks + 1);
+  });

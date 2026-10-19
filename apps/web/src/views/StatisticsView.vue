@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from "../locales";
 import {
   computed,
   ref,
@@ -525,19 +526,19 @@ onBeforeUnmount(() => {
       @focusout="blur"
     >
       <header>
-        <h1>人员与项目统计</h1>
+        <h1>{{ t("人员与项目统计") }}</h1>
         <p>
           {{
             query.view === "projects"
               ? "按项目负责人查看项目及项目内任务分布。"
               : "按任务负责人查看直接分派的任务。"
           }}
-          数量不代表工时或人员忙闲。
+          {{ t("数量不代表工时或人员忙闲。") }}
         </p>
       </header>
       <p v-if="store.error" class="error-box" role="alert">
-        {{ store.error }} · 保留上次成功数据
-        <button @click="store.refresh()">重试</button>
+        {{ store.error }} {{ t("· 保留上次成功数据") }}
+        <button @click="store.refresh()">{{ t("重试") }}</button>
       </p>
       <p
         v-if="queryError || scopeError || storageError"
@@ -546,7 +547,7 @@ onBeforeUnmount(() => {
       >
         {{ queryError || scopeError || storageError }}
         <button v-if="queryError || scopeError" @click="clearFilters">
-          清除无效条件
+          {{ t("清除无效条件") }}
         </button>
       </p>
       <div class="stats-summary">
@@ -567,10 +568,10 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <p class="background-count">
-        组织背景：{{
-          accepted.directory?.employees.filter((e) => e.active).length ?? 0
-        }}
-        名在职人员 · {{ accepted.directory?.departments.length ?? 0 }} 个部门
+        {{ t("组织背景：") }}
+        {{ accepted.directory?.employees.filter((e) => e.active).length ?? 0 }}
+        {{ t("名在职人员 ·") }}
+        {{ accepted.directory?.departments.length ?? 0 }} {{ t("个部门") }}
       </p>
       <div class="view-tabs">
         <button
@@ -597,8 +598,8 @@ onBeforeUnmount(() => {
         <ElInput
           v-model="search"
           clearable
-          placeholder="姓名 / 拼音 / 首字母"
-          aria-label="搜索负责人"
+          :placeholder="t('姓名 / 拼音 / 首字母')"
+          :aria-label="t('搜索负责人')"
           @input="queueSearch"
           @keydown.enter="submitSearch"
           @compositionstart="composing = true"
@@ -613,8 +614,8 @@ onBeforeUnmount(() => {
           filterable
           clearable
           collapse-tags
-          placeholder="全部项目"
-          aria-label="筛选项目"
+          :placeholder="t('全部项目')"
+          :aria-label="t('筛选项目')"
           @visible-change="
             (v) => {
               menus = v;
@@ -633,8 +634,8 @@ onBeforeUnmount(() => {
           filterable
           clearable
           collapse-tags
-          placeholder="全部阶段"
-          aria-label="筛选阶段"
+          :placeholder="t('全部阶段')"
+          :aria-label="t('筛选阶段')"
           @visible-change="
             (v) => {
               menus = v;
@@ -649,7 +650,7 @@ onBeforeUnmount(() => {
         /></ElSelect>
         <ElSelect
           :model-value="query.preset"
-          aria-label="排序预设"
+          :aria-label="t('排序预设')"
           @change="choosePreset"
           @visible-change="
             (v) => {
@@ -676,13 +677,16 @@ onBeforeUnmount(() => {
           @click="query.attention = item[0] as StatisticsQuery['attention']"
         >
           {{ item[1] }}</button
-        ><ElCheckbox v-model="query.unassigned">只看未填写责任人</ElCheckbox
-        ><button @click="clearFilters">清除筛选</button
-        ><button @click="share">复制分享链接</button
-        ><button v-if="pending" @click="applySnapshot">有新数据 · 更新</button>
+        ><ElCheckbox v-model="query.unassigned">
+          {{ t("只看未填写责任人") }} </ElCheckbox
+        ><button @click="clearFilters">{{ t("清除筛选") }}</button
+        ><button @click="share">{{ t("复制分享链接") }}</button
+        ><button v-if="pending" @click="applySnapshot">
+          {{ t("有新数据 · 更新") }}
+        </button>
       </div>
       <div class="condition-tags" aria-live="polite">
-        <span>{{ projection.rows.length }} 个责任组</span
+        <span>{{ projection.rows.length }} {{ t("个责任组") }} </span
         ><ElTag
           v-if="query.search"
           closable
@@ -690,13 +694,16 @@ onBeforeUnmount(() => {
             query.search = '';
             search = '';
           "
-          >姓名：{{ query.search }}</ElTag
+        >
+          {{ t("姓名：") }} {{ query.search }}</ElTag
         ><ElTag
           v-for="id in query.projects"
           :key="id"
           closable
           @close="query.projects = query.projects.filter((v) => v !== id)"
-          >项目：{{
+        >
+          {{ t("项目：") }}
+          {{
             accepted.projects.find((p) => p.id === id)?.name || "已失效：" + id
           }}</ElTag
         ><ElTag
@@ -704,21 +711,25 @@ onBeforeUnmount(() => {
           :key="id"
           closable
           @close="query.stages = query.stages.filter((v) => v !== id)"
-          >阶段：{{ stageLabels[id] || id }}</ElTag
+        >
+          {{ t("阶段：") }} {{ stageLabels[id] || id }}</ElTag
         ><ElTag
           v-if="query.attention !== 'all'"
           closable
           @close="query.attention = 'all'"
-          >仅显示有{{
-            query.attention === "blocked" ? "待协调" : "明确逾期"
-          }}的责任组</ElTag
+        >
+          {{ t("仅显示有") }}
+          {{ query.attention === "blocked" ? "待协调" : "明确逾期" }}
+          {{ t("的责任组") }} </ElTag
         ><ElTag
           v-if="query.unassigned"
           closable
           @close="query.unassigned = false"
-          >只看未填写</ElTag
-        ><span v-if="query.sort"
-          >当前排序：{{
+        >
+          {{ t("只看未填写") }} </ElTag
+        ><span v-if="query.sort">
+          {{ t("当前排序：") }}
+          {{
             query.sort === "name"
               ? "姓名"
               : columns.find((c) => c.key === query.sort)?.label
@@ -726,9 +737,9 @@ onBeforeUnmount(() => {
         >
       </div>
       <details class="display-settings">
-        <summary>常用视图与显示设置</summary>
+        <summary>{{ t("常用视图与显示设置") }}</summary>
         <div class="quick-filters">
-          <ElCheckbox v-model="query.compact">紧凑行距</ElCheckbox
+          <ElCheckbox v-model="query.compact"> {{ t("紧凑行距") }} </ElCheckbox
           ><ElCheckbox
             v-for="c in displayColumns.filter(
               (c) => !['projects', 'open'].includes(c.key),
@@ -742,16 +753,16 @@ onBeforeUnmount(() => {
                   : query.columns.filter((k) => k !== c.key))
             "
             >{{ c.label }}</ElCheckbox
-          ><button @click="reset">恢复默认</button>
+          ><button @click="reset">{{ t("恢复默认") }}</button>
         </div>
         <div class="quick-filters">
           <ElInput
             v-model="viewName"
             maxlength="40"
-            placeholder="常用视图名称，同名将覆盖"
-            aria-label="常用视图名称"
+            :placeholder="t('常用视图名称，同名将覆盖')"
+            :aria-label="t('常用视图名称')"
             style="max-width: 280px"
-          /><button @click="saveView">保存当前视图</button>
+          /><button @click="saveView">{{ t("保存当前视图") }}</button>
         </div>
         <div v-for="v in preferences.views" :key="v.name" class="saved-view">
           <button
@@ -765,7 +776,7 @@ onBeforeUnmount(() => {
             :aria-label="'删除视图 ' + v.name"
             @click="removeView(v.name)"
           >
-            删除
+            {{ t("删除") }}
           </button>
         </div>
       </details>
@@ -775,14 +786,14 @@ onBeforeUnmount(() => {
         :class="{ 'has-detail': selectedGroup && !small }"
       >
         <section class="statistics-card">
-          <h2>责任分布</h2>
+          <h2>{{ t("责任分布") }}</h2>
           <p class="scope-note">
             {{
               query.view === "projects"
                 ? "任务数包含该负责人项目内的全部有效末级任务，不等于本人执行数量。"
                 : "只统计直接分派给该责任组的有效末级任务。"
             }}
-            未填写组固定在末尾。
+            {{ t("未填写组固定在末尾。") }}
           </p>
           <div v-if="small" class="mobile-people">
             <article
@@ -791,7 +802,7 @@ onBeforeUnmount(() => {
               :class="{ selected: selected === row.key }"
             >
               <button class="person-name" @click="selectRow(row)">
-                {{ row.name }} <span>查看项目 ›</span>
+                {{ row.name }} <span> {{ t("查看项目 ›") }} </span>
               </button>
               <div class="mobile-metrics">
                 <button
@@ -822,12 +833,16 @@ onBeforeUnmount(() => {
             max-height="560"
             highlight-current-row
             :current-row-key="selected"
-            empty-text="没有符合条件的责任组，可清除筛选后重试"
+            :empty-text="t('没有符合条件的责任组，可清除筛选后重试')"
             :row-class-name="
               ({ row }) => (row.key === 'none' ? 'unassigned-row' : '')
             "
           >
-            <ElTableColumn prop="name" label="负责人" fixed min-width="150"
+            <ElTableColumn
+              prop="name"
+              :label="t('负责人')"
+              fixed
+              min-width="150"
               ><template #header
                 ><button
                   class="sort-button"
@@ -835,7 +850,7 @@ onBeforeUnmount(() => {
                   :aria-label="'按姓名排序' + arrow('name')"
                   @click="headerSort('name')"
                 >
-                  负责人{{ arrow("name") }}
+                  {{ t("负责人") }} {{ arrow("name") }}
                 </button></template
               ><template #default="{ row }"
                 ><button
@@ -884,7 +899,7 @@ onBeforeUnmount(() => {
             >
           </ElTable>
           <div class="totals-line">
-            <strong>全部筛选结果合计</strong
+            <strong> {{ t("全部筛选结果合计") }} </strong
             ><span v-for="c in columns" :key="c.key"
               >{{ c.label }} {{ projection.totals[c.key] }}</span
             >
@@ -918,21 +933,22 @@ onBeforeUnmount(() => {
             @task="(id) => (taskId = id)"
           />
           <div v-else class="detail-empty">
-            点击负责人或数量，查看对应项目和任务。
+            {{ t("点击负责人或数量，查看对应项目和任务。") }}
           </div>
         </section>
       </div>
       <footer>
-        数据更新时间：{{
+        {{ t("数据更新时间：") }}
+        {{
           acceptedAt ? new Date(acceptedAt).toLocaleTimeString() : "尚未同步"
         }}
-        · 统计时区：{{ store.timeZone }} · {{ projection.today }} ·
-        排除父任务与作废任务；只读统计，不修改业务顺序。
+        {{ t("· 统计时区：") }} {{ store.timeZone }} · {{ projection.today }}
+        {{ t("· 排除父任务与作废任务；只读统计，不修改业务顺序。") }}
       </footer>
     </main>
     <ElDrawer
       v-model="drawer"
-      title="统计明细"
+      :title="t('统计明细')"
       @closed="maybeApply"
       size="95%"
       :destroy-on-close="true"

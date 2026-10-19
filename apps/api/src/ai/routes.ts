@@ -92,6 +92,7 @@ export function registerAiRoutes(
     const reason = allowanceReason(current, used);
     return {
       enabled: reason === null,
+      runtime: current ? (current.runtime ?? "legacy") : null,
       provider: current ? "qwen" : "rules",
       model: current?.model ?? null,
       region: current?.region ?? null,

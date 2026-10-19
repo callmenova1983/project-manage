@@ -38,12 +38,15 @@ function person(value: string): string | undefined {
   const name = value.trim().replace(/[:：]$/, "");
   return name.length <= 80 &&
     /^(?:[\p{Script=Han}·]{2,8}|[A-Za-z][A-Za-z .'-]{1,60})$/u.test(name) &&
-    !/项目|学校|公司|中心|系统|计划|总结|工作|平台|日期/.test(name)
+    !/项目|学校|公司|中心|系统|计划|总结|工作|平台|日期|设备|人员|客户|物业|现场|接口|点位|资料|回路|电脑|水表|门禁/.test(
+      name,
+    )
     ? name
     : undefined;
 }
 
 function explicitDate(value: string): string | undefined {
+  value = normalizeDateNotation(value);
   const date = value.match(/(?:^|[^\d])(\d{4}-\d{2}-\d{2})(?!\d)/)?.[1];
   if (!date) return undefined;
   const parsed = new Date(`${date}T00:00:00Z`);
@@ -53,8 +56,16 @@ function explicitDate(value: string): string | undefined {
     : date;
 }
 
+function normalizeDateNotation(value: string): string {
+  return value.replace(
+    /(\d{4})年(\d{1,2})月(\d{1,2})日/g,
+    (_, year: string, month: string, day: string) =>
+      `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`,
+  );
+}
+
 function heading(value: string): "current" | "future" | undefined {
-  const withoutDate = value
+  const withoutDate = normalizeDateNotation(value)
     .replace(/\d{4}-\d{2}-\d{2}/g, "")
     .replace(/^[\s:：()（）-]+|[\s()（）-]+$/g, "");
   if (currentHeading.test(withoutDate)) return "current";
@@ -74,7 +85,7 @@ export function explicitAssignee(value: string): string | undefined {
   );
   if (labeled) return person(labeled[1]!);
   const assigned = value.match(
-    /(?:由|交给|安排)\s*([\p{Script=Han}·]{2,8}|[A-Za-z][A-Za-z .'-]{1,60}?)\s*(?:负责|跟进|处理|执行)/u,
+    /(?:由|交给|安排)\s*([\p{Script=Han}·]{2,8}?|[A-Za-z][A-Za-z .'-]{1,60}?)\s*(?:负责|跟进|处理|执行|完成|检查|核对|复核|提交|安装|调试)/u,
   );
   if (assigned) return person(assigned[1]!);
   const responsible = value.match(
@@ -101,6 +112,9 @@ function isNextStep(text: string, futureSection: boolean) {
       text,
     ) ||
     /^(?:计划|准备|待办[:：]?|尚需|还需|需继续)/.test(text) ||
+    /(?:约好|约定|预约|定于)(?:在)?(?:周|星期)[一二三四五六日天].*(?:联调|检查|培训|更换|到场|排查)/.test(
+      text,
+    ) ||
     /(?:预计|预约|计划于|安排在|定于).+(?:更换|培训|处理|排查|完成|进行|开展|上线|交付)/.test(
       text,
     )
@@ -257,7 +271,9 @@ export function parseDailyReport(source: string): DailyReportEntry[] | null {
     }
     const section = heading(line);
     const date = explicitDate(line);
-    const hasDate = /(?:^|[^\d])\d{4}-\d{2}-\d{2}(?!\d)/.test(line);
+    const hasDate = /(?:^|[^\d])\d{4}-\d{2}-\d{2}(?!\d)/.test(
+      normalizeDateNotation(line),
+    );
     if (section) {
       started = true;
       futureSection = section === "future";
@@ -273,7 +289,11 @@ export function parseDailyReport(source: string): DailyReportEntry[] | null {
       itemContext = "";
       continue;
     }
-    if (/^(?:日期\s*[:：]\s*)?\d{4}-\d{2}-\d{2}$/.test(line)) {
+    if (
+      /^(?:日期\s*[:：]\s*)?\d{4}-\d{2}-\d{2}$/.test(
+        normalizeDateNotation(line),
+      )
+    ) {
       workDate = date;
       invalidWorkDate = date ? undefined : true;
       if (!reporter && !result.length) {

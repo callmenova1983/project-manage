@@ -133,12 +133,14 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
     const result = await request("GET", "/api/ai/capabilities");
     expect(result.json()).toMatchObject({
       enabled: true,
+      runtime: "legacy",
       model: QWEN_MODEL,
       connectionVerified: false,
       remainingAttempts: 3,
     });
     expect(result.body).not.toContain(config.apiKey);
     expect(result.body).not.toContain(config.baseUrl);
+    expect(mock).not.toHaveBeenCalled();
   });
   it("generates a source-backed draft, requires review/overwrite confirmation, then applies exactly once", async () => {
     const before = ctx.repo.snapshot("test");

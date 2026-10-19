@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from "../locales";
 import { computed, ref, watch } from "vue";
 import {
   ElTable,
@@ -85,12 +86,12 @@ watch(count, (n) => {
       {{
         kind === "projects" ? "当前筛选范围内的项目" : "与所点击数量对应的任务"
       }}
-      · {{ count }} 项
+      · {{ count }} {{ t("项") }}
     </p>
     <ElSelect
       v-if="kind === 'projects'"
       v-model="sort"
-      aria-label="明细排序"
+      :aria-label="t('明细排序')"
       style="width: 180px"
     >
       <ElOption
@@ -106,7 +107,7 @@ watch(count, (n) => {
         :label="item[1]"
       />
     </ElSelect>
-    <button v-else @click="emit('back')">返回项目明细</button>
+    <button v-else @click="emit('back')">{{ t("返回项目明细") }}</button>
     <div v-if="mobile" class="mobile-detail-list">
       <template v-if="kind === 'projects'">
         <article
@@ -153,57 +154,62 @@ watch(count, (n) => {
       :data="projects.slice((page - 1) * 25, page * 25)"
       row-key="id"
       max-height="520"
-      empty-text="暂无项目"
+      :empty-text="t('暂无项目')"
     >
-      <ElTableColumn label="项目" min-width="160"
+      <ElTableColumn :label="t('项目')" min-width="160"
         ><template #default="{ row }"
           ><button class="detail-link" @click="emit('project', row.id)">
             {{ row.name }}</button
-          ><small v-if="!row.total">暂无任务记录</small></template
+          ><small v-if="!row.total"> {{ t("暂无任务记录") }} </small></template
         ></ElTableColumn
       >
-      <ElTableColumn label="阶段" width="100"
+      <ElTableColumn :label="t('阶段')" width="100"
         ><template #default="{ row }">{{
           stages[row.stage] || row.stage || "阶段待补"
         }}</template></ElTableColumn
       >
       <ElTableColumn
         prop="total"
-        label="任务"
+        :label="t('任务')"
         width="65"
         align="right"
       /><ElTableColumn
         prop="open"
-        label="未完成"
+        :label="t('未完成')"
         width="80"
         align="right"
       /><ElTableColumn
         prop="blocked"
-        label="待协调"
+        :label="t('待协调')"
         width="80"
         align="right"
-      /><ElTableColumn prop="overdue" label="逾期" width="65" align="right" />
+      /><ElTableColumn
+        prop="overdue"
+        :label="t('逾期')"
+        width="65"
+        align="right"
+      />
     </ElTable>
     <ElTable
       v-else-if="!mobile"
       :data="tasks.slice((page - 1) * 25, page * 25)"
       row-key="id"
       max-height="520"
-      empty-text="暂无对应任务"
+      :empty-text="t('暂无对应任务')"
     >
-      <ElTableColumn label="任务" min-width="180"
+      <ElTableColumn :label="t('任务')" min-width="180"
         ><template #default="{ row }"
           ><button class="detail-link" @click="emit('task', row.id)">
             {{ row.title }}
           </button></template
         ></ElTableColumn
       >
-      <ElTableColumn label="状态" width="90"
+      <ElTableColumn :label="t('状态')" width="90"
         ><template #default="{ row }">{{
           statusNames[row.status]
         }}</template></ElTableColumn
       >
-      <ElTableColumn prop="dueDate" label="截止日期" width="120" />
+      <ElTableColumn prop="dueDate" :label="t('截止日期')" width="120" />
     </ElTable>
     <ElPagination
       v-model:current-page="page"
@@ -212,12 +218,12 @@ watch(count, (n) => {
       layout="prev, pager, next"
       small
     />
-    <small
-      >当前展示 {{ count ? (page - 1) * 25 + 1 : 0 }}–{{
+    <small>
+      {{ t("当前展示") }} {{ count ? (page - 1) * 25 + 1 : 0 }}–{{
         Math.min(page * 25, count)
       }}
-      / {{ count }} 项</small
-    >
+      / {{ count }} {{ t("项") }}
+    </small>
   </section>
 </template>
 <style scoped>

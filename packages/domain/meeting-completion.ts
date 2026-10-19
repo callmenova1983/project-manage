@@ -1,4 +1,14 @@
 import { z } from "zod";
+import { hasUnspecifiedOtherProject } from "./meeting-sections.js";
+
+/** Automatic matching must not undo an intentional ambiguity guard. */
+export function meetingAutomaticProjects(
+  item: Suggestion,
+  projects: Project[],
+) {
+  if (hasUnspecifiedOtherProject(item.sourceText)) return [];
+  return meetingReplyProjects(item.sourceText, projects);
+}
 import {
   projectInput,
   type Proposal,
@@ -287,6 +297,17 @@ export function groupMeetingItems(items: Suggestion[], projects: Project[]) {
     .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length);
   const groups: { key: string; name: string; items: Suggestion[] }[] = [];
   items.forEach((item, index) => {
+    if (item.sourceHeading) {
+      const candidates = item.candidates
+        .map((candidate) => candidate.projectId)
+        .sort()
+        .join(",");
+      const key = `section:${item.sourceHeading}:${candidates}`;
+      const group = groups.find((entry) => entry.key === key);
+      if (group) group.items.push(item);
+      else groups.push({ key, name: item.sourceHeading, items: [item] });
+      return;
+    }
     const line = lines[index]!;
     const explicit =
       captureTextFields(line).project ||

@@ -63,6 +63,70 @@ beforeEach(async () => {
   ).json();
 });
 afterEach(() => context.app.close());
+it("persists a split meeting fact and followup separately and never replays either", async () => {
+  const before = context.repo.snapshot("team");
+  const project = before.projects[0]!;
+  const source = `### ${project.name}\n- 设备已上线，下周继续检查运行情况。`;
+  const created = await request("/api/proposals", { source });
+  expect(created.statusCode).toBe(200);
+  const draft = created.json<Proposal>();
+  expect(draft.suggestions.map((item) => [item.action, item.status])).toEqual([
+    ["update", "done"],
+    ["task", "todo"],
+  ]);
+  const payload = {
+    partial: true,
+    updateMode: "append",
+    suggestions: draft.suggestions.map((item) => ({
+      id: item.id,
+      selectedProjectId: project.id,
+      title: item.title,
+      action: item.action,
+      status: item.status,
+      confirmed: true,
+      overwriteConfirmed: false,
+    })),
+  };
+  const key = randomUUID();
+  const result = await request(
+    `/api/proposals/${draft.id}/apply`,
+    payload,
+    key,
+  );
+  expect(result.statusCode).toBe(200);
+  const after = context.repo.snapshot("team");
+  const newTasks = after.tasks.filter(
+    (task) => !before.tasks.some((old) => old.id === task.id),
+  );
+  expect(newTasks).toHaveLength(1);
+  expect(newTasks[0]).toMatchObject({
+    projectId: project.id,
+    title: "下周继续检查运行情况。",
+    status: "todo",
+    description: source.split("\n")[1],
+  });
+  expect(result.json<Proposal>().appliedResults).toEqual([
+    { suggestionId: draft.suggestions[0]!.id, projectId: project.id },
+    {
+      suggestionId: draft.suggestions[1]!.id,
+      projectId: project.id,
+      taskId: newTasks[0]!.id,
+    },
+  ]);
+  expect(
+    after.projects.find((item) => item.id === project.id)?.latestUpdate,
+  ).toContain("设备已上线");
+  expect(
+    after.projects.find((item) => item.id === project.id)?.latestUpdate,
+  ).not.toContain("下周继续");
+  expect(
+    (await request(`/api/proposals/${draft.id}/apply`, payload, key)).json(),
+  ).toEqual(result.json());
+  expect(
+    (await request(`/api/proposals/${draft.id}/apply`, payload)).statusCode,
+  ).toBe(409);
+  expect(context.repo.snapshot("team")).toEqual(after);
+});
 it("atomically creates a confirmed project and attaches only the selected meeting item, with idempotent replay", async () => {
   const before = context.repo.snapshot("team"),
     key = randomUUID();

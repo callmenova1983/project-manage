@@ -170,6 +170,92 @@ it("answers real task and project queries without external calls or mutations", 
   expect(ctx.repo.snapshot("assistant")).toEqual(before);
   expect(fetcher).not.toHaveBeenCalled();
 });
+it("filters persisted tasks by day, week, owner, overdue, blocked and done without writes", async () => {
+  const snapshot = ctx.repo.snapshot("assistant");
+  const template = snapshot.tasks[0]!;
+  const member = snapshot.members?.find((m) => m.name === "Assistant Tester");
+  expect(member).toBeDefined();
+  if (!member) throw new Error("Missing authenticated member fixture");
+  ctx.repo.db
+    .prepare("DELETE FROM tasks WHERE workspace_id=?")
+    .run("assistant");
+  const cases = [
+    {
+      id: "today-open",
+      status: "todo",
+      workDates: ["2026-10-19"],
+      workWeek: "2026-10-19",
+      dueDate: null,
+    },
+    {
+      id: "week-open",
+      status: "in_progress",
+      workDates: ["2026-10-21"],
+      workWeek: "2026-10-19",
+      dueDate: null,
+    },
+    {
+      id: "late",
+      status: "todo",
+      workDates: [],
+      workWeek: null,
+      dueDate: "2026-10-18",
+    },
+    {
+      id: "blocked",
+      status: "blocked",
+      workDates: [],
+      workWeek: null,
+      dueDate: null,
+    },
+    {
+      id: "finished",
+      status: "done",
+      workDates: ["2026-10-19"],
+      workWeek: "2026-10-19",
+      dueDate: "2026-10-18",
+    },
+  ] as const;
+  for (const task of cases)
+    ctx.repo.putTask("assistant", {
+      ...template,
+      ...task,
+      title: task.id,
+      workDates: [...task.workDates],
+      assignee: task.id === "week-open" ? "Other Person" : member.name,
+      assigneeId: task.id === "week-open" ? null : member.id,
+    });
+  const before = ctx.repo.snapshot("assistant");
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-19T12:00:00Z"));
+  try {
+    await login("assistant@example.test");
+    for (const [text, expected] of [
+      ["今天有哪些任务？", ["today-open"]],
+      ["本周有哪些任务？", ["today-open", "week-open"]],
+      ["有哪些我的任务？", ["today-open", "late", "blocked", "finished"]],
+      ["有哪些逾期任务？", ["late"]],
+      ["有哪些受阻任务？", ["blocked"]],
+      ["有哪些已完成任务？", ["finished"]],
+    ] as const) {
+      const response = await send("POST", "/api/assistant/query", {
+        text,
+        projectId: template.projectId,
+      });
+      expect(response.statusCode, text).toBe(200);
+      const answer = response.json();
+      expect(answer.handled, text).toBe(true);
+      expect(
+        answer.links.map((link: { title: string }) => link.title).sort(),
+        text,
+      ).toEqual([...expected].sort());
+    }
+    expect(ctx.repo.snapshot("assistant")).toEqual(before);
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
 it("defaults to Qwen ASR, sends audio only, persists actual usage and replays once", async () => {
   const capability = (await send("GET", "/api/assistant/speech")).json();
   expect(capability).toMatchObject({

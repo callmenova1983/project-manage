@@ -1,5 +1,7 @@
 /** Explicit interface translations; user-entered content is never translated. */
+import { statisticsEnglish } from "./statistics-en";
 export const uiEnglish: Record<string, string> = {
+  ...statisticsEnglish,
   日报进展: "Daily report progress",
   日报日期: "Report date",
   汇报人: "Reporter",
@@ -765,6 +767,8 @@ export const uiEnglish: Record<string, string> = {
   "项目：{p0}；{p1}": "Project: {p0}; {p1}",
   "正在保存原文并匹配项目…": "Saving original text and matching projects…",
   "AI 正在识别事项与归属…": "AI is identifying work items and projects…",
+  "纪要原文已保存。AI 整理未完成，本次采用规则整理；项目不明确的事项只提醒，不创建记录。":
+    "The original notes were saved. AI processing did not finish, so rules were used. Items with unclear projects are noted without creating records.",
   "纪要已保存。智能整理暂时不可用，我先按原文里的项目名称整理；不明确的地方会请你确认。":
     "Notes saved. AI processing is unavailable, so project names in the original text will be used. You will be asked to confirm unclear items.",
   已完成: "Done",

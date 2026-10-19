@@ -2,6 +2,47 @@ import { describe, expect, it } from "vitest";
 import { parseDailyReport } from "../../packages/domain/daily-report.js";
 
 describe("daily report semantics", () => {
+  it.each(["约好周五到场联调", "约定星期三培训"])(
+    "keeps appointments as future work: %s",
+    (text) => {
+      expect(
+        parseDailyReport(`陈晨\n今日工作总结\n1. 青禾学校${text}`)?.[0],
+      ).toMatchObject({ action: "task", status: "todo" });
+    },
+  );
+  it.each([
+    ["下周安排李强检查水表", "李强"],
+    ["由李强完成点位复核", "李强"],
+    ["安排设备检查时间", "陈晨"],
+  ])(
+    "resolves explicit actor in %s without assigning objects",
+    (text, assignee) => {
+      const entries = parseDailyReport(
+        `陈晨\nReport to:赵经理\n今日工作总结\n1. 青禾学校${text}`,
+      )!;
+      expect(entries[0]?.assignee).toBe(assignee);
+    },
+  );
+
+  it.each([
+    ["2026年10月12日", "2026-10-12", undefined],
+    ["2026年2月3日", "2026-02-03", undefined],
+    ["2026年2月30日", undefined, true],
+  ])(
+    "preserves Chinese report date %s and source",
+    (date, workDate, invalidWorkDate) => {
+      const source = `陈晨\nReport to:赵经理\n${date}\n今日工作总结\n1. 青禾学校回路核对已完成`;
+      const entries = parseDailyReport(source)!;
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        workDate,
+        invalidWorkDate,
+        assignee: "陈晨",
+      });
+      expect(entries[0]?.sourceText).toBe(source.split("\n")[4]);
+    },
+  );
+
   it("records numbered daily work without creating three new todos", () => {
     const source = `李明
 Report to:王华

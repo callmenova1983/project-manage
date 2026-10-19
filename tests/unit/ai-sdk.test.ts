@@ -32,89 +32,94 @@ const response = (finish = "stop") =>
     ],
     usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
   });
-it("resolves project candidates through one bounded read-only tool step", async () => {
-  const fetcher = vi
-    .fn<typeof fetch>()
-    .mockResolvedValueOnce(
-      Response.json({
-        model: config.model,
-        choices: [
-          {
-            index: 0,
-            finish_reason: "tool_calls",
-            message: {
-              role: "assistant",
-              content: null,
-              tool_calls: [
-                {
-                  id: "call-1",
-                  type: "function",
-                  function: {
-                    name: "searchProjects",
-                    arguments: JSON.stringify({ names: ["青禾"] }),
+it.each(["tool_calls", "stop"])(
+  "resolves project candidates through one bounded read-only tool step with %s",
+  async (finishReason) => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          model: config.model,
+          choices: [
+            {
+              index: 0,
+              finish_reason: finishReason,
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call-1",
+                    type: "function",
+                    function: {
+                      name: "searchProjects",
+                      arguments: JSON.stringify({ names: ["青禾"] }),
+                    },
                   },
-                },
-              ],
+                ],
+              },
             },
-          },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+      )
+      .mockResolvedValueOnce(response());
+    const reserve = vi.fn(),
+      usage = vi.fn();
+    const result = await generateJson(
+      {
+        ...request,
+        sdkProjectLookup: [
+          { id: "school", name: "青禾学校", aliases: [] },
+          { id: "private-other", name: "其他项目", aliases: [] },
         ],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      }),
-    )
-    .mockResolvedValueOnce(response());
-  const reserve = vi.fn(),
-    usage = vi.fn();
-  const result = await generateJson(
-    {
-      ...request,
-      sdkProjectLookup: [
-        { id: "school", name: "青禾学校", aliases: [] },
-        { id: "private-other", name: "其他项目", aliases: [] },
-      ],
-    },
-    config,
-    reserve,
-    (value) => value,
-    fetcher,
-    usage,
-  );
-  expect(result).toEqual({ ok: true });
-  expect(reserve).toHaveBeenCalledTimes(2);
-  expect(usage).toHaveBeenCalledTimes(2);
-  const first = JSON.parse(String(fetcher.mock.calls[0]![1]!.body));
-  expect(JSON.stringify(first)).not.toContain("private-other");
-  const second = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
-  expect(second.tool_choice).toBe("none");
-  const toolResult = second.messages.find(
-    (message: { role: string }) => message.role === "tool",
-  );
-  expect(toolResult.content).toContain("school");
-  expect(toolResult.content).not.toContain("private-other");
-});
-it("refuses unknown tools without executing or continuing them", async () => {
-  const fetcher = vi
-    .fn<typeof fetch>()
-    .mockResolvedValue(
-      Response.json({
-        model: config.model,
-        choices: [
-          {
-            index: 0,
-            finish_reason: "tool_calls",
-            message: {
-              content: null,
-              tool_calls: [
-                {
-                  id: "call-1",
-                  type: "function",
-                  function: { name: "deleteProject", arguments: "{}" },
-                },
-              ],
-            },
-          },
-        ],
-      }),
+      },
+      config,
+      reserve,
+      (value) => value,
+      fetcher,
+      usage,
     );
+    expect(result).toEqual({ ok: true });
+    expect(reserve).toHaveBeenCalledTimes(2);
+    expect(usage).toHaveBeenCalledTimes(2);
+    const first = JSON.parse(String(fetcher.mock.calls[0]![1]!.body));
+    expect(first.tool_choice).toEqual({
+      type: "function",
+      function: { name: "searchProjects" },
+    });
+    expect(JSON.stringify(first)).not.toContain("private-other");
+    const second = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
+    expect(second.tool_choice).toBe("none");
+    const toolResult = second.messages.find(
+      (message: { role: string }) => message.role === "tool",
+    );
+    expect(toolResult.content).toContain("school");
+    expect(toolResult.content).not.toContain("private-other");
+  },
+);
+it("refuses unknown tools without executing or continuing them", async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+    Response.json({
+      model: config.model,
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            content: null,
+            tool_calls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: { name: "deleteProject", arguments: "{}" },
+              },
+            ],
+          },
+        },
+      ],
+    }),
+  );
   await expect(
     generateJson(
       { ...request, sdkProjectLookup: [] },

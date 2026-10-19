@@ -5,6 +5,7 @@ import { readQwenConfig, readAiRuntime } from "./ai/config.js";
 import { readWecomConfig } from "./wecom.js";
 import { configuredAppOrigin, configuredCodespacesRewrite } from "./origin.js";
 const production = process.env.NODE_ENV === "production";
+const aiRuntime = readAiRuntime(process.env);
 const origin = configuredAppOrigin(process.env);
 if (production && !existsSync("dist/web/index.html"))
   throw new Error(
@@ -22,7 +23,7 @@ const { app } = await buildApp({
     .filter(Boolean),
   production,
   qwen: readQwenConfig(process.env),
-  aiRuntime: readAiRuntime(process.env),
+  aiRuntime,
   wecom: readWecomConfig(process.env),
   starterPassword: process.env.PM_DEFAULT_USER_PASSWORD,
   originDiagnostics: process.env.ORIGIN_DIAGNOSTICS === "1",
@@ -36,6 +37,7 @@ console.log(
   `Project Manage API listening on ${process.env.HOST ?? "127.0.0.1"}:${process.env.PORT ?? 3001}`,
 );
 console.log(`Allowed browser origin: ${origin}`);
+console.log(`AI runtime: ${aiRuntime}`);
 if (codespacesOriginRewrite)
   console.log(
     "Codespaces Origin rewrite compatibility enabled for the configured port only.",
