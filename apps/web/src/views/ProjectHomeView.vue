@@ -13,12 +13,16 @@ import ProjectsView from "./ProjectsView.vue";
 const WorkspaceOverview = defineAsyncComponent(
   () => import("./WorkspaceOverview.vue"),
 );
+const ProjectUpdatesView = defineAsyncComponent(
+  () => import("./ProjectUpdatesView.vue"),
+);
 const store = useWorkspace(),
   route = useRoute(),
   router = useRouter();
-const tab = computed(() =>
-  route.query.tab === "overview" ? "overview" : "projects",
-);
+const tab = computed(() => {
+  const value = route.query.tab;
+  return value === "overview" || value === "updates" ? value : "projects";
+});
 const invalid = computed(() => readProjectViewQuery(route.query).invalid);
 let hydrating = false;
 let filterRequest = 0;
@@ -103,13 +107,21 @@ onBeforeRouteUpdate(
 <template>
   <nav class="project-home-tabs page" :aria-label="t('Project sections')">
     <button
-      v-for="value in ['projects', 'overview']"
+      v-for="value in ['projects', 'overview', 'updates']"
       :key="value"
       :aria-pressed="tab === value"
       :class="{ active: tab === value }"
       @click="navigate(value)"
     >
-      {{ t(value === "projects" ? "Projects" : "Workspace overview") }}
+      {{
+        t(
+          value === "projects"
+            ? "Projects"
+            : value === "overview"
+              ? "Workspace overview"
+              : "Changes & next work",
+        )
+      }}
     </button>
   </nav>
   <div v-if="invalid" class="page">
@@ -119,11 +131,13 @@ onBeforeRouteUpdate(
     <button @click="clear">{{ t("Clear filters") }}</button>
   </div>
   <WorkspaceOverview v-else-if="tab === 'overview'" />
+  <ProjectUpdatesView v-else-if="tab === 'updates'" />
   <ProjectsView v-else />
 </template>
 <style scoped>
 .project-home-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding-bottom: 0;
   padding-top: 16px;

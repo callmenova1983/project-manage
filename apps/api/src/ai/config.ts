@@ -33,8 +33,8 @@ export function readAiRuntime(
 export function readQwenConfig(
   env: Record<string, string | undefined>,
 ): QwenConfig | undefined {
-  const provider = env.AI_PROVIDER ?? "rules";
-  if (provider === "rules") return undefined;
+  const provider = env.AI_PROVIDER ?? "disabled";
+  if (provider === "disabled" || provider === "rules") return undefined;
   if (provider !== "qwen") invalid("AI_PROVIDER");
   const runtime = readAiRuntime(env);
   if (env.AI_CALLS_ENABLED !== "true") invalid("AI_CALLS_ENABLED");

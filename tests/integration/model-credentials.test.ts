@@ -75,7 +75,10 @@ it.each(["sdk", "legacy"] as const)(
           {
             index: 0,
             finish_reason: "stop",
-            message: { role: "assistant", content: '{"suggestions":[]}' },
+            message: {
+              role: "assistant",
+              content: '{"kind":"clarify","question":"请提供项目或任务内容。"}',
+            },
           },
         ],
         usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
@@ -85,7 +88,7 @@ it.each(["sdk", "legacy"] as const)(
     const propose = () =>
       context.app.inject({
         method: "POST",
-        url: "/api/proposals/qwen",
+        url: "/api/assistant/interpret",
         headers: {
           origin,
           cookie,
@@ -176,6 +179,166 @@ it("encrypts a saved key, survives restart, stays disabled and never exposes the
   expect((await request("GET", "/api/ai/capabilities")).json().enabled).toBe(
     true,
   );
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("saves the key, chosen settings and enablement together without a model request", async () => {
+  const state = (await request("GET", "/api/admin/model")).json();
+  const approved = input();
+  const saved = await request("PUT", "/api/admin/model/configuration", {
+    settings: { ...state.settings, enabled: true, model: "qwen3.8-flash" },
+    credential: { apiKey: syntheticKey },
+    allowance: {
+      maxRequests: approved.maxRequests,
+      expiresAt: approved.expiresAt,
+    },
+  });
+  expect(saved.statusCode, saved.body).toBe(200);
+  expect(saved.json()).toMatchObject({
+    runtimeEnabled: true,
+    credentialAvailable: true,
+    settings: {
+      version: 2,
+      enabled: true,
+      model: "qwen3.8-flash",
+      secretRef: "server-default",
+    },
+  });
+  expect((await request("GET", "/api/ai/capabilities")).json().enabled).toBe(
+    true,
+  );
+  expect(saved.body).not.toContain(syntheticKey);
+  expect((await request("GET", "/api/admin/audit")).body).not.toContain(
+    syntheticKey,
+  );
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("enables an existing key in one save and renews limits while keeping its usage ledger", async () => {
+  const saved = (
+    await request("PUT", "/api/admin/model/credential", input())
+  ).json();
+  const vault = new QwenCredentialStore(context.repo, databasePath);
+  const original = vault.read("a")!;
+  const enabled = await request("PUT", "/api/admin/model/configuration", {
+    settings: { ...saved.settings, enabled: true },
+  });
+  expect(enabled.statusCode, enabled.body).toBe(200);
+  expect(enabled.json().runtimeEnabled).toBe(true);
+  expect(vault.read("a")).toEqual(original);
+  const userId = context.repo.db
+    .prepare("SELECT id FROM users WHERE email=?")
+    .get("admin@example.test")!.id;
+  context.repo.db
+    .prepare(
+      "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
+    )
+    .run(randomUUID(), original.budgetId, userId, Date.now());
+  const ledger = context.repo.db.prepare("SELECT * FROM ai_attempts").all();
+  const expiresAt = new Date(Date.now() + 3 * 86400000).toISOString();
+  const exhausted = await request("PUT", "/api/admin/model/configuration", {
+    settings: { ...enabled.json().settings, enabled: true },
+    allowance: { maxRequests: 1, expiresAt },
+  });
+  expect(exhausted.statusCode).toBe(400);
+  expect(vault.read("a")).toEqual(original);
+  expect((await request("GET", "/api/admin/model")).json().settings).toEqual(
+    enabled.json().settings,
+  );
+  const renewed = await request("PUT", "/api/admin/model/configuration", {
+    settings: { ...enabled.json().settings, enabled: true },
+    allowance: { maxRequests: 30, expiresAt },
+  });
+  expect(renewed.statusCode, renewed.body).toBe(200);
+  expect(renewed.json()).toMatchObject({
+    runtimeEnabled: true,
+    usedAttempts: 1,
+    remainingAttempts: 29,
+  });
+  expect(vault.read("a")).toEqual({
+    ...original,
+    maxRequests: 30,
+    expiresAt: Date.parse(expiresAt),
+  });
+  expect(context.repo.db.prepare("SELECT * FROM ai_attempts").all()).toEqual(
+    ledger,
+  );
+  const paused = await request("PUT", "/api/admin/model/configuration", {
+    settings: { ...renewed.json().settings, enabled: false },
+  });
+  expect(paused.statusCode).toBe(200);
+  expect(paused.json().runtimeEnabled).toBe(false);
+  expect(vault.read("a")).toEqual({
+    ...original,
+    maxRequests: 30,
+    expiresAt: Date.parse(expiresAt),
+  });
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("rejects enabling expired credentials without changing their key or allowance", async () => {
+  const saved = (
+    await request("PUT", "/api/admin/model/credential", input())
+  ).json();
+  const vault = new QwenCredentialStore(context.repo, databasePath);
+  const expired = vault.updateAllowance("a", {
+    version: saved.settings.version,
+    maxRequests: 20,
+    expiresAt: new Date(Date.now() - 60000).toISOString(),
+  });
+  const enabled = await request("PUT", "/api/admin/model/configuration", {
+    settings: { ...saved.settings, enabled: true },
+  });
+  expect(enabled.statusCode).toBe(400);
+  expect(enabled.json().message).toContain("已到期");
+  expect(vault.read("a")).toEqual(expired);
+  expect((await request("GET", "/api/admin/model")).json().settings).toEqual(
+    saved.settings,
+  );
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("rolls back the complete setup on invalid settings and rejects non-admin setup", async () => {
+  const state = (await request("GET", "/api/admin/model")).json();
+  const approved = input();
+  const payload = {
+    settings: { ...state.settings, enabled: true },
+    credential: { apiKey: syntheticKey },
+    allowance: {
+      maxRequests: approved.maxRequests,
+      expiresAt: approved.expiresAt,
+    },
+  };
+  await login("member@example.test");
+  expect(
+    (await request("PUT", "/api/admin/model/configuration", payload))
+      .statusCode,
+  ).toBe(403);
+  await login();
+  // Valid schema but mismatched configured endpoint; neither settings nor key may be committed.
+  expect(
+    (
+      await request("PUT", "/api/admin/model/configuration", {
+        ...payload,
+        credential: {
+          apiKey: syntheticKey,
+          baseUrl: "https://example.test/v1",
+        },
+      })
+    ).statusCode,
+  ).toBe(400);
+  expect((await request("GET", "/api/admin/model")).json()).toEqual(state);
+  expect(
+    context.repo.db.prepare("SELECT * FROM workspace_ai_credentials").all(),
+  ).toHaveLength(0);
+  expect(
+    (
+      await request("PUT", "/api/admin/model/configuration", {
+        ...payload,
+        settings: { ...payload.settings, version: state.settings.version + 1 },
+      })
+    ).statusCode,
+  ).toBe(409);
   expect(fetcher).not.toHaveBeenCalled();
 });
 

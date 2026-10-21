@@ -13,7 +13,6 @@ import { captureErrorMessage } from "../services/capture-error";
 import { t } from "../locales";
 import { currentDay } from "../composables/calendar";
 import {
-  parseDailyLog,
   missingProjectFields,
   type DailyLogBatch,
 } from "../../../../packages/domain/daily-log";
@@ -32,6 +31,7 @@ const store = useWorkspace(),
   reporter = ref(store.user?.name ?? ""),
   error = ref(""),
   saving = ref(false),
+  recognizing = ref(false),
   batchId = ref<string>(),
   preview = ref(false),
   result = ref<DailyLogBatch>(),
@@ -112,12 +112,10 @@ watch(
   (value) => {
     if (value) {
       source.value = value;
-      review();
     }
   },
 );
 onMounted(async () => {
-  if (source.value) review();
   try {
     history.value = await api.dailyLogs();
   } catch (e) {
@@ -125,29 +123,53 @@ onMounted(async () => {
   }
 });
 async function review() {
-  error.value = "";
+  if (recognizing.value || saving.value) return;
+  recognizing.value = true;
   try {
-    if (capture.value)
-      source.value = (await capture.value.resolveSource()).text;
-  } catch (e) {
-    error.value = t(captureErrorMessage(e));
-    return;
+    error.value = "";
+    try {
+      if (capture.value)
+        source.value = (await capture.value.resolveSource()).text;
+    } catch (e) {
+      error.value = t(captureErrorMessage(e));
+      return;
+    }
+    result.value = undefined;
+    batchId.value = undefined;
+    reviewVersions.value = Object.fromEntries(
+      projects.value.map((p) => [p.id, p.version]),
+    );
+    try {
+      const turn = await api.interpretAssistant({
+        source: source.value,
+        externalProcessingConfirmed: true,
+      });
+      if (turn.plan.kind !== "work")
+        throw new Error(
+          turn.plan.kind === "clarify"
+            ? turn.plan.question
+            : "请在 AI 助手中继续处理项目或任务；本次未归档。",
+        );
+      if (turn.plan.items.some((item) => item.action !== "update"))
+        throw new Error("内容包含后续任务，请在 AI 助手中处理；本次未归档。");
+      rows.value = turn.plan.items.map((item) => ({
+        sourceLine: item.sourceLine,
+        text: item.title,
+        name: item.projectName ?? "",
+        choice: item.projectIds.length === 1 ? item.projectIds[0]! : "later",
+        newProjectName: item.projectName ?? "",
+        matches: item.projectIds,
+      }));
+    } catch (e) {
+      error.value = t(captureErrorMessage(e));
+      return;
+    }
+    preview.value = true;
+  } finally {
+    recognizing.value = false;
   }
-  result.value = undefined;
-  batchId.value = undefined;
-  reviewVersions.value = Object.fromEntries(
-    projects.value.map((p) => [p.id, p.version]),
-  );
-  rows.value = parseDailyLog(source.value, projects.value).map((r) => ({
-    sourceLine: r.sourceLine,
-    text: r.text,
-    name: r.name,
-    choice: r.later ? "later" : r.projectId || "new",
-    newProjectName: r.newProjectName,
-    matches: r.matches.map((p) => p.id),
-  }));
-  preview.value = true;
 }
+
 function resume(batch: DailyLogBatch) {
   reviewVersions.value = Object.fromEntries(
     projects.value.map((p) => [p.id, p.version]),
@@ -218,9 +240,7 @@ function reset() {
   <section class="panel daily-log" :aria-label="t('当日工作日志')">
     <h2>{{ t("一次归档当天的多项目工作") }}</h2>
     <p class="muted">
-      {{
-        t("每行写“项目简称 + 工作内容”，归入项目进展；日期和日志人统一填写。")
-      }}
+      {{ t("粘贴工作记录，AI 整理项目归属；日期和日志人可统一填写。") }}
     </p>
     <template v-if="!result">
       <div class="daily-meta">
@@ -253,7 +273,7 @@ function reset() {
         :rows="8"
         :label="t('工作日志原文')"
         :maxlength="12000"
-        :disabled="saving"
+        :disabled="saving || recognizing"
         @submit="review"
         :placeholder="
           t(
@@ -330,17 +350,21 @@ function reset() {
       <footer>
         <button
           v-if="preview && !batchId"
-          :disabled="saving"
+          :disabled="saving || recognizing"
           @click="preview = false"
         >
           {{ t("返回编辑") }}</button
         ><button
           v-if="!preview"
           class="primary"
-          :disabled="(!source.trim() && !capture?.hasFiles) || !!capture?.busy"
+          :disabled="
+            recognizing ||
+            (!source.trim() && !capture?.hasFiles) ||
+            !!capture?.busy
+          "
           @click="review"
         >
-          {{ t("批量预览归属") }}</button
+          {{ t("识别并整理") }}</button
         ><button
           v-else
           class="primary"
@@ -398,7 +422,7 @@ function reset() {
           >{{ batch.workDate }} · {{ batch.reporter }} ·
           {{ batch.rows.filter((r) => r.status === "pending").length }}
           {{ t("条待归类") }}</span
-        ><button :disabled="saving" @click="resume(batch)">
+        ><button :disabled="saving || recognizing" @click="resume(batch)">
           {{ t("批量补齐归属") }}
         </button>
       </div>

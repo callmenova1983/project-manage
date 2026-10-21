@@ -27,7 +27,6 @@ export function needsIntakeDecision(c: IntakeCandidate, duplicate: boolean) {
     c.warnings.some(
       (w) =>
         ![
-          "Rule-assisted draft. Review the project details.",
           "Several projects match. Choose the target.",
           "Partial project match. Confirm the target or keep it in Intake inbox.",
           "Unresolved project. Save in Intake inbox and assign it later.",

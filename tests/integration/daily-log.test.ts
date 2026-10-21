@@ -2,10 +2,7 @@ import { beforeEach, afterEach, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { buildApp } from "../../apps/api/src/app";
 import { createUser } from "../../apps/api/src/auth";
-import {
-  parseDailyLog,
-  looksLikeDailyLog,
-} from "../../packages/domain/daily-log";
+
 import { progressHistory } from "../../packages/domain/progress";
 let context: Awaited<ReturnType<typeof buildApp>>, cookie: string, csrf: string;
 const origin = "http://localhost:4173";
@@ -29,12 +26,38 @@ function input() {
     workDate: "2026-10-13",
     reporter: "张同事",
     confirmed: true,
-    rows: parseDailyLog(source, []).map((r) => ({
-      sourceLine: r.sourceLine,
-      text: r.text,
-      newProjectName: r.name,
-      later: false,
-    })),
+    rows: [
+      {
+        sourceLine: 1,
+        text: "协议判定优化更新",
+        newProjectName: "国鑫",
+        later: false,
+      },
+      {
+        sourceLine: 2,
+        text: "车位协议增加车牌联系人信息采集",
+        newProjectName: "重儿",
+        later: false,
+      },
+      {
+        sourceLine: 4,
+        text: "集卡历史数据拉取沟通，xml对接跟进",
+        newProjectName: "大榭",
+        later: false,
+      },
+      {
+        sourceLine: 5,
+        text: "补齐租户字段及历史迁移并更新测试",
+        newProjectName: "能耗",
+        later: false,
+      },
+      {
+        sourceLine: 6,
+        text: "电梯对接跟进",
+        newProjectName: "五粮液",
+        later: false,
+      },
+    ],
   };
 }
 beforeEach(async () => {
@@ -59,19 +82,6 @@ beforeEach(async () => {
   csrf = login.json().csrf;
 });
 afterEach(() => context.app.close());
-it("recognizes all five numbered lines and retains source line positions", () => {
-  expect(looksLikeDailyLog(source)).toBe(true);
-  const rows = parseDailyLog(source, []);
-  expect(rows.map((r) => r.name)).toEqual([
-    "国鑫",
-    "重儿",
-    "大榭",
-    "能耗",
-    "五粮液",
-  ]);
-  expect(rows.map((r) => r.sourceLine)).toEqual([1, 2, 4, 5, 6]);
-  expect(rows[1]!.text).toBe("车位协议增加车牌联系人信息采集");
-});
 it("atomically archives progress with original/date/reporter and prevents repeated imports", async () => {
   const before = context.repo.snapshot("team");
   const res = await request("/api/daily-logs", input());

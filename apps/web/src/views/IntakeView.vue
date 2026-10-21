@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { assistantProjectCsv } from "../../../../packages/domain/assistant-plan";
 import { activeStages, catalogs } from "../composables/catalogs";
 import {
   computed,
@@ -192,6 +193,7 @@ const fieldLabels: Record<IntakeField, string> = {
   shortName: t("简称"),
   aliases: t("别名"),
   client: "Client",
+  address: t("地址"),
   owner: "Project owner",
   stage: "Stage",
   task: "Task title",
@@ -235,6 +237,8 @@ function useExample() {
   error.value = "";
 }
 async function preview(reviewOnly = false) {
+  if (reading.value) return;
+  reading.value = true;
   error.value = "";
   try {
     if (capture.value?.hasFiles)
@@ -258,6 +262,36 @@ async function preview(reviewOnly = false) {
         resetMapping();
       }
     }
+    if (!source.value.rows) {
+      const original = source.value.originalSource ?? {
+        text: text.value,
+        materialIds: [],
+      };
+      const turn = await api.interpretAssistant({
+        source: text.value,
+        originalSource: original,
+        externalProcessingConfirmed: true,
+      });
+      if (turn.plan.kind !== "project")
+        throw new Error(
+          turn.plan.kind === "clarify"
+            ? turn.plan.question
+            : "这段内容请在 AI 助手中继续处理；本次未导入。",
+        );
+      const table = assistantProjectCsv(turn.plan.rows, store.data.projects);
+      sources.value = [
+        {
+          kind: "csv",
+          name: "AI structured project data",
+          sheet: "",
+          text: table,
+          rows: parseDelimited(table),
+          originalSource: original,
+        },
+      ];
+      sheetIndex.value = 0;
+      resetMapping();
+    }
     if (
       source.value.rows &&
       !mapping.value.includes("project") &&
@@ -277,9 +311,7 @@ async function preview(reviewOnly = false) {
     step.value = "review";
     const problems = candidates.value.some(
       (c) =>
-        reviewWarnings(c).some(
-          (w) => w !== "Rule-assisted draft. Review the project details.",
-        ) ||
+        reviewWarnings(c).length > 0 ||
         duplicate(c) ||
         needsIntakeDecision(c, false),
     );
@@ -293,6 +325,8 @@ async function preview(reviewOnly = false) {
     }
   } catch (e) {
     error.value = (e as Error).message;
+  } finally {
+    reading.value = false;
   }
 }
 function targetChanged(c: IntakeCandidate) {

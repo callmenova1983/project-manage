@@ -1,6 +1,7 @@
+import { proposalFixture, localProposal } from "../fixtures/proposals";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createSeed } from "../../packages/domain/seed";
-import { suggest, type Proposal } from "../../packages/domain/types";
+import { type Proposal } from "../../packages/domain/types";
 import { settleMeetingProposal } from "../../packages/domain/meeting-completion";
 import { createLocalApi } from "../../apps/web/src/services/local";
 import {
@@ -25,10 +26,12 @@ const proposal: Proposal = {
   sourceVersion: 1,
   status: "draft",
   createdAt: new Date().toISOString(),
-  suggestions: suggest(
-    "Atlas: 跟进设备\nMeridian: 安装完成\n稍后处理\n尚未保存",
-    projects,
-  ),
+  suggestions: proposalFixture(
+    "",
+    ["跟进设备", "安装完成", "稍后处理", "尚未保存"].map((title) => ({
+      title,
+    })),
+  ).suggestions,
 };
 it("lists only persisted or explicitly skipped items and links exact IDs, never matching duplicate titles", () => {
   const first = {
@@ -148,7 +151,9 @@ it("shows new projects and tasks from table input, and separates recorded logs f
 });
 it("local mode returns the actual task and project created during a partial apply", async () => {
   const api = createLocalApi();
-  const source = await api.propose("新增设备核对工作");
+  const source = await localProposal(api, "新增设备核对工作", [
+    { title: "新增设备核对工作" },
+  ]);
   const suggestion = source.suggestions[0]!;
   const result = await api.applyProposal(
     source,

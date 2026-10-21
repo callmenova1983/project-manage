@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { assistantProjectCsv } from "../../../../packages/domain/assistant-plan";
 import { useAssistantSession } from "../composables/assistant-session";
 import { accountStorageKey } from "../services/account-storage";
 import type { AssistantAnswer } from "../../../../packages/domain/assistant";
@@ -16,41 +17,31 @@ import {
 } from "../services/capture-results";
 import IntakeView from "./IntakeView.vue";
 import ChannelResolve from "../components/ChannelResolve.vue";
-import {
-  structuredCapture,
-  captureNeedsProjectContext,
-  normalizeCreationText,
-} from "../services/capture-routing";
 import type { CaptureSource } from "../../../../packages/domain/capture";
-import { looksLikeDailyLog } from "../../../../packages/domain/daily-log";
-import { parseDailyReport } from "../../../../packages/domain/daily-report";
-import { captureTextFields } from "../../../../packages/domain/intake-text";
 import { t, locale } from "../locales";
 import { catalogs, activeStages, catalogLabel } from "../composables/catalogs";
 import { channelEntries } from "../../../../packages/domain/channels";
-import { computed, nextTick, onMounted, ref, useId, watch } from "vue";
+import { computed, nextTick, ref, useId, watch } from "vue";
 import { PhArrowRight, PhSparkle, PhX } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
 import { api, type ReviewedSuggestion } from "../services/api";
 import {
   captureErrorMessage,
   isCaptureBudgetError,
+  isCaptureSetupError,
 } from "../services/capture-error";
 import type {
   Proposal,
   Suggestion,
-  AiCapabilities,
   Project,
 } from "../../../../packages/domain/types";
 import {
   pendingMeetingItems,
-  meetingReplyProjects,
-  meetingAutomaticProjects,
-  meetingReplyDraft,
+  emptyMeetingProjectDraft,
   groupMeetingItems,
   type MeetingNewProject,
 } from "../../../../packages/domain/meeting-completion";
-import { hasUnspecifiedOtherProject } from "../../../../packages/domain/meeting-sections";
+import { matchesProjectPinyin } from "../../../../packages/domain/project-search";
 import { useUnsaved } from "../composables/unsaved";
 const props = withDefaults(
   defineProps<{
@@ -75,22 +66,12 @@ const structuredSource = ref<string | null>(null);
 const structuredOriginal = ref<CaptureSource>();
 const logMode = ref(false),
   dailySource = ref("");
-const capabilities = ref<AiCapabilities | null>(null);
-let capabilityLoad: Promise<void> | undefined;
-onMounted(() => {
-  capabilityLoad = (async () => {
-    try {
-      capabilities.value = await api.aiCapabilities();
-    } catch {
-      /* Rule capture remains available. */
-    }
-  })();
-});
 const composer = ref(""),
   proposal = ref<Proposal | null>(null),
   error = ref(""),
   working = ref(false);
 const budgetError = computed(() => isCaptureBudgetError(error.value));
+const setupError = computed(() => isCaptureSetupError(error.value));
 const messages = ref<
   {
     role: "user" | "assistant";
@@ -112,8 +93,6 @@ const current = computed(() => pending.value[0]);
 const resolvedPending = computed(() =>
   pending.value.filter(
     (item) =>
-      !hasUnspecifiedOtherProject(item.sourceText) &&
-      item.sourceHeading !== "其他项目（需明确）" &&
       item.candidates.length === 1 &&
       available.value.some(
         (project) => project.id === item.candidates[0]!.projectId,
@@ -125,25 +104,29 @@ const saveResolvedLabel = computed(() =>
     ? `Save ${resolvedPending.value.length} matched items`
     : `保存 ${resolvedPending.value.length} 条已明确事项`,
 );
-const groups = computed(() =>
-  groupMeetingItems(pending.value, available.value),
-);
+const groups = computed(() => groupMeetingItems(pending.value));
 const currentGroup = computed(() => groups.value[0]);
 const selectedNewIds = ref<string[]>([]);
 const projectSearch = ref("");
 const showReply = ref(false);
 const searchedProjects = computed(() =>
   projectSearch.value.trim()
-    ? meetingReplyProjects(projectSearch.value, available.value).slice(0, 8)
+    ? available.value
+        .filter((project) => matchesProjectPinyin(project, projectSearch.value))
+        .slice(0, 8)
     : [],
 );
-const newProject = ref<ReturnType<typeof meetingReplyDraft> | null>(null);
+const newProject = ref<ReturnType<typeof emptyMeetingProjectDraft> | null>(
+  null,
+);
 const channels = computed(() =>
   channelEntries(catalogs.value).filter((channel) => !channel.archived),
 );
 const draftMatches = computed(() =>
   newProject.value?.name.trim()
-    ? meetingReplyProjects(newProject.value.name, available.value)
+    ? available.value.filter((project) =>
+        matchesProjectPinyin(project, newProject.value!.name),
+      )
     : [],
 );
 const retryItems = ref<ReviewedSuggestion[] | null>(null);
@@ -153,15 +136,7 @@ const available = computed(() =>
 const choices = computed(() => {
   if (!current.value) return [];
   const ids = new Set(current.value.candidates.map((c) => c.projectId));
-  const related = currentGroup.value?.name
-    ? meetingReplyProjects(currentGroup.value.name, available.value)
-    : [];
-  return available.value
-    .filter(
-      (project) =>
-        ids.has(project.id) || related.some((match) => match.id === project.id),
-    )
-    .slice(0, 6);
+  return available.value.filter((project) => ids.has(project.id)).slice(0, 6);
 });
 const discard = useUnsaved(
   computed(
@@ -230,7 +205,7 @@ const persistence = useAssistantSession(
         : null;
     newProject.value =
       state.newProject && typeof state.newProject === "object"
-        ? (state.newProject as ReturnType<typeof meetingReplyDraft>)
+        ? (state.newProject as ReturnType<typeof emptyMeetingProjectDraft>)
         : null;
     selectedNewIds.value = Array.isArray(state.selectedNewIds)
       ? state.selectedNewIds.filter((id) => typeof id === "string")
@@ -266,14 +241,20 @@ const persistence = useAssistantSession(
   },
 );
 async function intakeCompleted(batch: IntakeBatch) {
+  const results = intakeResults(batch, store.data.projects);
   messages.value.push({
     role: "assistant",
-    text: t("已完成：新建 {p0} 个项目，新增 {p1} 项任务。", {
-      p0: batch.projects.filter((p) => !p.intakeInbox).length,
-      p1: batch.tasks.length,
-    }),
-    results: intakeResults(batch, store.data.projects),
-    intakeId: batch.id,
+    text:
+      !batch.projects.length && !batch.tasks.length
+        ? t("项目已存在，已使用已有项目，没有重复创建。")
+        : t("已完成：新建 {p0} 个项目，新增 {p1} 项任务。", {
+            p0: batch.projects.filter((p) => !p.intakeInbox).length,
+            p1: batch.tasks.length,
+          }),
+    results,
+    ...(batch.projects.length || batch.tasks.length
+      ? { intakeId: batch.id }
+      : {}),
   });
   structuredSource.value = null;
   structuredOriginal.value = undefined;
@@ -429,12 +410,19 @@ function summarize(detail = "") {
       count("skipped") ? `${count("skipped")} 项暂不处理` : "",
     ]
       .filter(Boolean)
-      .join("，") || t("原文已保存");
+      .join("，") || t("尚未创建项目、任务或进展，原文已保留");
+  const written = count("project") + count("task") + count("update");
   const message = {
     role: "assistant" as const,
     resultFor: proposal.value.id,
     text: t("{p0}：{p1}。{p2}", {
-      p0: pending.value.length ? t("已保存") : t("已完成"),
+      p0: !written
+        ? pending.value.length
+          ? t("待确认")
+          : t("未写入")
+        : pending.value.length
+          ? t("已保存")
+          : t("已完成"),
       p1: summary,
       p2: detail,
     }),
@@ -463,58 +451,142 @@ function nextQuestion(detail = "") {
     summarize(detail);
     return;
   }
-  const group = currentGroup.value!;
-  if (group.name && !choices.value.length) {
-    newProject.value = meetingReplyDraft(
-      group.items.map((item) => item.sourceText).join("\n"),
-      channels.value,
-      catalogs.value,
-    );
-    if (!group.items.some((item) => captureTextFields(item.sourceText).project))
-      newProject.value.name = group.name;
-    selectedNewIds.value = group.items.map((item) => item.id);
-    say(
-      t(
-        "{p0}这 {p1} 条都提到了“{p2}”，但现有项目中没有找到对应项目。下方已整理好，确认名称和渠道后即可一起归入新项目。",
-        { p0: detail, p1: group.items.length, p2: group.name },
-      ),
-    );
+  showReply.value = true;
+  say(
+    t(
+      "{p0}还有 {p1} 条事项待确认归属，请说明对应项目；未确认的事项没有写入。",
+      { p0: detail, p1: pending.value.length },
+    ),
+  );
+}
+async function submitSemanticTurn(
+  source: string,
+  originalSource: CaptureSource,
+) {
+  phase.value = t("AI 正在理解本轮请求…");
+  await store.refresh();
+  const turn = await api.interpretAssistant({
+    source,
+    externalProcessingConfirmed: true,
+    originalSource,
+    temporaryMaterialIds: input.value?.temporaryMaterialIds(),
+    recentMessages: messages.value.slice(-6).map((message) => ({
+      role: message.role,
+      text: message.text.slice(0, 2000),
+      projectIds: [
+        ...new Set(
+          message.results?.flatMap((row) =>
+            row.projectId ? [row.projectId] : [],
+          ) ?? [],
+        ),
+      ].slice(0, 50),
+    })),
+    ...(props.contextProjectId
+      ? { contextProjectId: props.contextProjectId }
+      : {}),
+    ...(proposal.value && pending.value.length
+      ? { pendingProposalId: proposal.value.id }
+      : {}),
+    ...(structuredSource.value ? { draft: structuredSource.value } : {}),
+  });
+  messages.value.push({ role: "user", text: source });
+  composer.value = "";
+  input.value?.clearFiles();
+  const plan = turn.plan;
+  if (plan.kind === "clarify") {
+    say(plan.question);
     return;
   }
-  say(
-    t("{p0}{p1}", {
-      p0: detail,
-      p1: choices.value.length
-        ? t("找到可能对应的已有项目，请确认归属。")
-        : t("这条事项暂时看不出项目名称。可以填写名称新建，或搜索已有项目。"),
-    }),
-  );
-  if (
-    /(?:新建|创建|建立)[^，,；;\n]*项目|项目(?:名称|名)[：:]/.test(
-      current.value.sourceText,
-    )
-  )
-    newProject.value = meetingReplyDraft(
-      current.value.sourceText,
-      channels.value,
-      catalogs.value,
+  if (plan.kind === "query") {
+    if (!turn.answer) throw new Error(t("查询未返回真实数据，请重试。"));
+    say(turn.answer.text, turn.answer.links);
+    return;
+  }
+  if (plan.kind === "project") {
+    structuredSource.value = assistantProjectCsv(
+      plan.rows,
+      store.data.projects,
     );
-  selectedNewIds.value = group.items.map((item) => item.id);
+    structuredOriginal.value = originalSource;
+    logMode.value = false;
+    return;
+  }
+  if (plan.kind === "resolve") {
+    if (!proposal.value) throw new Error(t("没有可处理的待确认记录。"));
+    if (plan.action === "cancel") {
+      structuredSource.value = null;
+      say(t("已取消当前操作，未创建或修改记录。"));
+      return;
+    }
+    if (plan.action === "skip") {
+      await record([], plan.suggestionIds);
+      nextQuestion();
+      return;
+    }
+    const projectId =
+      plan.action === "defer"
+        ? store.data.projects.find((p) => p.intakeInbox)?.id
+        : plan.projectId;
+    if (!projectId) {
+      say(t("请明确项目后再保存，当前事项仍保留。"));
+      return;
+    }
+    const items = pending.value.filter((item) =>
+      plan.suggestionIds.includes(item.id),
+    );
+    retryItems.value = items.map((item) => reviewed(item, projectId));
+    phase.value = t("正在保存确认的事项…");
+    await record(retryItems.value);
+    retryItems.value = null;
+    nextQuestion();
+    return;
+  }
+  if (!turn.proposal) throw new Error(t("AI 未返回可保存的事项，本次未写入。"));
+  // Only the model's explicitly selected IDs can be auto-applied. No lexical
+  // matching, heading parsing, status rewriting or rules fallback here.
+  proposal.value = turn.proposal;
+  newProject.value = null;
+  retryItems.value = pending.value
+    .filter(
+      (item) =>
+        item.candidates.length === 1 &&
+        available.value.some((p) => p.id === item.candidates[0]!.projectId),
+    )
+    .map((item) => reviewed(item, item.candidates[0]!.projectId));
+  if (retryItems.value.length) {
+    phase.value = t("正在保存明确的事项…");
+    await record(retryItems.value);
+  }
+  retryItems.value = null;
+  nextQuestion();
 }
 async function submitNotes() {
   working.value = true;
   error.value = "";
-  const contextProject = available.value.find(
-    (p) => p.id === props.contextProjectId,
-  );
   phase.value = input.value?.referenceFiles
     ? t("正在分类并归档资料…")
     : input.value?.hasFiles
       ? t("正在读取附件内容…")
       : t("正在整理内容…");
+  if (props.assistant && input.value?.hasFiles) {
+    try {
+      phase.value = t("AI 正在判断附件用途…");
+      await input.value.classifyFiles();
+      await nextTick();
+    } catch (e) {
+      error.value = captureErrorMessage(e);
+      working.value = false;
+      return;
+    }
+  }
   if (input.value?.referenceMaterials.length && !input.value.uncertainPurpose) {
     try {
-      const result = await referenceReview.value!.archive();
+      if (!referenceReview.value?.ready) {
+        say(t("AI 已分类附件，请确认下方的归档项目后再保存；当前尚未归档。"));
+        working.value = false;
+        return;
+      }
+      const result = await referenceReview.value.archive();
       messages.value.push({
         role: "user",
         text: result.files.map((f) => f.name).join("、"),
@@ -548,142 +620,14 @@ async function submitNotes() {
     }
   }
   working.value = true;
-  let source: string, originalSource: CaptureSource;
   try {
     const prepared = await input.value!.resolveSource();
-    source = prepared.text;
-    if (
-      props.assistant &&
-      contextProject &&
-      !available.value.some((p) =>
-        [p.name, p.shortName, ...p.aliases].some(
-          (name) => name && source.includes(name),
-        ),
-      ) &&
-      captureNeedsProjectContext(source)
-    )
-      source = parseDailyReport(source)
-        ? `项目：${contextProject.name}\n${source}`
-        : t("项目：{p0}；{p1}", { p0: contextProject.name, p1: source });
-    originalSource = prepared.originalSource;
-  } catch (e) {
-    error.value = captureErrorMessage(e);
-    working.value = false;
-    return;
-  }
-  const dailyReport = parseDailyReport(source);
-  if (!dailyReport && !input.value?.hasFiles && structuredCapture(source)) {
-    if (props.assistant) messages.value.push({ role: "user", text: source });
-    structuredSource.value = normalizeCreationText(source)
-      .replace(/^【[^\n]*】\s*$/gm, "")
-      .trim();
-    structuredOriginal.value = originalSource;
-    composer.value = "";
-    input.value?.clearFiles();
-    working.value = false;
-    return;
-  }
-  if (!dailyReport && !input.value?.hasFiles && looksLikeDailyLog(source)) {
-    if (props.assistant) messages.value.push({ role: "user", text: source });
-    dailySource.value = source;
-    composer.value = "";
-    logMode.value = true;
-    input.value?.clearFiles();
-    working.value = false;
-    return;
-  }
-  working.value = true;
-  error.value = "";
-  proposal.value = null;
-  newProject.value = null;
-  retryItems.value = null;
-  messages.value.push({ role: "user", text: source });
-  try {
-    phase.value = t("正在保存原文并匹配项目…");
-    // Save the exact original source before attempting external extraction.
-    proposal.value = await api.propose(
-      source,
-      originalSource,
-      input.value?.temporaryMaterialIds(),
-    );
-    composer.value = "";
-    input.value?.clearFiles();
-    await capabilityLoad;
-    if (capabilities.value?.enabled) {
-      phase.value = t("AI 正在识别事项与归属…");
-      try {
-        proposal.value = await api.proposeQwen(source, true, originalSource);
-      } catch (failure) {
-        if (
-          typeof failure === "object" &&
-          failure !== null &&
-          "code" in failure &&
-          failure.code === "AI_CONNECTION"
-        )
-          say(t(captureErrorMessage(failure)));
-        say(
-          t(
-            "纪要原文已保存。AI 整理未完成，本次采用规则整理；项目不明确的事项只提醒，不创建记录。",
-          ),
-        );
-      }
-      try {
-        capabilities.value = await api.aiCapabilities();
-      } catch {
-        /* Preserve saved notes. */
-      }
-    }
-    const unspecified = pending.value.filter(
-      (item) =>
-        hasUnspecifiedOtherProject(item.sourceText) ||
-        item.sourceHeading === "其他项目（需明确）" ||
-        (item.candidates.length !== 1 &&
-          !(
-            item.candidates.length === 0 &&
-            meetingAutomaticProjects(item, available.value).length === 1
-          )),
-    );
-    if (unspecified.length) {
-      await record(
-        [],
-        unspecified.map((item) => item.id),
-      );
-      say(
-        locale.value === "en"
-          ? "Some project names are unspecified. Those items were skipped; no projects, tasks or progress records were created."
-          : "有些事项未明确项目，已跳过，仅保留原文提醒；没有为这些事项创建项目、任务或进展。",
-      );
-    }
-    const ready = pending.value
-      .map((s) => ({
-        suggestion: s,
-        matches: meetingAutomaticProjects(s, available.value),
-      }))
-      .filter(
-        ({ suggestion, matches }) =>
-          suggestion.candidates.length === 1 ||
-          (!suggestion.candidates.length && matches.length === 1),
-      );
-    if (ready.length) {
-      phase.value = t("正在记录明确事项…");
-      retryItems.value = ready.map(({ suggestion, matches }) =>
-        reviewed(
-          suggestion,
-          suggestion.candidates[0]?.projectId ?? matches[0]!.id,
-        ),
-      );
-      await record(retryItems.value);
-      retryItems.value = null;
-    }
-    nextQuestion(
-      pending.value.length && ready.length
-        ? t("已保存 {p0} 项明确事项。", { p0: ready.length }) + "\n"
-        : "",
-    );
+    await submitSemanticTurn(prepared.text, prepared.originalSource);
   } catch (e) {
     error.value = captureErrorMessage(e);
   } finally {
     working.value = false;
+    phase.value = "";
     await focusReply();
   }
 }
@@ -744,25 +688,11 @@ async function choose(project: Project) {
   });
   await assign(project);
 }
-async function prepareNewProject(reply = "") {
+async function prepareNewProject() {
   if (!current.value || working.value || store.busy) return;
   showReply.value = false;
-  newProject.value = meetingReplyDraft(
-    reply ||
-      (currentGroup.value?.items ?? [current.value])
-        .map((item) => item.sourceText)
-        .join("\n"),
-    channels.value,
-    catalogs.value,
-  );
-  if (
-    !reply &&
-    currentGroup.value?.name &&
-    !currentGroup.value.items.some(
-      (item) => captureTextFields(item.sourceText).project,
-    )
-  )
-    newProject.value.name = currentGroup.value.name;
+  newProject.value = emptyMeetingProjectDraft();
+  newProject.value.name = currentGroup.value?.name ?? "";
   selectedNewIds.value = (currentGroup.value?.items ?? [current.value]).map(
     (item) => item.id,
   );
@@ -860,42 +790,6 @@ async function skip() {
     await focusReply();
   }
 }
-async function tryChatQuery() {
-  const text = composer.value.trim();
-  if (!props.assistant || input.value?.hasFiles || text.length > 2000)
-    return false;
-  let projectId = props.contextProjectId;
-  if (!projectId && /这个项目|该项目|它的|上面这个/.test(text)) {
-    const previous = messages.value
-      .filter(
-        (message) => message.role === "assistant" && message.links?.length,
-      )
-      .at(-1);
-    const ids = [
-      ...new Set(
-        previous?.links
-          ?.map((link) => /^\/projects\/([^/?#]+)/.exec(link.path)?.[1])
-          .filter(Boolean),
-      ),
-    ];
-    if (ids.length === 1) projectId = decodeURIComponent(ids[0]!);
-  }
-  phase.value = t("正在查询工作区记录…");
-  const answer = await api.queryAssistant({
-    text,
-    projectId,
-    locale: locale.value,
-  });
-  if (!answer.handled) return false;
-  messages.value.push(
-    { role: "user", text },
-    { role: "assistant", text: answer.text, links: answer.links },
-  );
-  emit("result");
-  composer.value = "";
-  await focusReply();
-  return true;
-}
 async function submit() {
   if (
     !persistence.ready.value ||
@@ -906,70 +800,7 @@ async function submit() {
     (!composer.value.trim() && !input.value?.hasFiles)
   )
     return;
-  if (props.assistant && !input.value?.hasFiles) {
-    working.value = true;
-    error.value = "";
-    try {
-      if (await tryChatQuery()) return;
-    } catch (e) {
-      error.value = captureErrorMessage(e);
-      return;
-    } finally {
-      working.value = false;
-      phase.value = "";
-    }
-  }
-  if (
-    props.assistant &&
-    structuredSource.value !== null &&
-    !input.value?.hasFiles
-  ) {
-    const reply = composer.value.trim();
-    messages.value.push({ role: "user", text: reply });
-    composer.value = "";
-    if (/^(取消|不用创建|不创建|算了|取消新建)$/.test(reply)) {
-      structuredSource.value = null;
-      say(t("已取消本次新建。"));
-      return;
-    }
-    const corrections = reply.replace(
-      /(渠道|阶段|负责人|客户|执行人|截止日期)(?:改成|改为|是|为)\s*/g,
-      "$1：",
-    );
-    structuredSource.value += `；${corrections}`;
-    return;
-  }
-  if (input.value?.hasFiles || !current.value) return submitNotes();
-  if (input.value?.hasFiles) {
-    working.value = true;
-    try {
-      composer.value = (await input.value.resolveSource()).text;
-      input.value.clearFiles();
-    } catch (e) {
-      error.value = captureErrorMessage(e);
-      return;
-    } finally {
-      working.value = false;
-    }
-  }
-  const reply = composer.value.trim();
-  messages.value.push({ role: "user", text: reply });
-  composer.value = "";
-  if (/^(?:暂不归项目|稍后归类|未分配)$/.test(reply)) return defer();
-  if (/^(?:跳过|略过|不用处理)$/.test(reply)) return skip();
-  const matches = meetingReplyProjects(reply, available.value);
-  if (matches.length === 1) return assign(matches[0]!);
-  if (!matches.length) {
-    say(
-      t(
-        "没有找到对应项目。请核对下方的新项目名称和渠道，确认后再创建并记录这条事项。",
-      ),
-    );
-    await prepareNewProject(reply);
-    return;
-  }
-  say(t("这个名称对应多个项目，请回复完整名称或点选项目。"));
-  await focusReply();
+  return submitNotes();
 }
 </script>
 <template>
@@ -1466,16 +1297,14 @@ async function submit() {
             v-if="input?.referenceMaterials.length && !input.uncertainPurpose"
             ref="referenceReview"
             :files="input.referenceMaterials"
+            :classification="input.classification"
             :notes="composer"
             :default-project-id="contextProjectId"
             :disabled="working || store.busy"
           />
           <div v-if="error" class="error-box" role="alert">
             <p>
-              {{ t(error)
-              }}<span v-if="proposal">
-                {{ t("原文已保存，可继续处理。") }}</span
-              >
+              {{ t(error) }}
             </p>
             <p v-if="budgetError">
               {{
@@ -1483,17 +1312,17 @@ async function submit() {
                   "Your input and attachments remain here. Retry after the allowance is renewed.",
                 )
               }}
-              <RouterLink
-                v-if="store.mode === 'server' && store.user?.role === 'admin'"
-                to="/admin?tab=model"
-                target="_blank"
-                rel="noopener"
-                class="text-button"
-                >{{
-                  t("Manage AI attempt allowance (opens a new tab)")
-                }}</RouterLink
-              >
             </p>
+            <RouterLink
+              v-if="
+                setupError &&
+                store.mode === 'server' &&
+                store.user?.role === 'admin'
+              "
+              to="/admin?tab=model"
+              class="text-button"
+              >{{ t("打开 AI 设置") }}</RouterLink
+            >
             <button
               v-if="retryItems"
               type="button"

@@ -5,7 +5,6 @@ import {
   type Project,
   type Snapshot,
 } from "./types.js";
-import { meetingReplyProjects } from "./meeting-completion.js";
 import { checkProjectCatalog } from "./admin.js";
 export const dailyLogRow = z
   .object({
@@ -38,44 +37,6 @@ export interface DailyLogBatch {
 }
 const normalized = (value: string) =>
   value.toLowerCase().replace(/\s+/g, "").replace(/项目$/, "");
-export function parseDailyLog(source: string, projects: Project[]) {
-  return source.split(/\r?\n/).flatMap((raw, index) => {
-    const line = raw.replace(/^\s*(?:[-•]|\d+\s*[.、)）])\s*/, "").trim();
-    if (!line) return [];
-    const split = line.match(/^([^\s：:，,；;]{1,60})[\s：:]+([\s\S]+)$/);
-    const name = split?.[1] ?? "",
-      text = split?.[2]?.trim() || line;
-    const active = projects.filter((project) => !project.intakeInbox);
-    let matches = meetingReplyProjects(name || line, active);
-    if (!matches.length && name)
-      matches = active.filter((project) =>
-        [project.name, project.shortName ?? "", ...project.aliases].some(
-          (label) => normalized(label).includes(normalized(name)),
-        ),
-      );
-    return [
-      {
-        sourceLine: index + 1,
-        text,
-        name,
-        matches,
-        projectId: matches.length === 1 ? matches[0]!.id : "",
-        projectVersion: matches.length === 1 ? matches[0]!.version : undefined,
-        newProjectName: matches.length ? "" : name,
-        later: !name || matches.length > 1,
-      },
-    ];
-  });
-}
-export function looksLikeDailyLog(source: string) {
-  const lines = source.split(/\r?\n/).filter((line) => line.trim());
-  return (
-    lines.length >= 2 &&
-    lines.every((line) =>
-      /^\s*\d+\s*[.、)）]\s*[^\s：:，,；;]+[\s：:]+\S/.test(line),
-    )
-  );
-}
 export const missingProjectFields = (
   project: Pick<Project, "owner" | "stage">,
 ) =>

@@ -81,10 +81,14 @@ it("keeps legacy intake receipts undoable after order migration while rejecting 
   const api = createLocalApi();
   await api.snapshot();
   const source = {
-    kind: "text" as const,
+    kind: "csv" as const,
     name: "legacy",
     sheet: "",
-    text: "Project: Legacy intake; Client: Synthetic; Task: Review",
+    text: "Project,Client,Task\nLegacy intake,Synthetic,Review",
+    rows: [
+      ["Project", "Client", "Task"],
+      ["Legacy intake", "Synthetic", "Review"],
+    ],
   };
   const batch = await api.applyIntake({
     source,

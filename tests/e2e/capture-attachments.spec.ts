@@ -162,7 +162,7 @@ async function pauseProposalSubmission(page: Page) {
   }[] = [];
   // Keep the composer and attachments intact so retries exercise source reuse.
   // No proposal or project is written, even to the isolated fixture workspace.
-  await page.route("**/api/proposals", (route) => {
+  await page.route("**/api/assistant/interpret", (route) => {
     submissions.push(route.request().postDataJSON());
     return route.fulfill({
       status: 503,
@@ -523,7 +523,7 @@ for (const recover of [false, true])
     });
     if (recover)
       await page.route(
-        "**/api/proposals",
+        "**/api/assistant/interpret",
         async (route) => {
           await route.fulfill({
             status: 503,

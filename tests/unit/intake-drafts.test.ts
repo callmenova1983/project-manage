@@ -10,10 +10,14 @@ import {
   type IntakeDraft,
 } from "../../apps/web/src/services/intake-drafts";
 const source = {
-  kind: "text" as const,
+  kind: "csv" as const,
   name: "Pasted text",
   sheet: "",
-  text: "项目：合成项目；任务：审阅文案\n原文  保留空白",
+  text: "项目,任务\n合成项目,审阅文案",
+  rows: [
+    ["项目", "任务"],
+    ["合成项目", "审阅文案"],
+  ],
 };
 function fixture(): IntakeDraft {
   const candidates = intakeCandidates(source, []);

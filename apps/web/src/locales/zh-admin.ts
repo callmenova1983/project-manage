@@ -1,4 +1,41 @@
 export const adminZh: Record<string, string> = {
+  "AI settings": "AI 设置",
+  "Enable AI": "启用 AI",
+  "Save and enable AI": "保存并启用 AI",
+  "AI enabled": "AI 已启用",
+  "AI is not enabled": "AI 尚未启用",
+  "AI paused": "AI 已暂停",
+  "Pause AI": "暂停 AI",
+  "AI is not configured": "尚未配置 AI",
+  "AI usage approval has expired": "AI 使用授权已到期",
+  "AI request limit reached": "AI 调用次数已用完",
+  "Demo mode, no AI connection": "演示模式，未连接 AI",
+  "Sign in to the team workspace to configure AI. Demo mode does not call a model.":
+    "请登录团队工作区后配置 AI，演示模式不会调用模型。",
+  "Enter your Model Studio key, then save and enable AI.":
+    "填写百炼密钥，保存并启用即可。",
+  "Ask the deployment administrator to configure a Model Studio key.":
+    "请联系部署管理员配置百炼密钥。",
+  "Adjust the usage limits below, then save and enable AI.":
+    "调整下方使用限制，然后保存并启用。",
+  "Usage limits are managed on the server. Ask the deployment administrator to renew or adjust them.":
+    "当前使用限制由服务器管理，请联系部署管理员续期或调整额度。",
+  "Text, attachments and voice share this configuration.":
+    "文字、附件和语音共用此配置。",
+  "A key is configured. Use the button below to enable AI.":
+    "密钥已配置，点击下方按钮即可启用。",
+  "Usage limits": "使用限制",
+  "Advanced settings": "高级设置",
+  "The total includes used requests and preserves history. Set spending limits in Model Studio.":
+    "总上限包含已使用次数，不会清空历史。费用上限可在百炼控制台设置。",
+  "Usage limits are managed on the server.": "使用限制由服务器管理。",
+  "Voice uses qwen3-asr-flash with the same key and usage limits. Keys are encrypted on the server and never displayed again.":
+    "语音模型使用 qwen3-asr-flash，共用密钥和使用限制。密钥加密保存在服务器，不回显。",
+  "Saving does not call the model. Once enabled, the team can use the AI assistant directly.":
+    "保存不会发起模型调用。启用后，团队可直接使用 AI 助手。",
+  "Open AI settings": "打开 AI 设置",
+  "Saved AI configuration and enabled calls": "保存 AI 配置并启用",
+  "Saved AI configuration with calls disabled": "保存 AI 配置并暂停",
   "Qwen API key": "Qwen API Key 配置",
   "API key": "API Key（百炼密钥）",
   "Replace API key": "更换 API Key",

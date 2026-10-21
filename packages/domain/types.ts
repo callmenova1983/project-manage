@@ -5,12 +5,6 @@ import { progressArchiveInput } from "./progress-material.js";
 import type { ProgressSource } from "./progress-material.js";
 import { z } from "zod";
 import {
-  meetingSections,
-  hasUnspecifiedOtherProject,
-  meetingFactStatus,
-  splitMeetingFollowup,
-} from "./meeting-sections.js";
-import {
   zonedDay,
   zonedWeek,
   workspaceSettingsInput,
@@ -19,7 +13,6 @@ import {
 import { catalogsInput, type Catalogs } from "./admin.js";
 import type { CompanyDirectory, ProjectMember } from "./directory.js";
 import { projectLocationSchema } from "./project-location.js";
-import { parseDailyReport } from "./daily-report.js";
 export const stages = [
   "potential",
   "proposal",
@@ -130,6 +123,8 @@ export interface Actor {
 }
 export interface Activity {
   id: string;
+  /** Stable source identity for portable history imported into another workspace. */
+  importedFromId?: string;
   projectId: string | null;
   /** Preserve the original audit grouping when a project is merged. */
   originalProjectId?: string;
@@ -189,6 +184,7 @@ export interface Suggestion {
   reporter?: string;
   reportTo?: string;
   workDate?: string;
+  workWeek?: string;
   invalidWorkDate?: true;
   assignee?: string;
 }
@@ -221,7 +217,7 @@ export interface Proposal {
 export interface AiCapabilities {
   enabled: boolean;
   runtime?: "legacy" | "sdk" | null;
-  provider: "rules" | "qwen";
+  provider: "qwen" | null;
   model: string | null;
   region: string | null;
   connectionVerified: false;
@@ -308,135 +304,7 @@ export function validateGraph(projects: Project[], tasks: Task[]): void {
   }
   validateTaskDependencies(tasks);
 }
-export function suggest(source: string, projects: Project[]): Suggestion[] {
-  const report = parseDailyReport(source);
-  if (report) {
-    return report.map(({ contextText, ...entry }, index) => {
-      const matches = (text: string) =>
-        projects
-          .filter(
-            (p) =>
-              !p.intakeInbox &&
-              [p.name, p.shortName ?? "", ...p.aliases]
-                .filter(Boolean)
-                .some((name) =>
-                  text.toLowerCase().includes(name.toLowerCase()),
-                ),
-          )
-          .map((p) => ({
-            projectId: p.id,
-            reason: "Project name or alias appears in daily report",
-          }));
-      const direct = matches(entry.sourceText);
-      const candidates = direct.length
-        ? direct
-        : matches(contextText ?? entry.sourceText);
-      return {
-        ...entry,
-        id: `report-${entry.sourceLine}-${index + 1}`,
-        dailyReport: true,
-        candidates,
-        selectedProjectId:
-          candidates.length === 1 ? candidates[0]!.projectId : "",
-        confirmed: false,
-        overwriteConfirmed: false,
-      };
-    });
-  }
-  return (
-    meetingSections(source)
-      .filter((entry) => !entry.isHeading)
-      .map((entry) => ({
-        line: entry.text,
-        i: entry.sourceLine - 1,
-        heading: entry.heading,
-      }))
-      // assembleCaptureText adds filename-only source headings. They identify
-      // provenance, not work items; preserve original line numbers below.
-      .filter(
-        (x) =>
-          x.line.trim() &&
-          !/^【[^\n]+\.(?:txt|csv|tsv|md|log|json|xlsx?|docx?|pptx?|pdf|png|jpe?g|webp|gif)】$/i.test(
-            x.line.trim(),
-          ),
-      )
-      .map(({ line, i, heading }) => {
-        const factStatus = heading ? meetingFactStatus(line) : undefined;
-        const lower = line.toLowerCase();
-        let candidates = projects
-          .filter((p) =>
-            [p.name, p.shortName ?? "", ...p.aliases]
-              .filter(Boolean)
-              .some((n) => lower.includes(n.toLowerCase())),
-          )
-          .map((p) => ({
-            projectId: p.id,
-            reason: "Project name or alias appears in source",
-          }));
-        const unspecifiedProject = hasUnspecifiedOtherProject(line);
-        if (heading && unspecifiedProject) candidates = [];
-        if (!candidates.length && heading && !unspecifiedProject) {
-          candidates = projects
-            .filter(
-              (p) =>
-                !p.intakeInbox &&
-                [p.name, p.shortName ?? "", ...p.aliases]
-                  .filter(Boolean)
-                  .some((name) =>
-                    heading.toLowerCase().includes(name.toLowerCase()),
-                  ),
-            )
-            .map((p) => ({
-              projectId: p.id,
-              reason: "Project name or alias appears in section heading",
-            }));
-        }
-        return {
-          id: `line-${i + 1}`,
-          sourceLine: i + 1,
-          sourceText: line,
-          ...(heading
-            ? {
-                sourceHeading: unspecifiedProject
-                  ? "其他项目（需明确）"
-                  : heading,
-              }
-            : {}),
-          title: line.replace(/^[-*]\s*/, "").slice(0, 240),
-          candidates,
-          selectedProjectId:
-            candidates.length === 1 ? candidates[0]!.projectId : "",
-          action: factStatus ? ("update" as const) : ("task" as const),
-          status:
-            factStatus ??
-            (/\b(done|completed)\b/i.test(line)
-              ? ("done" as const)
-              : ("todo" as const)),
-          confirmed: false,
-          overwriteConfirmed: false,
-        };
-      })
-      .flatMap<Suggestion>((item) => {
-        const split = item.sourceHeading && splitMeetingFollowup(item.title);
-        if (!split) return [item];
-        return [
-          {
-            ...item,
-            title: split.fact,
-            action: "update" as const,
-            status: meetingFactStatus(split.fact) ?? ("in_progress" as const),
-          },
-          {
-            ...item,
-            id: `${item.id}-followup`,
-            title: split.followup,
-            action: "task" as const,
-            status: "todo" as const,
-          },
-        ];
-      })
-  );
-}
+
 export function parsePaste(
   source: string,
 ): { title: string; assignee: string; dueDate: string | null }[] {
@@ -451,38 +319,4 @@ export function parsePaste(
         dueDate: due?.trim() || null,
       };
     });
-}
-
-export const noteDateInput = z
-  .object({
-    projectVersion: z.number().int().positive(),
-    sourceLine: z.number().int().positive(),
-    taskId: text(100),
-    taskVersion: z.number().int().positive(),
-    dueDate: dateSchema,
-    confirmed: z.literal(true),
-    overwriteConfirmed: z.boolean(),
-  })
-  .strict();
-export type NoteDateInput = z.infer<typeof noteDateInput>;
-export function noteDateCandidates(notes: string) {
-  const lines = notes.split(/\r?\n/);
-  return lines.flatMap((line, index) => {
-    const match = line.match(
-      /\b(?:\d{4}-\d{2}-\d{2}|tomorrow|next\s+(?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i,
-    );
-    return match
-      ? [
-          {
-            sourceLine: index + 1,
-            sourceText: line,
-            context: lines.slice(Math.max(0, index - 1), index + 2).join("\n"),
-            proposedDate: dateSchema.safeParse(match[0]).success
-              ? match[0]
-              : "",
-            phrase: match[0],
-          },
-        ]
-      : [];
-  });
 }

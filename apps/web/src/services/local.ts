@@ -1,9 +1,12 @@
 import {
+  createWorkspaceDataArchive,
+  planWorkspaceDataImport,
+} from "../../../../packages/domain/workspace-transfer";
+import {
   planTaskBulkUpdate,
   TaskBulkConflict,
 } from "../../../../packages/domain/task-bulk-update";
 import {
-  answerAssistantQuery,
   assistantSessionInput,
   type AssistantSession,
 } from "../../../../packages/domain/assistant";
@@ -92,6 +95,7 @@ import {
   adminUserUpdate,
   modelSettingsInput,
   modelAllowanceInput,
+  modelConfigurationInput,
   checkCatalogs,
   checkProjectCatalog,
   importCatalogs,
@@ -127,13 +131,10 @@ import {
   type IntakeBatch,
 } from "../../../../packages/domain/intake";
 import {
-  noteDateInput,
-  noteDateCandidates,
   projectInput,
   taskInput,
   snapshotImport,
   validateGraph,
-  suggest,
   type Snapshot,
   type Actor,
   type Project,
@@ -240,7 +241,7 @@ export function createLocalApi(): WorkspaceApi {
         kind === "task"
           ? ((after as Task)?.projectId ?? (before as Task)?.projectId ?? null)
           : (after?.id ?? before?.id ?? null),
-      entityId: after?.id ?? before?.id ?? "",
+      entityId: after?.id ?? before?.id ?? actor.workspaceId,
       kind,
       action: action ?? (before ? "Updated " + kind : "Created " + kind),
       actor: actor.name,
@@ -670,9 +671,13 @@ export function createLocalApi(): WorkspaceApi {
       localStorage.setItem(KEY + ":assistant", JSON.stringify(result));
       return result;
     },
-    async queryAssistant(input) {
-      return answerAssistantQuery(input, await this.snapshot(), actor);
+    async interpretAssistant() {
+      throw new ApiError(
+        "浏览器演示未连接大模型，不能使用 AI 理解；请登录已配置模型的工作区。",
+        503,
+      );
     },
+
     async notifications() {
       return localNotifications();
     },
@@ -856,7 +861,7 @@ export function createLocalApi(): WorkspaceApi {
     async aiCapabilities() {
       return {
         enabled: false,
-        provider: "rules",
+        provider: null,
         model: null,
         region: null,
         connectionVerified: false,
@@ -911,12 +916,7 @@ export function createLocalApi(): WorkspaceApi {
         503,
       );
     },
-    async proposeQwen() {
-      throw new ApiError(
-        "Qwen is unavailable in the browser-only demo. No notes were sent.",
-        503,
-      );
-    },
+
     mode: "local",
     async session() {
       return { actor };
@@ -974,19 +974,14 @@ export function createLocalApi(): WorkspaceApi {
       if (!event) throw new ApiError("History record not found", 404);
       return structuredClone(event);
     },
-    async analyzeProjectLocation(id, version) {
-      read();
-      const project = state.projects.find((item) => item.id === id);
-      if (!project) throw new ApiError("Project not found", 404);
-      if (project.version !== version)
-        throw new ApiError("项目已更新，请刷新后重试。", 409, project);
-      const { inferProjectLocation } =
-        await import("../../../../packages/domain/project-location");
-      return {
-        ...inferProjectLocation(project),
-        provider: "rules",
-        model: null,
-      };
+    async analyzeProjectLocation() {
+      throw new ApiError(
+        "位置识别需要服务端 AI；演示模式可手动选择位置。",
+        503,
+        undefined,
+        undefined,
+        "AI_DISABLED",
+      );
     },
     saveProject,
     async progressHistory(id) {
@@ -1286,45 +1281,6 @@ export function createLocalApi(): WorkspaceApi {
       if (result.changes.length) persist();
       return structuredClone(result.confirmed);
     },
-    async confirmNoteDate(projectId, data) {
-      read();
-      const input = noteDateInput.parse(data);
-      const p = state.projects.find((p) => p.id === projectId);
-      const old = state.tasks.find((t) => t.id === input.taskId);
-      if (!p || !old || old.projectId !== p.id)
-        throw new ApiError("Choose a task in this project");
-      if (
-        p.version !== input.projectVersion ||
-        old.version !== input.taskVersion
-      )
-        throw new ApiError("Notes or task changed. Review again.", 409);
-      const candidate = noteDateCandidates(p.notes).find(
-        (n) => n.sourceLine === input.sourceLine,
-      );
-      if (!candidate)
-        throw new ApiError("Date source no longer matches saved notes");
-      if (
-        old.dueDate &&
-        old.dueDate !== input.dueDate &&
-        !input.overwriteConfirmed
-      )
-        throw new ApiError("Confirm replacing the existing due date");
-      const next = {
-        ...old,
-        dueDate: input.dueDate,
-        version: old.version + 1,
-        updatedAt: new Date().toISOString(),
-      };
-      state.tasks = state.tasks.map((t) => (t.id === old.id ? next : t));
-      record(
-        "task",
-        old,
-        next,
-        `Project notes ${p.id} v${p.version}, line ${candidate.sourceLine}: ${candidate.context}`,
-      );
-      persist();
-      return next;
-    },
     async addTasks(tasks) {
       read();
       const result = tasks.map((data) => ({
@@ -1346,6 +1302,80 @@ export function createLocalApi(): WorkspaceApi {
         ...result,
         settings: state.settings ?? { ...defaultWorkspaceSettings },
       };
+    },
+    async exportWorkspaceData() {
+      read();
+      return createWorkspaceDataArchive(
+        state,
+        state.activities,
+        state.dailyLogs ?? [],
+      );
+    },
+    async importWorkspaceData(archive, revision) {
+      read();
+      if (state.revision !== revision)
+        throw new ApiError("工作区数据已变化，请重新选择文件并确认导入。", 409);
+      const current = { ...state, members: administration().users };
+      const plan = planWorkspaceDataImport(current, archive, true);
+      const before = structuredClone(state);
+      try {
+        state.projects = plan.projects.all;
+        state.tasks = plan.tasks.all;
+        state.catalogs = plan.catalogs;
+        state.projectOrder = plan.projectOrder;
+        const existing = new Set(
+          state.activities.map((event) => event.importedFromId ?? event.id),
+        );
+        const added = plan.input.activities.filter(
+          (event) => !existing.has(event.importedFromId ?? event.id),
+        );
+        state.activities.push(
+          ...added.map((event) => ({ ...event, actorId: undefined })),
+        );
+        state.dailyLogs ??= [];
+        let dailyLogsImported = 0;
+        for (const batch of plan.input.dailyLogs) {
+          const index = state.dailyLogs.findIndex(
+            (old) =>
+              old.source === batch.source &&
+              old.workDate === batch.workDate &&
+              old.reporter === batch.reporter,
+          );
+          if (index < 0) {
+            state.dailyLogs.push(batch);
+            dailyLogsImported++;
+          } else if (
+            JSON.stringify(state.dailyLogs[index]) !== JSON.stringify(batch)
+          ) {
+            state.dailyLogs[index] = {
+              ...batch,
+              id: state.dailyLogs[index]!.id,
+            };
+            dailyLogsImported++;
+          }
+        }
+        record(
+          "import",
+          null,
+          null,
+          "Project data import",
+          "Imported project data",
+        );
+        persist();
+        return {
+          snapshot: read(),
+          receipt: {
+            projects: plan.projects.counts,
+            tasks: plan.tasks.counts,
+            activitiesAdded: added.length,
+            dailyLogsImported,
+            unlinkedAssignments: plan.unlinkedAssignments,
+          },
+        };
+      } catch (e) {
+        state = before;
+        throw e;
+      }
     },
     async importData(data, revision) {
       read();
@@ -1385,21 +1415,6 @@ export function createLocalApi(): WorkspaceApi {
       };
       persist();
       return read();
-    },
-    async propose(source, originalSource) {
-      read();
-      const p: Proposal = {
-        id: crypto.randomUUID(),
-        source,
-        ...(originalSource ? { originalSource } : {}),
-        sourceVersion: 1,
-        status: "draft",
-        createdAt: new Date().toISOString(),
-        suggestions: suggest(source, state.projects),
-      };
-      state.assistantProposals = [...(state.assistantProposals ?? []), p];
-      persist();
-      return structuredClone(p);
     },
     async applyProposal(
       proposal,
@@ -1534,7 +1549,7 @@ export function createLocalApi(): WorkspaceApi {
                 status: s.status,
                 ...assignment,
                 dueDate: null,
-                workWeek: reportWorkWeek(source, s.title),
+                workWeek: reportWorkWeek(source),
                 workDates: [],
               }),
               id: crypto.randomUUID(),
@@ -1705,6 +1720,23 @@ export function createLocalApi(): WorkspaceApi {
     },
     async modelAdmin() {
       read();
+      return modelState();
+    },
+    async saveModelConfiguration(input) {
+      read();
+      const next = modelConfigurationInput.parse(input);
+      const admin = administration();
+      if (next.settings.version !== admin.model.version)
+        throw new ApiError(
+          "Model settings changed. Reload before saving.",
+          409,
+        );
+      if (next.credential || next.settings.enabled)
+        throw new ApiError("API keys cannot be saved in the browser demo.");
+      if (next.allowance) admin.allowance = next.allowance;
+      admin.model = { ...next.settings, version: admin.model.version + 1 };
+      auditAdmin("Simulated AI configuration update", actor.workspaceId);
+      persist();
       return modelState();
     },
     async saveModel(input) {

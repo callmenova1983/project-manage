@@ -1,3 +1,4 @@
+import { localProposal } from "../fixtures/proposals";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { createLocalApi } from "../../apps/web/src/services/local";
 import { projectInput, statistics } from "../../packages/domain/types";
@@ -40,9 +41,34 @@ it("keeps local merge task trees, editors and order across reload without networ
   expect(fetch).not.toHaveBeenCalled();
 });
 const saved = new Map<string, string>();
+it("round-trips portable project data without attachments or duplicate records in the browser demo", async () => {
+  const api = createLocalApi();
+  const before = await api.snapshot();
+  const archive = await api.exportWorkspaceData();
+  expect(archive).not.toHaveProperty("administration");
+  expect(archive).not.toHaveProperty("progressFiles");
+  archive.projects[0]!.notes = "导入的项目笔记";
+  const imported = await api.importWorkspaceData(archive, before.revision);
+  expect(imported.receipt.projects.updated).toBe(1);
+  expect(imported.snapshot.projects).toHaveLength(before.projects.length);
+  const repeated = await api.importWorkspaceData(
+    archive,
+    imported.snapshot.revision,
+  );
+  expect(repeated.receipt).toMatchObject({
+    projects: { added: 0, updated: 0 },
+    tasks: { added: 0, updated: 0 },
+    activitiesAdded: 0,
+  });
+  expect(
+    (await createLocalApi().exportWorkspaceData()).activities,
+  ).toHaveLength(before.activities.length + 2);
+});
 it("restores a pending assistant proposal and rejects duplicate application after reload", async () => {
   const api = createLocalApi();
-  const proposal = await api.propose("Atlas: scope done");
+  const proposal = await localProposal(api, "Atlas: scope done", [
+    { title: "scope done", selectedProjectId: "project-1" },
+  ]);
   await api.saveAssistantSession({ version: 0, state: { proposal } });
   const reloaded = createLocalApi();
   const snapshot = await reloaded.snapshot();
@@ -120,8 +146,13 @@ it("combines same-project reviewed updates and preserves report time for notes e
     p.version,
   );
   expect(changed.reportedAt).toBe(p.reportedAt);
-  const proposal = await api.propose(
+  const proposal = await localProposal(
+    api,
     "\n  Atlas: scope done\nAtlas: acceptance ready",
+    [
+      { title: "scope done", selectedProjectId: "project-1" },
+      { title: "acceptance ready", selectedProjectId: "project-1" },
+    ],
   );
   const result = await api.applyProposal(
     proposal,
@@ -144,7 +175,10 @@ it("rolls back a batch when a later reviewed project has a stale version", async
   const api = createLocalApi(),
     s = await api.snapshot(),
     p = s.projects[0]!;
-  const proposal = await api.propose("Atlas: first\nMeridian: second");
+  const proposal = await localProposal(api, "Atlas: first\nMeridian: second", [
+    { title: "first", selectedProjectId: "project-1" },
+    { title: "second", selectedProjectId: "project-2" },
+  ]);
   await expect(
     api.applyProposal(
       proposal,
@@ -166,12 +200,15 @@ it("never enables Qwen or sends notes from the browser-local adapter", async () 
   vi.stubGlobal("fetch", outbound);
   expect(await api.aiCapabilities()).toMatchObject({
     enabled: false,
-    provider: "rules",
+    provider: null,
     model: null,
   });
-  await expect(api.proposeQwen("synthetic source", true)).rejects.toThrow(
-    "browser-only demo",
-  );
+  await expect(
+    api.interpretAssistant({
+      source: "synthetic source",
+      externalProcessingConfirmed: true,
+    }),
+  ).rejects.toThrow("未连接大模型");
   expect(outbound).not.toHaveBeenCalled();
 });
 
@@ -243,10 +280,14 @@ it("persists reviewed intake and undoes it after schema-normalized reload", asyn
   const api = createLocalApi(),
     before = await api.snapshot();
   const source = {
-    kind: "text" as const,
-    name: "notes",
+    kind: "csv" as const,
+    name: "table",
     sheet: "",
-    text: "Project: New intake; Client: Synthetic; Task: Review",
+    text: "Project,Client,Task\nNew intake,Synthetic,Review",
+    rows: [
+      ["Project", "Client", "Task"],
+      ["New intake", "Synthetic", "Review"],
+    ],
   };
   const batch = await api.applyIntake({
     source,

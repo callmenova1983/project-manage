@@ -3,6 +3,7 @@ import { HttpApi, ApiError } from "../../apps/web/src/services/api";
 import {
   captureErrorMessage,
   isCaptureBudgetError,
+  isCaptureSetupError,
 } from "../../apps/web/src/services/capture-error";
 import { locale, t } from "../../apps/web/src/locales";
 
@@ -15,6 +16,20 @@ afterEach(() => {
 });
 
 describe("capture failure recovery", () => {
+  it("points disabled AI to one settings action without claiming the input was saved", () => {
+    locale.value = "zh-CN";
+    const error = new ApiError(
+      "Provider detail",
+      503,
+      undefined,
+      undefined,
+      "AI_DISABLED",
+    );
+    const text = captureErrorMessage(error);
+    expect(isCaptureSetupError(text)).toBe(true);
+    expect(t(text)).toContain("AI 设置");
+    expect(t(text)).not.toContain("原文已保存");
+  });
   it.each([
     ["AI_BUDGET_EXPIRED", "AI 调用授权已过期"],
     ["AI_BUDGET_EXHAUSTED", "本次 AI 调用次数已用完"],

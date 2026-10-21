@@ -19,6 +19,7 @@ export interface CaptureResult {
   workDate?: string;
   dailyReport?: boolean;
   linked?: boolean;
+  detail?: string;
 }
 function destination(id: string | undefined, projects: Project[]) {
   const project = projects.find((p) => p.id === id);
@@ -102,8 +103,31 @@ export function intakeResults(
         key: `project:${p.id}`,
         kind: "project",
         title: p.name,
+        detail: [
+          p.client ? `客户：${p.client}` : "",
+          p.description.match(/(?:^|\n)地址：[^\n]+/)?.[0].trim(),
+        ]
+          .filter(Boolean)
+          .join(" · "),
         ...destination(p.id, projects),
       })),
+    ...[
+      ...new Set(
+        batch.entries
+          .filter(
+            (entry) =>
+              !entry.taskId &&
+              !batch.projects.some((project) => project.id === entry.projectId),
+          )
+          .map((entry) => entry.projectId),
+      ),
+    ].map((id): CaptureResult => ({
+      key: `existing-project:${id}`,
+      kind: "project",
+      title: projects.find((p) => p.id === id)?.name ?? "已有项目",
+      linked: true,
+      ...destination(id, projects),
+    })),
     ...batch.tasks.map((task): CaptureResult => ({
       key: `task:${task.id}`,
       kind: "task",

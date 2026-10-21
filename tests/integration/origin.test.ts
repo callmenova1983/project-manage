@@ -125,7 +125,7 @@ describe("Codespaces origin regression with synthetic local injection only", () 
         },
         payload: source,
       });
-      expect(accepted.statusCode).toBe(200);
+      expect(accepted.statusCode).toBe(410);
       const foreign = await app.inject({
         method: "POST",
         url: "/api/proposals",
@@ -418,7 +418,7 @@ describe("opt-in Codespaces proxy rewrite", () => {
         "x-csrf-token": login.json().csrf,
         "idempotency-key": randomUUID(),
       };
-      expect((await post(auth)).statusCode).toBe(200);
+      expect((await post(auth)).statusCode).toBe(410);
       for (const override of [
         { referer: "https://evil.example/path" },
         { origin: "https://evil.example" },

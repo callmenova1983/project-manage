@@ -1,4 +1,5 @@
 import { registerSpeechRoutes } from "./ai/speech.js";
+import { registerWorkspaceTransfer } from "./workspace-transfer.js";
 import {
   taskBulkUpdateInput,
   planTaskBulkUpdate,
@@ -49,11 +50,6 @@ import {
   reportWorkWeek,
   saveReviewedReportSuggestion,
 } from "../../../packages/domain/report-attribution.js";
-import {
-  CAPTURE_SCOPE,
-  captureSourceSchema,
-} from "../../../packages/domain/capture.js";
-import { readMaterial } from "./progress-materials.js";
 import { channelEntries } from "../../../packages/domain/channels.js";
 import {
   taskLifecycleInput,
@@ -80,12 +76,9 @@ import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { z, ZodError } from "zod";
 import {
   DomainError,
-  noteDateInput,
-  noteDateCandidates,
   projectInput,
   taskInput,
   snapshotImport,
-  suggest,
   validateGraph,
   type Project,
   type Task,
@@ -336,7 +329,9 @@ export async function buildApp(options: {
       a.workspaceId,
       options.qwen ?? credentials.read(a.workspaceId),
     );
-    return config && options.aiRuntime ? { ...config, runtime: options.aiRuntime } : config;
+    return config && options.aiRuntime
+      ? { ...config, runtime: options.aiRuntime }
+      : config;
   });
   function mutate<T>(req: FastifyRequest, fn: (a: Actor) => T): T {
     const a = actor(req);
@@ -391,6 +386,7 @@ export async function buildApp(options: {
   );
   registerIntakeRoutes(app, repo, actor, mutate);
   registerDailyLogs(app, repo, actor, mutate);
+  registerWorkspaceTransfer(app, repo, actor, mutate);
   registerNotificationRoutes(app, repo, actor, mutate, notifications);
   registerAdminRoutes(
     app,
@@ -850,48 +846,6 @@ export async function buildApp(options: {
       return input.projectIds;
     }),
   );
-  app.post("/api/projects/:id/note-dates", (req) =>
-    mutate(req, (a) => {
-      const input = noteDateInput.parse(req.body);
-      const p = repo.get<Project>(
-        "projects",
-        a.workspaceId,
-        (req.params as { id: string }).id,
-      );
-      repo.checkVersion(p, input.projectVersion);
-      const candidate = noteDateCandidates(p.notes).find(
-        (n) => n.sourceLine === input.sourceLine,
-      );
-      if (!candidate)
-        throw new HttpError(400, "Date source no longer matches saved notes");
-      const old = repo.get<Task>("tasks", a.workspaceId, input.taskId);
-      repo.checkVersion(old, input.taskVersion);
-      if (old.projectId !== p.id)
-        throw new HttpError(400, "Choose a task in this project");
-      if (
-        old.dueDate &&
-        old.dueDate !== input.dueDate &&
-        !input.overwriteConfirmed
-      )
-        throw new HttpError(400, "Confirm replacing the existing due date");
-      const next = {
-        ...old,
-        dueDate: input.dueDate,
-        version: old.version + 1,
-        updatedAt: new Date().toISOString(),
-      };
-      repo.putTask(a.workspaceId, next);
-      repo.record(
-        a,
-        "task",
-        "Confirmed date from notes",
-        old,
-        next,
-        `Project notes ${p.id} v${p.version}, line ${candidate.sourceLine}: ${candidate.context}`,
-      );
-      return next;
-    }),
-  );
   app.post("/api/tasks", (req) =>
     mutate(req, (a) => {
       const data = taskInput.parse(req.body);
@@ -1343,63 +1297,6 @@ export async function buildApp(options: {
       return restored;
     }),
   );
-  app.post("/api/proposals", (req) =>
-    mutate(req, (a) => {
-      const { source, originalSource, temporaryMaterialIds } = z
-        .object({
-          source: z
-            .string()
-            .min(1)
-            .max(20000)
-            .refine((s) => !!s.trim(), "Enter source text"),
-          originalSource: captureSourceSchema.optional(),
-          temporaryMaterialIds: z.array(z.string().uuid()).max(6).optional(),
-        })
-        .strict()
-        .parse(req.body);
-      for (const id of originalSource?.materialIds ?? [])
-        readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, id);
-      for (const id of temporaryMaterialIds ?? []) {
-        const file = readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, id);
-        if (file.metadata.uploadedById !== a.id)
-          throw new HttpError(403, "只能清理自己尚未归档的临时附件。");
-        if (originalSource?.materialIds.includes(id))
-          throw new HttpError(400, "不能同时保留并清理同一附件。");
-        if (
-          repo.db
-            .prepare(
-              "SELECT 1 FROM proposals,json_each(proposals.data,'$.originalSource.materialIds') AS source_file WHERE proposals.workspace_id=? AND source_file.value=? LIMIT 1",
-            )
-            .get(a.workspaceId, id)
-        )
-          throw new HttpError(
-            409,
-            "这个附件已作为原始资料保留，不能按临时图片清理；请保留原附件或重新粘贴图片。",
-          );
-      }
-      const proposal: Proposal = {
-        id: randomUUID(),
-        source,
-        ...(originalSource ? { originalSource } : {}),
-        sourceVersion: 1,
-        status: "draft",
-        createdAt: new Date().toISOString(),
-        suggestions: suggest(source, repo.snapshot(a.workspaceId).projects),
-      };
-      if (proposal.suggestions.length > 100)
-        throw new HttpError(400, "Review up to 100 lines at a time");
-      repo.db
-        .prepare("INSERT INTO proposals(id,workspace_id,data) VALUES(?,?,?)")
-        .run(proposal.id, a.workspaceId, JSON.stringify(proposal));
-      for (const id of temporaryMaterialIds ?? [])
-        repo.db
-          .prepare(
-            "DELETE FROM progress_materials WHERE id=? AND workspace_id=? AND project_id=?",
-          )
-          .run(id, a.workspaceId, CAPTURE_SCOPE);
-      return proposal;
-    }),
-  );
   app.post("/api/proposals/:id/apply", (req) =>
     mutate(req, (a) => {
       const input = z
@@ -1552,7 +1449,7 @@ export async function buildApp(options: {
             status: s.status,
             ...assignment,
             dueDate: null,
-            workWeek: reportWorkWeek(original, s.title),
+            workWeek: reportWorkWeek(original),
             workDates: [],
             version: 1,
             updatedAt: new Date().toISOString(),

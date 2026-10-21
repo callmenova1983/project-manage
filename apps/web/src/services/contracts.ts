@@ -1,4 +1,12 @@
 import type {
+  WorkspaceDataArchive,
+  WorkspaceDataImportResult,
+} from "../../../../packages/domain/workspace-transfer";
+import type {
+  AssistantTurn,
+  AssistantTurnInput,
+} from "../../../../packages/domain/assistant-plan";
+import type {
   SpeechCapabilities,
   SpeechInput,
   SpeechTranscript,
@@ -7,11 +15,7 @@ import type {
   TaskBulkUpdate,
   TaskBulkConflictItem,
 } from "../../../../packages/domain/task-bulk-update";
-import type {
-  AssistantSession,
-  AssistantQueryInput,
-  AssistantAnswer,
-} from "../../../../packages/domain/assistant";
+import type { AssistantSession } from "../../../../packages/domain/assistant";
 import type { TaskDependencyReplace } from "../../../../packages/domain/task-dependencies";
 import type { TaskMoveInput } from "../../../../packages/domain/task-move";
 import type {
@@ -63,12 +67,12 @@ import type {
   ModelSettings,
   ModelCredentialInput,
   ModelAllowanceInput,
+  ModelConfigurationInput,
   ModelLog,
   ModelUsage,
   AdminAudit,
 } from "../../../../packages/domain/admin";
 import type {
-  NoteDateInput,
   Activity,
   Actor,
   Project,
@@ -134,7 +138,7 @@ export interface WorkspaceApi {
     version: number;
     state: Record<string, unknown>;
   }): Promise<AssistantSession>;
-  queryAssistant(input: AssistantQueryInput): Promise<AssistantAnswer>;
+  interpretAssistant(input: AssistantTurnInput): Promise<AssistantTurn>;
   translateMap?(
     texts: string[],
   ): Promise<
@@ -230,9 +234,13 @@ export interface WorkspaceApi {
   saveProjectOrder(input: ProjectOrderInput): Promise<string[]>;
   reviewTask(id: string, version: number): Promise<TaskReview>;
   saveTask(data: TaskInput, id?: string, version?: number): Promise<Task>;
-  confirmNoteDate(projectId: string, data: NoteDateInput): Promise<Task>;
   addTasks(tasks: TaskInput[]): Promise<Task[]>;
   exportData(): Promise<Snapshot>;
+  exportWorkspaceData(): Promise<WorkspaceDataArchive>;
+  importWorkspaceData(
+    archive: WorkspaceDataArchive,
+    revision: number,
+  ): Promise<WorkspaceDataImportResult>;
   importData(data: unknown, revision: number): Promise<Snapshot>;
   captureMaterial(
     name: string,
@@ -248,18 +256,8 @@ export interface WorkspaceApi {
     input: ReferenceArchiveInput,
   ): Promise<ProjectFile[]>;
   analyzeCapture(source: CaptureSource): Promise<CaptureAnalysis>;
-  propose(
-    source: string,
-    originalSource?: CaptureSource,
-    temporaryMaterialIds?: string[],
-  ): Promise<Proposal>;
   aiCapabilities(): Promise<AiCapabilities>;
   modelUsage(): Promise<ModelUsage>;
-  proposeQwen(
-    source: string,
-    externalProcessingConfirmed: boolean,
-    originalSource?: CaptureSource,
-  ): Promise<Proposal>;
   applyProposal(
     proposal: Proposal,
     suggestions: ReviewedSuggestion[],
@@ -283,6 +281,9 @@ export interface WorkspaceApi {
   catalogs(): Promise<Catalogs>;
   saveCatalogs(input: Catalogs): Promise<Catalogs>;
   modelAdmin(): Promise<ModelAdminState>;
+  saveModelConfiguration(
+    input: ModelConfigurationInput,
+  ): Promise<ModelAdminState>;
   saveModel(input: ModelSettings): Promise<ModelAdminState>;
   saveModelCredential(input: ModelCredentialInput): Promise<ModelAdminState>;
   saveModelAllowance(input: ModelAllowanceInput): Promise<ModelAdminState>;

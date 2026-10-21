@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import { normalizeImportedTaskPlanning } from "../../../../packages/domain/snapshot-schedule";
 import WorkspaceTimezone from "../components/WorkspaceTimezone.vue";
+import WorkspaceDataTransfer from "../components/WorkspaceDataTransfer.vue";
 import { t, formatNumber } from "../locales";
 import { ref, computed } from "vue";
-import {
-  PhDownloadSimple,
-  PhUploadSimple,
-  PhDatabase,
-} from "@phosphor-icons/vue";
+import { PhUploadSimple, PhDatabase } from "@phosphor-icons/vue";
 import { api } from "../services/api";
 import { useWorkspace } from "../stores/workspace";
 import {
@@ -28,23 +25,6 @@ const pending = ref<ReturnType<typeof snapshotImport.parse> | null>(null),
   revision = ref(0);
 const dirty = computed(() => !!pending.value);
 useUnsaved(dirty);
-async function exportData() {
-  error.value = "";
-  try {
-    const data = await api.exportData();
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
-    );
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `project-manage-${new Date().toISOString().slice(0, 10)}.json`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    store.notify(t("Workspace exported"));
-  } catch (e) {
-    error.value = (e as Error).message;
-  }
-}
 async function choose(e: Event) {
   error.value = "";
   pending.value = null;
@@ -61,9 +41,10 @@ async function choose(e: Event) {
           size: limit / 1024 / 1024,
         }),
       );
-    const parsed = normalizeImportedTaskPlanning(
-      snapshotImport.parse(JSON.parse(await file.text())),
-    );
+    const raw = JSON.parse(await file.text());
+    if (raw?.format === "project-manage-data")
+      throw new Error(t("这是新版项目数据，请使用上方的「导入数据」。"));
+    const parsed = normalizeImportedTaskPlanning(snapshotImport.parse(raw));
     validateGraph(parsed.projects, parsed.tasks);
     importCatalogs(
       parsed,
@@ -150,8 +131,8 @@ async function importData() {
             {{
               t(
                 store.mode === "local"
-                  ? "Not connected. Meeting notes use rule-assisted suggestions and explicit review."
-                  : "Meeting suggestions always require review. Check Meeting notes for the current provider and connection status.",
+                  ? "演示模式未连接 AI。"
+                  : "AI 用于理解输入，当前配置和启用状态可在 AI 设置中查看。",
               )
             }}
           </dd>
@@ -159,20 +140,16 @@ async function importData() {
       </dl>
     </section>
     <section class="panel">
-      <h2>{{ t("Export workspace") }}</h2>
+      <h2>{{ t("项目数据导入与导出") }}</h2>
       <p class="muted">
-        {{
-          t(
-            "Download projects, tasks, and the latest activity records as JSON. Store exports securely; they can include notes and names.",
-          )
-        }}
+        {{ t("项目、任务、跟进记录和日志一起导入，不含附件。") }}
       </p>
-      <button @click="exportData">
-        <PhDownloadSimple :size="17" />{{ t("Export JSON") }}
-      </button>
+      <WorkspaceDataTransfer />
     </section>
-    <section class="panel">
-      <h2>{{ t("Import workspace") }}</h2>
+    <details class="panel legacy-import">
+      <summary>{{ t("旧版 JSON 文件恢复") }}</summary>
+      <h2>{{ t("恢复并替换工作区") }}</h2>
+
       <p class="muted">
         {{
           t(
@@ -256,7 +233,7 @@ async function importData() {
           </button>
         </div>
       </div>
-    </section>
+    </details>
     <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
   </section>
 </template>

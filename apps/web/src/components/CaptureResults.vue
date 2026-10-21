@@ -60,12 +60,15 @@ const labels = {
             <div class="result-content">
               <span class="result-kind" :class="row.kind">{{
                 row.linked
-                  ? t("关联已有任务")
+                  ? t(row.kind === "project" ? "使用已有项目" : "关联已有任务")
                   : row.dailyReport && row.kind === "update"
                     ? t("日报进展")
                     : t(labels[row.kind])
               }}</span
               ><span class="result-title">{{ row.title }}</span>
+            </div>
+            <div v-if="row.detail" class="result-attribution">
+              {{ row.detail }}
             </div>
             <div v-if="row.dailyReport" class="result-attribution">
               <span v-if="row.assignee"

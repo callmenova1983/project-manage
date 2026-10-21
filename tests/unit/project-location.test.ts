@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cityLocation,
   districtLocation,
-  inferProjectLocation,
   locationKey,
   locationLabel,
   locationPrecisionLabel,
@@ -35,23 +34,25 @@ describe("city-level project locations", () => {
   ])(
     "recognizes %s without implying a precise site",
     (name, cityId, precision) => {
-      expect(inferProjectLocation({ name })).toMatchObject({
+      expect(resolveLocationText(name)).toMatchObject({
         status: "matched",
-        location: { cityId, precision, confirmed: false, source: "name" },
+        location: { cityId, precision, confirmed: false, source: "text" },
       });
     },
   );
   it("keeps unknown and conflicting projects unlocated", () => {
-    expect(inferProjectLocation({ name: "五粮液项目" })).toMatchObject({
+    expect(resolveLocationText("五粮液项目")).toMatchObject({
       status: "unmatched",
       location: null,
     });
-    expect(
-      inferProjectLocation({ name: "杭州办公楼", client: "上海客户" }),
-    ).toMatchObject({ status: "ambiguous", location: null });
-    expect(
-      inferProjectLocation({ name: "NanjingRoad Shanghai" }),
-    ).toMatchObject({ status: "matched", location: { cityId: "shanghai" } });
+    expect(resolveLocationText("杭州办公楼 上海客户")).toMatchObject({
+      status: "ambiguous",
+      location: null,
+    });
+    expect(resolveLocationText("NanjingRoad Shanghai")).toMatchObject({
+      status: "matched",
+      location: { cityId: "shanghai" },
+    });
   });
   it("recognizes text, county names and aliases but never a province alone", () => {
     expect(resolveCityText("浙江省宁波市鄞州区")).toMatchObject({
@@ -60,10 +61,7 @@ describe("city-level project locations", () => {
     });
     expect(resolveCityText("浙江").status).toBe("unmatched");
     expect(resolveCityText("杭州或宁波").status).toBe("ambiguous");
-    expect(
-      inferProjectLocation({ name: "医院", aliases: ["义乌院区"] }).location
-        ?.cityId,
-    ).toBe("jinhua");
+    expect(resolveLocationText("义乌院区").location?.cityId).toBe("jinhua");
     expect(
       projectCities.filter((city) => city.province === "浙江"),
     ).toHaveLength(11);
@@ -203,7 +201,7 @@ describe("district and explicit point locations", () => {
       "坐标 121.8,29.9",
     ])
       expect(resolveLocationText(text).location).toBeNull();
-    expect(inferProjectLocation({ name: "121.8,29.9" }).location).toBeNull();
+    expect(resolveLocationText("121.8,29.9").location?.precision).toBe("point");
     expect(pointLocation(-33.9, 151.2, "map")).toMatchObject({
       confirmed: false,
       coordinateSource: "manual-map",
@@ -278,7 +276,7 @@ describe("district and explicit point locations", () => {
         },
         project,
       ),
-    ).toMatchObject({ status: "matched", location: { district: "北仑区" } });
+    ).toMatchObject({ status: "ambiguous", location: null });
     expect(
       validateProjectLocationAnalysis(
         {
@@ -405,7 +403,7 @@ describe("local project location persistence", () => {
         ?.location,
     ).toEqual(location);
   });
-  it("uses rules in local mode and never contacts a model", async () => {
+  it("requires server AI in local mode and never contacts a model", async () => {
     const api = createLocalApi();
     const project = (await api.snapshot()).projects[0]!;
     const saved = await api.saveProject(
@@ -415,13 +413,9 @@ describe("local project location persistence", () => {
     );
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    expect(
-      await api.analyzeProjectLocation(saved.id, saved.version, true),
-    ).toMatchObject({
-      provider: "rules",
-      model: null,
-      location: { cityId: "lishui" },
-    });
+    await expect(
+      api.analyzeProjectLocation(saved.id, saved.version, true),
+    ).rejects.toMatchObject({ code: "AI_DISABLED" });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
       (await api.snapshot()).projects.find((p) => p.id === project.id)

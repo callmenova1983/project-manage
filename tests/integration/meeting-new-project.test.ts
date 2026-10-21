@@ -1,3 +1,4 @@
+import { storedProposalResponse } from "../fixtures/proposals";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { buildApp } from "../../apps/api/src/app";
@@ -57,7 +58,7 @@ beforeEach(async () => {
   cookie = `pm_session=${login.cookies[0]!.value}`;
   csrf = login.json().csrf;
   proposal = (
-    await request("/api/proposals", {
+    await storedProposalResponse(context.repo, "team", {
       source: "韵升平台验收，后续跟进运维费用商讨\n新项目另一条事项",
     })
   ).json();
@@ -67,7 +68,24 @@ it("persists a split meeting fact and followup separately and never replays eith
   const before = context.repo.snapshot("team");
   const project = before.projects[0]!;
   const source = `### ${project.name}\n- 设备已上线，下周继续检查运行情况。`;
-  const created = await request("/api/proposals", { source });
+  const created = storedProposalResponse(context.repo, "team", { source }, [
+    {
+      sourceLine: 2,
+      sourceText: "设备已上线",
+      title: "设备已上线",
+      action: "update",
+      status: "done",
+      selectedProjectId: project.id,
+    },
+    {
+      sourceLine: 2,
+      sourceText: "下周继续检查运行情况。",
+      title: "下周继续检查运行情况。",
+      action: "task",
+      status: "todo",
+      selectedProjectId: project.id,
+    },
+  ]);
   expect(created.statusCode).toBe(200);
   const draft = created.json<Proposal>();
   expect(draft.suggestions.map((item) => [item.action, item.status])).toEqual([
@@ -103,7 +121,7 @@ it("persists a split meeting fact and followup separately and never replays eith
     projectId: project.id,
     title: "下周继续检查运行情况。",
     status: "todo",
-    description: source.split("\n")[1],
+    description: "下周继续检查运行情况。",
   });
   expect(result.json<Proposal>().appliedResults).toEqual([
     { suggestionId: draft.suggestions[0]!.id, projectId: project.id },
@@ -172,7 +190,7 @@ it("atomically creates a confirmed project and attaches only the selected meetin
 });
 it("returns exact destinations for identical titles and keeps prior receipts through partial completion", async () => {
   proposal = (
-    await request("/api/proposals", {
+    await storedProposalResponse(context.repo, "team", {
       source: "跟进设备调试\n跟进设备调试\n现场安装完成\n暂缓处理事项",
     })
   ).json();
@@ -311,7 +329,7 @@ it("rolls back a created project if writing the meeting task fails", async () =>
 });
 it("creates one project for a confirmed group of items and leaves another group pending", async () => {
   proposal = (
-    await request("/api/proposals", {
+    await storedProposalResponse(context.repo, "team", {
       source:
         "重儿安消平台传感器点位标注\n数聚公司竞赛设备清单协助沟通\n重儿能耗分摊方案协助编制\n重儿地下室照明网关安装完善",
     })

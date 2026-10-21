@@ -11,11 +11,7 @@ import {
   channelEntries,
   projectChannel,
 } from "../../../../packages/domain/channels";
-import {
-  stageIds as stages,
-  catalogs,
-  catalogLabel,
-} from "../composables/catalogs";
+import { catalogs, catalogLabel } from "../composables/catalogs";
 import {
   computed,
   defineAsyncComponent,
@@ -74,8 +70,6 @@ import PasteTasks from "../components/PasteTasks.vue";
 import { t, formatDate, formatNumber } from "../locales";
 import TaskDistribution from "../components/TaskDistribution.vue";
 import ProjectStages from "../components/ProjectStages.vue";
-import WeeklyChanges from "../components/WeeklyChanges.vue";
-import NextWork from "../components/NextWork.vue";
 const route = useRoute(),
   router = useRouter();
 const intakeOpen = computed(() => assistantPanel.open);
@@ -98,9 +92,10 @@ const invalidProjectLayout = computed(() => {
     typeof value !== "string" || !["list", "board", "cards"].includes(value)
   );
 });
-function saveProjectLayout() {
-  if (saveLayoutPreferences({ projectLayout: projectLayout.value }))
-    store.notify(t("Default layout saved in this browser."));
+function selectProjectLayout(layout: string) {
+  if (layout !== "list" && layout !== "board" && layout !== "cards") return;
+  saveLayoutPreferences({ projectLayout: layout });
+  void router.push({ query: { ...route.query, view: layout } });
 }
 
 const {
@@ -114,7 +109,6 @@ const {
   sort,
   expanded,
   scope,
-  insightsOpen,
 } = toRefs(store.projectNavigation);
 const editing = ref(""),
   creating = ref(false),
@@ -374,6 +368,40 @@ const projects = computed(() =>
     store.data.projectOrder,
   ),
 );
+const filtersOpen = ref(false);
+const activeFilters = computed(() =>
+  [
+    {
+      key: "stage",
+      value: stage.value,
+      label:
+        stageLabels[stage.value as keyof typeof stageLabels] ?? stage.value,
+    },
+    {
+      key: "channel",
+      value: channel.value,
+      label:
+        channelEntries(catalogs.value).find((c) => c.id === channel.value)
+          ?.shortName ?? channel.value,
+    },
+    {
+      key: "owner",
+      value: owner.value,
+      label:
+        owners.value.find((o) => o.id === owner.value)?.label ?? owner.value,
+    },
+    { key: "discipline", value: discipline.value, label: t(discipline.value) },
+    {
+      key: "category",
+      value: category.value,
+      label: category.value ? catalogLabel("categories", category.value) : "",
+    },
+  ].filter((item) => item.value),
+);
+function removeFilter(key: string) {
+  const fields = { stage, channel, owner, discipline, category };
+  fields[key as keyof typeof fields].value = "";
+}
 const filtered = computed(
   () =>
     !!(
@@ -495,7 +523,11 @@ function edit(id: string) {
       </div>
     </section>
 
-    <section class="work-scope-bar" :aria-label="t('Workspace overview')">
+    <section
+      class="work-scope-bar"
+      :aria-label="t('Workspace overview')"
+      :title="t('Work planned · independent of due dates')"
+    >
       <div class="scope-switch" :aria-label="t('Project work scope')">
         <button
           :aria-pressed="scope === 'today'"
@@ -528,9 +560,6 @@ function edit(id: string) {
         compact
         :showLegend="false"
       />
-      <span class="muted scope-caption">{{
-        t("Work planned · independent of due dates")
-      }}</span>
     </section>
     <ProjectStages
       :projects="portfolioProjects"
@@ -548,132 +577,130 @@ function edit(id: string) {
       }}</RouterLink
       >.
     </p>
-    <div class="insights-control">
-      <button
-        class="text-button"
-        :aria-expanded="insightsOpen"
-        aria-controls="portfolio-insights"
-        @click="insightsOpen = !insightsOpen"
-      >
-        <PhCaretDown :size="14" :class="{ collapsed: !insightsOpen }" />{{
-          t("Changes & next work")
-        }}</button
-      ><span class="muted">{{ t("Saved history · upcoming tasks") }}</span>
-    </div>
-    <div v-if="insightsOpen" id="portfolio-insights" class="portfolio-insights">
-      <WeeklyChanges
-        :activities="store.data.activities"
-        :projects="portfolioProjects"
-        :projectIds="
-          filtered ? projects.map((project) => project.id) : undefined
-        "
-      /><NextWork
-        :tasks="store.data.tasks"
-        :projects="projects"
-        :scope="scope"
-      />
-    </div>
     <ProjectEditor v-if="creating" @close="creating = false" @saved="saved" />
     <section class="project-section">
-      <div class="filterbar">
-        <label class="search-field"
-          ><PhMagnifyingGlass :size="17" /><input
-            v-model="query"
-            data-global-search
-            :aria-label="t('Search projects')"
-            :placeholder="t('Search projects, updates, people…')"
-          /><kbd>/</kbd></label
-        >
-        <div class="filter-controls">
-          <button
-            class="following-filter"
-            :aria-pressed="followedOnly"
-            @click="followedOnly = !followedOnly"
+      <div class="project-toolbar">
+        <div class="filterbar">
+          <label class="search-field"
+            ><PhMagnifyingGlass :size="17" /><input
+              v-model="query"
+              data-global-search
+              :aria-label="t('Search projects')"
+              :placeholder="t('Search projects, updates, people…')"
+            /><kbd>/</kbd></label
           >
-            <PhStar :size="16" :weight="followedOnly ? 'fill' : 'regular'" />{{
-              t("Following")
-            }}
+          <div class="filter-controls">
+            <button
+              class="following-filter"
+              :aria-pressed="followedOnly"
+              @click="followedOnly = !followedOnly"
+            >
+              <PhStar
+                :size="16"
+                :weight="followedOnly ? 'fill' : 'regular'"
+              />{{ t("Following") }}
+              {{
+                formatNumber(
+                  store.data.projects.filter((p) => store.following.has(p.id))
+                    .length,
+                )
+              }}
+            </button>
+            <button
+              :aria-expanded="filtersOpen"
+              aria-controls="project-extra-filters"
+              @click="filtersOpen = !filtersOpen"
+            >
+              <PhFunnel :size="16" />{{ t("Filters")
+              }}<span v-if="activeFilters.length">{{
+                activeFilters.length
+              }}</span>
+            </button>
+            <select v-model="sort" :aria-label="t('Sort projects')">
+              <option value="updated">{{ t("Latest report") }}</option>
+              <option value="name">{{ t("Name A–Z") }}</option>
+              <option value="manual">{{ t("Manual order") }}</option>
+            </select>
+          </div>
+        </div>
+        <div v-if="activeFilters.length" class="active-project-filters">
+          <button
+            v-for="item in activeFilters"
+            :key="item.key"
+            :aria-label="`${t('Clear')} · ${item.label}`"
+            @click="removeFilter(item.key)"
+          >
+            {{ item.label }} <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <div
+          v-if="filtersOpen"
+          id="project-extra-filters"
+          class="project-extra-filters"
+        >
+          <div class="filter-controls">
+            <select v-model="channel" :aria-label="t('按渠道筛选项目')">
+              <option value="">{{ t("全部渠道") }}</option>
+              <option
+                v-for="entry in channelEntries(catalogs)"
+                :key="entry.id"
+                :value="entry.id"
+              >
+                {{ entry.shortName }}{{ entry.archived ? t("（已停用）") : "" }}
+              </option></select
+            ><select v-model="owner" :aria-label="t('Filter by owner')">
+              <option value="">{{ t("All owners") }}</option>
+              <option v-for="o in owners" :key="o.id" :value="o.id">
+                {{ o.label }}
+              </option></select
+            ><select
+              v-model="discipline"
+              :aria-label="t('Filter by responsibility')"
+            >
+              <option value="">{{ t("All responsibilities") }}</option>
+              <option v-for="d in disciplines" :key="d" :value="d">
+                {{ t(d) }}
+              </option></select
+            ><select
+              v-if="catalogs.categories.length"
+              v-model="category"
+              :aria-label="t('Filter by category')"
+            >
+              <option value="">{{ t("All categories") }}</option>
+              <option
+                v-for="item in catalogs.categories"
+                :key="item.id"
+                :value="item.id"
+              >
+                {{ catalogLabel("categories", item.id) }}
+              </option></select
+            ><button v-if="filtered" class="text-button" @click="clear">
+              {{ t("Clear") }}
+            </button>
+          </div>
+        </div>
+        <div
+          class="project-layout-switch"
+          role="group"
+          :aria-label="t('Project layout')"
+        >
+          <button
+            v-for="layout in ['list', 'board', 'cards']"
+            :key="layout"
+            :aria-pressed="projectLayout === layout"
+            @click="selectProjectLayout(layout)"
+          >
             {{
-              formatNumber(
-                store.data.projects.filter((p) => store.following.has(p.id))
-                  .length,
+              t(
+                layout === "list"
+                  ? "List view"
+                  : layout === "board"
+                    ? "Stage board"
+                    : "Project cards",
               )
             }}
           </button>
-          <PhFunnel :size="16" class="muted" />
-          <select v-model="channel" :aria-label="t('按渠道筛选项目')">
-            <option value="">{{ t("全部渠道") }}</option>
-            <option
-              v-for="entry in channelEntries(catalogs)"
-              :key="entry.id"
-              :value="entry.id"
-            >
-              {{ entry.shortName }}{{ entry.archived ? t("（已停用）") : "" }}
-            </option></select
-          ><select v-model="stage" :aria-label="t('Filter by stage')">
-            <option value="">{{ t("All stages") }}</option>
-            <option value="unclassified">{{ stageLabels.unclassified }}</option>
-            <option v-for="s in stages" :key="s" :value="s">
-              {{ stageLabels[s] }}
-            </option></select
-          ><select v-model="owner" :aria-label="t('Filter by owner')">
-            <option value="">{{ t("All owners") }}</option>
-            <option v-for="o in owners" :key="o.id" :value="o.id">
-              {{ o.label }}
-            </option></select
-          ><select
-            v-model="discipline"
-            :aria-label="t('Filter by responsibility')"
-          >
-            <option value="">{{ t("All responsibilities") }}</option>
-            <option v-for="d in disciplines" :key="d" :value="d">
-              {{ t(d) }}
-            </option></select
-          ><select
-            v-if="catalogs.categories.length"
-            v-model="category"
-            :aria-label="t('Filter by category')"
-          >
-            <option value="">{{ t("All categories") }}</option>
-            <option
-              v-for="item in catalogs.categories"
-              :key="item.id"
-              :value="item.id"
-            >
-              {{ catalogLabel("categories", item.id) }}
-            </option></select
-          ><select v-model="sort" :aria-label="t('Sort projects')">
-            <option value="updated">{{ t("Latest report") }}</option>
-            <option value="name">{{ t("Name A–Z") }}</option>
-            <option value="manual">{{ t("Manual order") }}</option></select
-          ><button v-if="filtered" class="text-button" @click="clear">
-            {{ t("Clear") }}
-          </button>
         </div>
-      </div>
-      <div
-        class="project-layout-switch"
-        role="group"
-        :aria-label="t('Project layout')"
-      >
-        <button
-          v-for="layout in ['list', 'board', 'cards']"
-          :key="layout"
-          :aria-pressed="projectLayout === layout"
-          @click="router.push({ query: { ...route.query, view: layout } })"
-        >
-          {{
-            t(
-              layout === "list"
-                ? "List view"
-                : layout === "board"
-                  ? "Stage board"
-                  : "Project cards",
-            )
-          }}</button
-        ><button @click="saveProjectLayout">
-          {{ t("Use current layout by default") }}
-        </button>
       </div>
       <p v-if="invalidProjectLayout" class="list-footnote" role="status">
         {{ t("The requested layout is unavailable; showing the list.") }}
@@ -681,22 +708,8 @@ function edit(id: string) {
       <p v-if="layoutPreferenceError" class="error-box" role="alert">
         {{ t(layoutPreferenceError) }}
       </p>
-      <p v-if="projectLayout === 'list'" class="drag-instructions muted">
-        {{
-          t(
-            "Drag the grip to a stage card to change stage or between rows to reorder. Use the merge button for an explicit merge. Arrow keys also move a focused grip.",
-          )
-        }}
-      </p>
       <p v-if="orderError" class="error-box" role="alert">
         {{ t(orderError) }}
-      </p>
-      <p v-if="followedOnly" class="muted following-hint">
-        {{
-          t(
-            "Following is a personal filter saved for this account in this browser. Everyone can still view and edit all projects.",
-          )
-        }}
       </p>
       <div v-if="!projects.length" class="empty">
         <PhMagnifyingGlass :size="32" />
@@ -923,29 +936,137 @@ function edit(id: string) {
     </section>
     <p class="list-footnote">
       {{
-        t(
-          "{count} projects · All team members can view and edit · Work scope is independent of due dates",
-          { count: projects.filter((p) => !p.intakeInbox).length },
-        )
+        t("{count} projects", {
+          count: projects.filter((p) => !p.intakeInbox).length,
+        })
       }}
     </p>
   </div>
 </template>
 
 <style scoped>
-.project-layout-switch {
+.projects-page {
+  container: project-content / inline-size;
+  --project-control-height: 40px;
+}
+.projects-page .work-scope-bar {
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: var(--space-3) 0 var(--space-4);
+}
+.project-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+}
+.projects-page .project-toolbar .filterbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 12px 0;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+}
+.projects-page .project-toolbar .search-field {
+  flex: 1 1 280px;
+  min-width: 0;
+  max-width: 480px;
+  margin: 0;
+}
+.projects-page .project-toolbar .filter-controls {
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+  gap: var(--space-2);
+}
+.projects-page .project-toolbar .filterbar button,
+.projects-page .project-toolbar select,
+.projects-page .project-toolbar .search-field input {
+  height: var(--project-control-height);
+  min-height: var(--project-control-height);
+  font-size: 14px;
+  border-radius: var(--radius-md);
+}
+.projects-page .project-toolbar .search-field input {
+  padding-block: var(--space-2);
+  padding-right: 36px;
+}
+.projects-page .project-toolbar .filterbar select {
+  flex: 0 0 auto;
+  min-width: 144px;
+  max-width: none;
+}
+.project-extra-filters {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.projects-page .project-toolbar .project-extra-filters .filter-controls {
+  margin: 0;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.project-extra-filters select {
+  flex: 1 1 160px;
+  min-width: 0;
+  max-width: 260px;
+}
+.active-project-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.active-project-filters button {
+  padding: var(--space-1) var(--space-3);
+  border-radius: 16px;
+  font-size: 13px;
+}
+.active-project-filters button span {
+  margin-left: var(--space-2);
+}
+.project-layout-switch {
+  display: flex;
+  align-self: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
 }
 .project-layout-switch button {
-  min-height: 44px;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-3);
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
 }
 .project-layout-switch button[aria-pressed="true"] {
   color: var(--accent);
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
+  background: var(--surface);
+  border-color: var(--border);
+}
+@container project-content (max-width: 720px) {
+  .projects-page .project-toolbar .search-field {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .projects-page .project-toolbar .filter-controls {
+    margin-left: 0;
+  }
+}
+@media (max-width: 760px) {
+  .projects-page {
+    --project-control-height: 44px;
+  }
+  .projects-page .project-toolbar .search-field input,
+  .projects-page .project-toolbar select {
+    font-size: 16px;
+  }
+  .project-layout-switch button {
+    min-height: 44px;
+  }
 }
 [data-intake-toggle] {
   touch-action: manipulation;
@@ -976,10 +1097,6 @@ function edit(id: string) {
   .project-row > .icon-button {
     grid-row: 5;
   }
-}
-.drag-instructions {
-  font-size: 11px;
-  margin: 6px 0;
 }
 .project-record {
   position: relative;
@@ -1062,31 +1179,6 @@ function edit(id: string) {
   width: 130px;
   flex-shrink: 0;
 }
-.insights-control {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 5px 0 7px;
-}
-.insights-control > button {
-  min-height: 36px;
-  font-size: 12px;
-  gap: 6px;
-}
-.insights-control > span {
-  font-size: 11px;
-}
-.insights-control .collapsed {
-  transform: rotate(-90deg);
-}
-.portfolio-insights {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-  gap: 12px;
-  margin-bottom: 12px;
-  align-items: start;
-}
 .project-scope-summary .scope-summary-link {
   display: block;
 }
@@ -1110,17 +1202,6 @@ function edit(id: string) {
 }
 @media (max-width: 1200px) {
   .overview-distribution {
-    display: none;
-  }
-}
-@media (max-width: 700px) {
-  .portfolio-insights {
-    grid-template-columns: 1fr;
-  }
-  .insights-control > button {
-    min-height: 44px;
-  }
-  .insights-control > span {
     display: none;
   }
 }

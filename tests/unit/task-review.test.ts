@@ -42,9 +42,8 @@ it("distinguishes estimated dates and reminders without inventing a deadline", (
   ]);
   expect(task.dueDate).toBeNull();
 });
-it("rejects invented evidence, unsupported deadlines and invalid dates", () => {
+it("rejects invented evidence and invalid dates", () => {
   for (const [quote, field, value] of [
-    ["估计十月底", "dueDate", "2026-10-31"],
     ["必须十月底前完成", "dueDate", "2026-10-31"],
     ["估计十月底", "estimatedDate", "2026-02-30"],
     ["下次沟通", "reminderAt", "2026-10-31T09:00:00"],

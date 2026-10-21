@@ -1,5 +1,7 @@
 # Quick intake
 
+> 历史实现说明：文中的连续文本规则解析及旧评测已在 2026-10-21 移除。当前自由文本统一交给模型，手工表格导入保留。以 [AI 语义入口与旧逻辑清理](ai-semantic-entry.md) 为准。
+
 Open **Quick intake** from Projects or the workspace menu. Paste labeled English/Chinese text, paste a table, or choose/drop a TXT, CSV, TSV or XLSX file. Review candidates, adjust their target project and details, select the rows to create and confirm the final summary. Existing project fields are never silently overwritten: choosing an existing project adds a task only.
 
 ## Parsing and review

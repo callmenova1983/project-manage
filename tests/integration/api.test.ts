@@ -1,3 +1,4 @@
+import { storedProposalResponse } from "../fixtures/proposals";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, readdirSync } from "node:fs";
@@ -292,7 +293,7 @@ describe("authenticated workspace API", () => {
   it("keeps meeting suggestions reviewable, traceable and single-apply", async () => {
     const p = (await snapshot()).projects[0]!;
     const proposal = (
-      await request("POST", "/api/proposals", {
+      await storedProposalResponse(context.repo, "team-a", {
         source: "Atlas: confirm scope\nUnknown team: schedule review",
       })
     ).json();
@@ -391,9 +392,22 @@ describe("additional boundary checks", () => {
   });
   it("does not apply ambiguous or unconfirmed suggestions", async () => {
     const p = (
-      await request("POST", "/api/proposals", {
-        source: "Atlas and Meridian: coordinate review",
-      })
+      await storedProposalResponse(
+        context.repo,
+        "team-a",
+        {
+          source: "Atlas and Meridian: coordinate review",
+        },
+        [
+          {
+            title: "coordinate review",
+            candidates: [
+              { projectId: "project-1", reason: "fixture" },
+              { projectId: "project-2", reason: "fixture" },
+            ],
+          },
+        ],
+      )
     ).json();
     expect(p.suggestions[0].candidates).toHaveLength(2);
     expect(
@@ -441,7 +455,7 @@ describe("review batch regression", () => {
   it("applies two reviewed updates to one project without a self-conflict or lost text", async () => {
     const p = (await snapshot()).projects[0]!;
     const proposal = (
-      await request("POST", "/api/proposals", {
+      await storedProposalResponse(context.repo, "team-a", {
         source:
           "Atlas: design review completed\nAtlas: acceptance meeting booked",
       })
@@ -503,7 +517,9 @@ describe("reported facts and exact provenance", () => {
   });
   it("retains leading blank lines, indentation, TSV, Unicode and trailing spaces", async () => {
     const source = "\n\n  Atlas:\t完成验收 ✓  \r\n\tMeridian: review\n  ";
-    const response = await request("POST", "/api/proposals", { source });
+    const response = await storedProposalResponse(context.repo, "team-a", {
+      source,
+    });
     expect(response.statusCode).toBe(200);
     const proposal = response.json();
     expect(proposal.source).toBe(source);
@@ -524,40 +540,6 @@ describe("reported facts and exact provenance", () => {
     );
     expect(stored.source).toBe(source);
   });
-  it("requires date source, version and overwrite confirmation and audits neighboring lines", async () => {
-    const s = await snapshot(),
-      p = s.projects[0]!,
-      t = s.tasks.find((t) => t.id === "task-1")!;
-    const body = {
-      projectVersion: p.version,
-      sourceLine: 4,
-      taskId: t.id,
-      taskVersion: t.version,
-      dueDate: "2027-02-01",
-      confirmed: true,
-      overwriteConfirmed: false,
-    };
-    const url = "/api/projects/" + p.id + "/note-dates";
-    expect(
-      (await request("POST", url, { ...body, sourceLine: 99 })).statusCode,
-    ).toBe(400);
-    expect((await request("POST", url, body)).statusCode).toBe(400);
-    const applied = await request("POST", url, {
-      ...body,
-      overwriteConfirmed: true,
-    });
-    expect(applied.statusCode).toBe(200);
-    expect(applied.json().dueDate).toBe("2027-02-01");
-    const after = await snapshot();
-    expect(after.projects.find((x) => x.id === p.id)).toEqual(p);
-    expect(after.activities[0]!.source).toContain(
-      "Acceptance checklist follows",
-    );
-    expect(
-      (await request("POST", url, { ...body, overwriteConfirmed: true }))
-        .statusCode,
-    ).toBe(409);
-  });
 });
 
 describe("direct meeting completion", () => {
@@ -566,7 +548,7 @@ describe("direct meeting completion", () => {
     const source =
       "Atlas: confirm scope\nAtlas and Meridian: review joint handoff";
     const proposal = (
-      await request("POST", "/api/proposals", { source })
+      await storedProposalResponse(context.repo, "team-a", { source })
     ).json();
     const item = (index: number, projectId: string) => ({
       id: proposal.suggestions[index].id,
@@ -613,7 +595,7 @@ describe("direct meeting completion", () => {
   it("records a new progress entry without a replacement confirmation and preserves the old report", async () => {
     const before = (await snapshot()).projects[0]!;
     const proposal = (
-      await request("POST", "/api/proposals", {
+      await storedProposalResponse(context.repo, "team-a", {
         source: "Atlas: approval completed\nUnassigned follow-up",
       })
     ).json();
@@ -662,7 +644,7 @@ describe("direct meeting completion", () => {
     expect(complete.statusCode).toBe(200);
     expect(complete.json().status).toBe("applied");
     const repeated = (
-      await request("POST", "/api/proposals", {
+      await storedProposalResponse(context.repo, "team-a", {
         source: "Atlas: approval completed again",
       })
     ).json();

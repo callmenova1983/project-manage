@@ -273,12 +273,8 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
       `/api/projects/${project.id}/location/analyze`,
       { version: project.version, externalProcessingConfirmed: true },
     );
-    expect(result.statusCode).toBe(200);
-    expect(result.json()).toMatchObject({
-      provider: "rules",
-      model: null,
-      location: { cityId: "lishui", confirmed: false },
-    });
+    expect(result.statusCode).toBe(503);
+    expect(result.json().code).toBe("AI_DISABLED");
     expect(modelFetch).not.toHaveBeenCalled();
   });
 });

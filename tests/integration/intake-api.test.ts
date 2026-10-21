@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID, randomBytes } from "node:crypto";
 import { buildApp } from "../../apps/api/src/app";
+import { assistantProjectCsv } from "../../packages/domain/assistant-plan";
 import { taskInput, projectInput } from "../../packages/domain/types";
 import { createUser } from "../../apps/api/src/auth";
 import {
   intakeCandidates,
+  parseDelimited,
   type IntakeInput,
   type IntakeSource,
 } from "../../packages/domain/intake";
@@ -13,10 +15,15 @@ let context: Awaited<ReturnType<typeof buildApp>>,
   csrf = "";
 const origin = "http://localhost:4173";
 const source: IntakeSource = {
-  kind: "text",
-  name: "intake.txt",
+  kind: "csv",
+  name: "intake.csv",
   sheet: "",
-  text: "Project: New intake; Client: Example; Task: First\nProject: New intake; Client: Example; Task: Second",
+  text: "Project,Client,Task\nNew intake,Example,First\nNew intake,Example,Second",
+  rows: [
+    ["Project", "Client", "Task"],
+    ["New intake", "Example", "First"],
+    ["New intake", "Example", "Second"],
+  ],
 };
 function input(): IntakeInput {
   return {
@@ -67,6 +74,79 @@ afterEach(async () => {
   await context.app.close();
 });
 describe("transactional reviewed intake", () => {
+  it("persists model-structured client/project/address fields and reuses the project without duplicate writes", async () => {
+    const before = context.repo.snapshot("a");
+    const natural: IntakeSource = {
+      kind: "text",
+      name: "AI 录入",
+      sheet: "",
+      text: assistantProjectCsv(
+        [
+          {
+            projectId: null,
+            name: "数字城市项目",
+            client: "重庆市市院",
+            address: "重庆",
+            quote: "客户名字 重庆市市院， 数字城市项目，地址是重庆",
+          },
+        ],
+        [],
+      ),
+    };
+    natural.rows = parseDelimited(natural.text);
+    const payload = () => ({
+      source: natural,
+      confirmed: true,
+      rows: intakeCandidates(natural, context.repo.snapshot("a").projects).map(
+        (c) => ({
+          sourceRow: c.sourceRow,
+          sourcePart: c.sourcePart,
+          contextRows: c.contextRows,
+          project: c.project,
+          task: c.task,
+          targetProjectId: c.targetProjectId,
+          targetProjectVersion: c.targetProjectVersion,
+          duplicateConfirmed: false,
+        }),
+      ),
+    });
+    const created = await request("POST", "/api/intakes", payload());
+    expect(created.statusCode).toBe(200);
+    const after = context.repo.snapshot("a");
+    expect(after.projects).toHaveLength(before.projects.length + 1);
+    expect(after.tasks).toEqual(before.tasks);
+    const saved = after.projects.find((p) => p.name === "数字城市项目")!;
+    expect(saved).toMatchObject({
+      client: "重庆市市院",
+      description: "地址：重庆",
+      owner: "Unassigned",
+    });
+    const repeat = await request("POST", "/api/intakes", payload());
+    expect(repeat.statusCode).toBe(200);
+    expect(repeat.json()).toMatchObject({
+      projects: [],
+      tasks: [],
+      entries: [{ projectId: saved.id, taskId: null }],
+    });
+    expect(context.repo.snapshot("a")).toEqual(after);
+    // Reusing an existing project must never grant an undo that deletes it.
+    expect(
+      (
+        await request("POST", `/api/intakes/${repeat.json().id}/undo`, {
+          confirmed: true,
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(context.repo.snapshot("a")).toEqual(after);
+    expect(
+      (
+        await request("POST", `/api/intakes/${created.json().id}/undo`, {
+          confirmed: true,
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(context.repo.snapshot("a").projects).toEqual(before.projects);
+  });
   it("creates one project and two tasks once, preserves source and can undo the batch", async () => {
     const key = randomUUID(),
       before = context.repo.snapshot("a");
@@ -136,10 +216,14 @@ describe("transactional reviewed intake", () => {
 
 it("persists missing details, later completes a project and reassigns a standalone task with optimistic concurrency", async () => {
   const source = {
-    kind: "text" as const,
-    name: "Synthetic fragmented notes",
+    kind: "csv" as const,
+    name: "Explicit task table",
     sheet: "",
-    text: "任务：准备讨论；日期：下周五",
+    text: "Task,Due date\n准备讨论,下周五",
+    rows: [
+      ["Task", "Due date"],
+      ["准备讨论", "下周五"],
+    ],
   };
   const c = intakeCandidates(source, context.repo.snapshot("a").projects)[0]!;
   const res = await request("POST", "/api/intakes", {
@@ -199,7 +283,7 @@ it("persists missing details, later completes a project and reassigns a standalo
   });
   expect(
     snapshot.activities.some(
-      (e) => e.entityId === task.id && e.source.includes(source.text),
+      (e) => e.entityId === task.id && e.source.includes("准备讨论"),
     ),
   ).toBe(true);
   expect(
@@ -245,63 +329,4 @@ it("rejects moving parents, children or cross-workspace targets without partial 
     ).statusCode,
   ).toBe(404);
   expect(context.repo.snapshot("a")).toEqual(before);
-});
-
-it("recomputes free-text ambiguity server-side, rejects unconfirmed batches atomically and preserves source context", async () => {
-  const before = context.repo.snapshot("a"),
-    s = {
-      ...source,
-      text: "Atlas:\n- New synthetic follow-up\n- Coordinate Meridian",
-    };
-  const candidates = intakeCandidates(s, before.projects);
-  const rows = candidates.map((c) => ({
-    sourceRow: c.sourceRow,
-    sourcePart: c.sourcePart,
-    contextRows: c.contextRows,
-    targetProjectId: c.targetProjectId,
-    targetProjectVersion: c.targetProjectVersion,
-    project: c.project,
-    task: c.task,
-    duplicateConfirmed: false,
-    matchConfirmed: false,
-  }));
-  rows[1]!.targetProjectId = before.projects[1]!.id;
-  rows[1]!.targetProjectVersion = before.projects[1]!.version;
-  const input = { source: s, rows, confirmed: true };
-  const rejected = await request("POST", "/api/intakes", input);
-  expect(rejected.statusCode).toBe(400);
-  expect(rejected.json().message).toContain("Confirm the target");
-  expect(context.repo.snapshot("a")).toEqual(before);
-  rows[1]!.matchConfirmed = true;
-  const key = randomUUID(),
-    result = await request("POST", "/api/intakes", input, key);
-  expect(result.statusCode).toBe(200);
-  const batch = result.json();
-  expect(batch.tasks).toHaveLength(2);
-  expect(batch.projects).toEqual([]);
-  expect((await request("POST", "/api/intakes", input, key)).json().id).toBe(
-    batch.id,
-  );
-  expect(context.repo.snapshot("a").projects).toEqual(before.projects);
-  const change = context.repo
-    .snapshot("a")
-    .activities.find((a) => a.entityId === batch.tasks[1].id)!;
-  expect(change.source).toContain("Row 1: Atlas:");
-  expect(change.source).toContain("Row 3: - Coordinate Meridian");
-  context.repo.putTask("a", {
-    ...batch.tasks[1],
-    title: "Later synthetic edit",
-    version: 2,
-  });
-  expect(
-    (
-      await request("POST", `/api/intakes/${batch.id}/undo`, {
-        confirmed: true,
-      })
-    ).statusCode,
-  ).toBe(400);
-  expect(
-    context.repo.snapshot("a").tasks.find((t) => t.id === batch.tasks[1].id)!
-      .title,
-  ).toBe("Later synthetic edit");
 });

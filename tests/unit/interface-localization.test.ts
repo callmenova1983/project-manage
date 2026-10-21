@@ -11,11 +11,6 @@ import {
 } from "@vue/compiler-dom";
 import { locale, t } from "../../apps/web/src/locales";
 import { uiEnglish } from "../../apps/web/src/locales/ui-en";
-import {
-  answerAssistantQuery,
-  assistantQueryInput,
-} from "../../packages/domain/assistant";
-import { createSeed } from "../../packages/domain/seed";
 
 const han = /[\p{Script=Han}]/u;
 const originalLocale = locale.value;
@@ -115,39 +110,5 @@ describe("complete interface localization", () => {
       visit(baseParse(descriptor.template.content));
     }
     expect(issues).toEqual([]);
-  });
-
-  it("responds to English assistant queries in English while preserving source content", () => {
-    const now = new Date("2026-10-17T08:00:00Z");
-    const snapshot = createSeed(now);
-    const actor = { id: "demo", name: "Demo" };
-    for (const text of [
-      "What tasks are planned this week?",
-      "Show all projects",
-      "What is the status of Atlas Customer Portal?",
-    ]) {
-      const input = assistantQueryInput.parse({ text, locale: "en" });
-      const answer = answerAssistantQuery(input, snapshot, actor, now);
-      expect(answer.handled).toBe(true);
-      expect(answer.text).not.toMatch(han);
-      for (const link of answer.links) expect(link.detail).not.toMatch(han);
-    }
-    const project = snapshot.projects[0]!;
-    project.latestUpdate = "客户原文：中文进展保持原样";
-    const answer = answerAssistantQuery(
-      { text: `What is the status of ${project.name}?`, locale: "en" },
-      snapshot,
-      actor,
-      now,
-    );
-    expect(answer.text).toContain(project.latestUpdate);
-    expect(answer.text).toContain("Owner:");
-    const legacy = answerAssistantQuery(
-      { text: "今天有哪些待办？" },
-      snapshot,
-      actor,
-      now,
-    );
-    expect(legacy.text).toMatch(han);
   });
 });

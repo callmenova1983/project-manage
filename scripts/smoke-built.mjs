@@ -53,7 +53,7 @@ async function start(databaseFile = path) {
       PORT: String(port),
       APP_ORIGIN: origin,
       DATABASE_PATH: databaseFile,
-      AI_PROVIDER: "rules",
+      AI_PROVIDER: "disabled",
       AI_CALLS_ENABLED: "false",
     },
     stdio: ["ignore", "pipe", "pipe"],

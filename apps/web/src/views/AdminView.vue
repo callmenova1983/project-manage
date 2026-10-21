@@ -45,7 +45,7 @@ const tabs = [
   { id: "users", label: "Users", icon: PhUsers },
   { id: "channels", label: t("渠道与项目信息"), icon: PhFolders },
   { id: "catalogs", label: "Stages & categories", icon: PhFolders },
-  { id: "model", label: "Model settings", icon: PhCpu },
+  { id: "model", label: "AI settings", icon: PhCpu },
   { id: "notifications", label: t("企业微信通知"), icon: PhBell },
   { id: "logs", label: "Call logs", icon: PhListBullets },
   { id: "audit", label: "Admin activity", icon: PhShieldCheck },
@@ -113,12 +113,66 @@ const dirty = computed(
 );
 const apiKey = ref("");
 const credentialBaseUrl = ref("");
-const allowanceAttempts = ref<number | string>("");
-const initialExpiry = new Date(Date.now() + 7 * 86400000);
-const allowanceExpiry = ref(
-  new Date(initialExpiry.getTime() - initialExpiry.getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 16),
+const settingsDirty = computed(
+  () =>
+    modelBaseline.value !== "" &&
+    JSON.stringify(model.value.settings) !== modelBaseline.value,
+);
+const allowanceNeedsUpdate = computed(
+  () =>
+    model.value.credentialAvailable &&
+    (!model.value.expiresAt ||
+      Date.parse(model.value.expiresAt) <= Date.now() ||
+      model.value.remainingAttempts <= 0),
+);
+const modelStatus = computed(() => {
+  if (store.mode === "local") return t("演示模式，未连接 AI");
+  if (!model.value.credentialAvailable) return t("尚未配置 AI");
+  if (!model.value.expiresAt || Date.parse(model.value.expiresAt) <= Date.now())
+    return t("AI 使用授权已到期");
+  if (model.value.remainingAttempts <= 0) return t("AI 调用次数已用完");
+  return t(model.value.runtimeEnabled ? "AI 已启用" : "AI 尚未启用");
+});
+const modelHint = computed(() => {
+  if (store.mode === "local")
+    return t("请登录团队工作区后配置 AI，演示模式不会调用模型。");
+  if (!model.value.credentialAvailable)
+    return t(
+      model.value.credentialEditable
+        ? "填写百炼密钥，保存并启用即可。"
+        : "请联系部署管理员配置百炼密钥。",
+    );
+  if (allowanceNeedsUpdate.value)
+    return t(
+      model.value.allowanceEditable
+        ? "调整下方使用限制，然后保存并启用。"
+        : "当前使用限制由服务器管理，请联系部署管理员续期或调整额度。",
+    );
+  return t(
+    model.value.runtimeEnabled
+      ? "文字、附件和语音共用此配置。"
+      : "密钥已配置，点击下方按钮即可启用。",
+  );
+});
+const modelChanged = computed(
+  () => settingsDirty.value || allowanceDirty.value || !!apiKey.value,
+);
+const modelSaveBlocked = computed(
+  () =>
+    store.busy ||
+    store.mode === "local" ||
+    (!model.value.credentialAvailable && !apiKey.value.trim()) ||
+    (allowanceNeedsUpdate.value && !allowanceDirty.value) ||
+    (model.value.runtimeEnabled && !modelChanged.value),
+);
+const modelSaveLabel = computed(() =>
+  t(
+    apiKey.value || allowanceDirty.value || settingsDirty.value
+      ? "保存并启用 AI"
+      : model.value.runtimeEnabled
+        ? "AI 已启用"
+        : "启用 AI",
+  ),
 );
 onBeforeUnmount(() => {
   apiKey.value = "";
@@ -332,101 +386,83 @@ async function saveCatalog() {
     error.value = (e as Error).message;
   }
 }
-async function saveModel() {
-  if (apiKey.value) return saveCredential();
+async function saveModel(enabled = true) {
+  if (store.busy) return;
   error.value = "";
-  try {
-    model.value = await store.operation(
-      () => api.saveModel(model.value.settings),
-      "Model settings saved",
-    );
-    modelBaseline.value = JSON.stringify(model.value.settings);
-    audit.value = await api.adminAudit();
-  } catch (e) {
-    error.value = (e as Error).message;
-  }
-}
-async function saveCredential() {
-  error.value = "";
-  const maxRequests = Number(allowanceAttempts.value);
-  if (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 1000) {
-    error.value = t("请明确填写本次授权的总调用上限（1–1000 次）。");
-    return;
-  }
-  const expiresAt = new Date(allowanceExpiry.value);
-  if (
-    !Number.isFinite(expiresAt.getTime()) ||
-    expiresAt.getTime() <= Date.now()
-  ) {
-    error.value = t("Choose a future allowance expiry");
-    return;
-  }
-  try {
-    model.value = await store.operation(
-      () =>
-        api.saveModelCredential({
-          version: model.value.settings.version,
-          apiKey: apiKey.value,
-          region: model.value.settings.region,
-          baseUrl: credentialBaseUrl.value,
-          maxRequests,
-          expiresAt: expiresAt.toISOString(),
-        }),
-      "API key saved. External calls remain disabled.",
-    );
-    modelBaseline.value = JSON.stringify(model.value.settings);
-    resetAllowanceDraft();
-    audit.value = await api.adminAudit();
-  } catch (e) {
-    error.value = (e as Error).message;
-  } finally {
-    apiKey.value = "";
-  }
-}
-async function saveAllowance() {
-  error.value = "";
-  const maxRequests = Number(allowanceLimit.value);
-  const expiresAt = new Date(allowanceUntil.value);
-  if (
-    !Number.isInteger(maxRequests) ||
-    maxRequests < 1 ||
-    maxRequests > 1000 ||
-    maxRequests < (model.value.usedAttempts ?? 0)
-  ) {
-    error.value = t("总调用上限须为 1–1000 的整数，且不能少于已经使用的次数。");
-    return;
-  }
-  if (
-    !Number.isFinite(expiresAt.getTime()) ||
-    expiresAt.getTime() <= Date.now()
-  ) {
-    error.value = t("请选择未来的额度有效期。");
-    return;
+  const allowanceChanged =
+    enabled &&
+    (allowanceDirty.value ||
+      (!model.value.credentialAvailable && !!apiKey.value));
+  let allowance: { maxRequests: number; expiresAt: string } | undefined;
+  if (allowanceChanged) {
+    const maxRequests = Number(allowanceLimit.value);
+    const expiresAt = new Date(allowanceUntil.value);
+    if (
+      !Number.isInteger(maxRequests) ||
+      maxRequests < 1 ||
+      maxRequests > 1000 ||
+      maxRequests < (model.value.usedAttempts ?? 0)
+    ) {
+      error.value = t(
+        "总调用上限须为 1–1000 的整数，且不能少于已经使用的次数。",
+      );
+      return;
+    }
+    if (
+      !Number.isFinite(expiresAt.getTime()) ||
+      expiresAt.getTime() <= Date.now()
+    ) {
+      error.value = t("请选择未来的额度有效期。");
+      return;
+    }
+    allowance = { maxRequests, expiresAt: expiresAt.toISOString() };
   }
   const draft = { ...model.value.settings };
-  const settingsDirty = JSON.stringify(draft) !== modelBaseline.value;
   try {
     model.value = await store.operation(
       () =>
-        api.saveModelAllowance({
-          version: model.value.settings.version,
-          maxRequests,
-          expiresAt: expiresAt.toISOString(),
+        api.saveModelConfiguration({
+          settings: {
+            ...(enabled ? draft : JSON.parse(modelBaseline.value)),
+            enabled,
+          },
+          ...(enabled && apiKey.value.trim()
+            ? {
+                credential: {
+                  apiKey: apiKey.value.trim(),
+                  baseUrl: credentialBaseUrl.value,
+                },
+              }
+            : {}),
+          ...(allowance ? { allowance } : {}),
         }),
-      store.mode === "local" ? t("已保存模拟调用额度") : t("AI 调用额度已更新"),
+      t(enabled ? "AI 已启用" : "AI 已暂停"),
     );
     modelBaseline.value = JSON.stringify(model.value.settings);
-    if (settingsDirty)
+    if (enabled) {
+      resetAllowanceDraft();
+      apiKey.value = "";
+      credentialBaseUrl.value = "";
+    } else {
+      // Pausing changes only the saved switch; keep unfinished edits available.
       model.value.settings = {
         ...draft,
+        enabled: false,
         version: model.value.settings.version,
       };
-    resetAllowanceDraft();
+    }
     audit.value = await api.adminAudit();
   } catch (e) {
     error.value = (e as Error).message;
   }
 }
+function cancelModelChanges() {
+  model.value.settings = JSON.parse(modelBaseline.value);
+  apiKey.value = "";
+  credentialBaseUrl.value = "";
+  resetAllowanceDraft();
+}
+
 onMounted(load);
 </script>
 <template>
@@ -818,150 +854,22 @@ onMounted(load);
         </form>
         <form
           v-else-if="tab === 'model'"
-          class="panel admin-editor"
-          @submit.prevent="saveModel"
+          class="panel admin-editor model-setup"
+          @submit.prevent="saveModel()"
         >
-          <h2>{{ t("Model settings") }}</h2>
-          <p class="muted">
-            {{ t("语音识别：") }}<strong>qwen3-asr-flash</strong>
-            {{
-              t(
-                "· 默认复用百炼凭据、区域和调用额度。文本整理继续使用下方选择的模型。",
-              )
-            }}
-          </p>
-          <p class="muted">
-            {{
-              t(
-                "Saving these settings never sends notes or makes a model request. Credentials stay on the server.",
-              )
-            }}
-          </p>
-          <div class="model-state">
-            <strong>{{
-              t(
-                model.runtimeEnabled
-                  ? "Calls enabled within server allowance"
-                  : "External calls disabled",
-              )
-            }}</strong
-            ><span>{{
-              t(
-                model.credentialAvailable
-                  ? "Server credential available"
-                  : "Server credential not provisioned",
-              )
-            }}</span
-            ><span>{{
-              t("Connection has not been verified by this page.")
-            }}</span>
+          <h2>{{ t("AI 设置") }}</h2>
+          <div
+            class="model-state"
+            :class="{ 'model-ready': model.runtimeEnabled }"
+            role="status"
+          >
+            <strong>{{ modelStatus }}</strong>
+            <span>{{ modelHint }}</span>
           </div>
-          <section class="model-allowance" aria-labelledby="allowance-heading">
-            <div class="section-heading">
-              <h3 id="allowance-heading">{{ t("AI 调用额度") }}</h3>
-              <span v-if="store.mode === 'local'" class="muted">{{
-                t("浏览器演示")
-              }}</span>
-            </div>
-            <dl class="allowance-summary">
-              <div>
-                <dt>{{ t("已使用") }}</dt>
-                <dd>{{ model.usedAttempts ?? t("未知") }} {{ t("次") }}</dd>
-              </div>
-              <div>
-                <dt>{{ t("总调用上限") }}</dt>
-                <dd>
-                  {{ model.maxRequests ?? t("未配置")
-                  }}<template
-                    v-if="
-                      model.maxRequests !== null &&
-                      model.maxRequests !== undefined
-                    "
-                  >
-                    {{ t("次") }}</template
-                  >
-                </dd>
-              </div>
-              <div>
-                <dt>{{ t("剩余调用") }}</dt>
-                <dd>{{ model.remainingAttempts }} {{ t("次") }}</dd>
-              </div>
-              <div>
-                <dt>{{ t("有效期至") }}</dt>
-                <dd>
-                  {{
-                    model.expiresAt
-                      ? formatDate(model.expiresAt, {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })
-                      : t("未配置")
-                  }}
-                </dd>
-              </div>
-            </dl>
-            <fieldset
-              v-if="model.allowanceEditable"
-              :disabled="store.busy"
-              class="allowance-editor"
-              @keydown.enter.prevent="saveAllowance"
-            >
-              <legend>{{ t("调整额度，无需重新填写 API key") }}</legend>
-              <div class="allowance-inputs">
-                <label
-                  >{{ t("总调用上限")
-                  }}<input
-                    v-model.number="allowanceLimit"
-                    type="number"
-                    :min="Math.max(1, model.usedAttempts ?? 0)"
-                    max="1000"
-                    step="1"
-                    :placeholder="t('包含已使用次数')"
-                /></label>
-                <label
-                  >{{ t("有效期至（本机时间）")
-                  }}<input v-model="allowanceUntil" type="datetime-local"
-                /></label>
-                <button
-                  type="button"
-                  class="primary"
-                  :disabled="store.busy || !allowanceDirty"
-                  @click="saveAllowance"
-                >
-                  {{ t("保存额度") }}
-                </button>
-              </div>
-              <p class="muted">
-                {{
-                  t(
-                    "这是累计调用总上限，包含已使用次数，不是额外增加的次数。修改只更新额度和有效期，保留原密钥与调用记录，不会自动启用 AI 或发起调用，也不会自动续额。",
-                  )
-                }}
-              </p>
-              <p v-if="store.mode === 'local'" class="muted">
-                {{ t("演示调整只保存在当前浏览器；不会修改服务器额度。") }}
-              </p>
-            </fieldset>
-            <p v-else-if="model.credentialAvailable" class="muted">
-              {{
-                t(
-                  "当前额度由服务器环境配置管理，请联系部署管理员调整调用上限或有效期；此处只读。",
-                )
-              }}
-            </p>
-            <p v-else class="muted">
-              {{
-                t(
-                  "尚未配置服务凭证。先保存下方 API key 与初始额度，之后可在这里单独调整额度。",
-                )
-              }}
-            </p>
-          </section>
-          <div class="admin-fields">
-            <label>{{ t("Provider") }}<input value="Qwen" readonly /></label
-            ><label
-              >{{ t("模型")
-              }}<select v-model="model.settings.model">
+          <div class="model-basic-fields">
+            <label
+              >{{ t("模型") }}
+              <select v-model="model.settings.model" :disabled="store.busy">
                 <option value="qwen3.8-max">
                   {{ t("Qwen3.8-Max（默认）") }}
                 </option>
@@ -980,167 +888,194 @@ onMounted(load);
                   :value="model.settings.model"
                 >
                   {{ model.settings.model }}
-                </option></select
-              ><input
-                v-model="model.settings.model"
-                :aria-label="t('模型 ID')"
-                :placeholder="t('或填写百炼模型 ID')" /></label
-            ><label
-              >{{ t("Region")
-              }}<select v-model="model.settings.region">
-                <option
-                  v-for="region in [
-                    'cn-beijing',
-                    'ap-southeast-1',
-                    'us-east-1',
-                    'eu-central-1',
-                  ]"
-                  :key="region"
-                  :value="region"
-                >
-                  {{ region }}
                 </option>
-              </select></label
-            ><label
-              >{{ t("Credential reference")
-              }}<select v-model="model.settings.secretRef">
-                <option value="">{{ t("Not selected") }}</option>
-                <option
-                  value="server-default"
-                  :disabled="!model.credentialAvailable"
-                >
-                  {{ t("Server-provisioned default") }}
-                </option>
-              </select></label
-            ><label
-              >{{ t("Timeout (ms)")
-              }}<input
-                v-model.number="model.settings.timeoutMs"
-                type="number"
-                min="1000"
-                max="30000"
-                required /></label
-            ><label
-              >{{ t("Maximum output tokens")
-              }}<input
-                v-model.number="model.settings.maxTokens"
-                type="number"
-                min="512"
-                max="4096"
-                required
-            /></label>
+              </select>
+            </label>
+            <label v-if="model.credentialEditable && !model.credentialAvailable"
+              >{{ t("API key") }}
+              <input
+                v-model="apiKey"
+                type="password"
+                autocomplete="new-password"
+                spellcheck="false"
+                maxlength="1024"
+                placeholder="sk-…"
+                :disabled="store.busy"
+              />
+            </label>
           </div>
-          <fieldset
-            v-if="model.credentialEditable"
-            class="credential-fields"
-            :disabled="store.busy"
+          <details
+            v-if="model.credentialAvailable || model.credentialEditable"
+            class="model-details"
+            :open="allowanceNeedsUpdate || !model.credentialAvailable"
           >
-            <legend>{{ t("Qwen API key") }}</legend>
-            <p class="muted">
-              {{
-                t(
-                  "Enter your Model Studio API key. It is saved encrypted on the server and never displayed again. Saving does not call the model.",
-                )
-              }}
-            </p>
-            <div class="admin-fields">
-              <label
-                >{{
-                  t(model.credentialAvailable ? "Replace API key" : "API key")
+            <summary>
+              {{ t("使用限制")
+              }}<span v-if="model.credentialAvailable">
+                · {{ t("剩余") }} {{ model.remainingAttempts }}
+                {{ t("次") }}</span
+              >
+            </summary>
+            <div class="model-detail-body">
+              <p v-if="model.credentialAvailable" class="muted">
+                {{ t("已使用") }} {{ model.usedAttempts ?? 0 }} /
+                {{ model.maxRequests }} {{ t("次") }} · {{ t("有效期至") }}
+                {{
+                  model.expiresAt
+                    ? formatDate(model.expiresAt, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : t("未配置")
                 }}
-                <input
-                  v-model="apiKey"
-                  type="password"
-                  autocomplete="new-password"
-                  spellcheck="false"
-                  maxlength="1024"
-                  placeholder="sk-…"
-                  :disabled="store.busy"
-                />
-              </label>
-              <label
-                >{{ t("API endpoint (optional)") }}
-                <input
-                  v-model="credentialBaseUrl"
-                  type="url"
-                  placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
-                  :disabled="store.busy"
-                />
-              </label>
-              <label
-                >{{ t("Total allowed attempts") }}
-                <input
-                  v-model.number="allowanceAttempts"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  :placeholder="t('请按使用需求填写')"
-                  required
-                  :disabled="store.busy"
-                />
-              </label>
-              <label
-                >{{ t("Allowance expires") }}
-                <input
-                  v-model="allowanceExpiry"
-                  type="datetime-local"
-                  :disabled="store.busy"
-                />
-              </label>
+              </p>
+              <div
+                v-if="
+                  model.allowanceEditable ||
+                  (!model.credentialAvailable && model.credentialEditable)
+                "
+                class="admin-fields"
+              >
+                <label
+                  >{{ t("总调用上限") }}
+                  <input
+                    v-model.number="allowanceLimit"
+                    type="number"
+                    :min="Math.max(1, model.usedAttempts ?? 0)"
+                    max="1000"
+                    step="1"
+                    :placeholder="t('包含已使用次数')"
+                    :disabled="store.busy"
+                  />
+                </label>
+                <label
+                  >{{ t("有效期至（本机时间）") }}
+                  <input
+                    v-model="allowanceUntil"
+                    type="datetime-local"
+                    :disabled="store.busy"
+                  />
+                </label>
+              </div>
+              <p
+                v-if="model.allowanceEditable || model.credentialEditable"
+                class="muted"
+              >
+                {{
+                  t(
+                    "总上限包含已使用次数，不会清空历史。费用上限可在百炼控制台设置。",
+                  )
+                }}
+              </p>
+              <p v-else class="muted">{{ t("使用限制由服务器管理。") }}</p>
             </div>
-            <p class="muted">
-              {{
-                t(
-                  "Leave the endpoint empty to use the selected region's default. The attempt allowance includes previous calls and is not a monetary billing limit.",
-                )
-              }}
-            </p>
+          </details>
+          <details class="model-details">
+            <summary>{{ t("高级设置") }}</summary>
+            <div class="model-detail-body">
+              <div class="admin-fields">
+                <label
+                  >{{ t("模型 ID")
+                  }}<input
+                    v-model="model.settings.model"
+                    :disabled="store.busy"
+                /></label>
+                <label
+                  >{{ t("Region") }}
+                  <select
+                    v-model="model.settings.region"
+                    :disabled="
+                      store.busy || (model.credentialAvailable && !apiKey)
+                    "
+                  >
+                    <option
+                      v-for="region in [
+                        'cn-beijing',
+                        'ap-southeast-1',
+                        'us-east-1',
+                        'eu-central-1',
+                      ]"
+                      :key="region"
+                      :value="region"
+                    >
+                      {{ region }}
+                    </option>
+                  </select>
+                </label>
+                <label
+                  >{{ t("Timeout (ms)")
+                  }}<input
+                    v-model.number="model.settings.timeoutMs"
+                    type="number"
+                    min="1000"
+                    max="30000"
+                    :disabled="store.busy"
+                /></label>
+                <label
+                  >{{ t("Maximum output tokens")
+                  }}<input
+                    v-model.number="model.settings.maxTokens"
+                    type="number"
+                    min="512"
+                    max="4096"
+                    :disabled="store.busy"
+                /></label>
+                <label
+                  v-if="model.credentialEditable && model.credentialAvailable"
+                  >{{ t("Replace API key") }}
+                  <input
+                    v-model="apiKey"
+                    type="password"
+                    autocomplete="new-password"
+                    spellcheck="false"
+                    maxlength="1024"
+                    placeholder="sk-…"
+                    :disabled="store.busy"
+                  />
+                </label>
+                <label v-if="model.credentialEditable && !!apiKey"
+                  >{{ t("API endpoint (optional)") }}
+                  <input
+                    v-model="credentialBaseUrl"
+                    type="url"
+                    placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    :disabled="store.busy"
+                  />
+                </label>
+              </div>
+              <p class="muted">
+                {{
+                  t(
+                    "语音模型使用 qwen3-asr-flash，共用密钥和使用限制。密钥加密保存在服务器，不回显。",
+                  )
+                }}
+              </p>
+            </div>
+          </details>
+          <div class="form-actions model-setup-actions">
             <button
-              type="button"
-              class="primary"
-              :disabled="store.busy || !apiKey"
-              @click="saveCredential"
-            >
-              {{ t("Save API key") }}
-            </button>
-          </fieldset>
-          <label class="admin-check"
-            ><input
-              v-model="model.settings.enabled"
-              type="checkbox"
-              :disabled="!model.credentialAvailable"
-            />{{ t("Allow explicitly confirmed external requests") }}</label
-          >
-          <p class="muted">
-            {{
-              t(
-                "Saving an API key leaves external calls disabled. Enable calls separately when you are ready. Saved keys are never returned to the browser.",
-              )
-            }}
-          </p>
-          <div class="form-actions">
-            <button
+              v-if="model.settings.enabled"
               type="button"
               :disabled="store.busy"
-              @click="
-                model.settings = JSON.parse(modelBaseline);
-                apiKey = '';
-                resetAllowanceDraft();
-              "
+              @click="saveModel(false)"
             >
-              {{ t("Cancel changes") }}</button
-            ><button
-              class="primary"
-              type="submit"
-              :disabled="
-                store.busy ||
-                !!apiKey ||
-                JSON.stringify(model.settings) === modelBaseline
-              "
+              {{ t("暂停 AI") }}
+            </button>
+            <button
+              v-if="modelChanged"
+              type="button"
+              :disabled="store.busy"
+              @click="cancelModelChanges"
             >
-              {{ t("Save model settings") }}
+              {{ t("Cancel changes") }}
+            </button>
+            <button class="primary" type="submit" :disabled="modelSaveBlocked">
+              {{ modelSaveLabel }}
             </button>
           </div>
+          <p class="muted model-save-note">
+            {{ t("保存不会发起模型调用。启用后，团队可直接使用 AI 助手。") }}
+          </p>
         </form>
         <template v-else-if="tab === 'logs'"
           ><div class="section-heading">
@@ -1279,17 +1214,39 @@ onMounted(load);
   </section>
 </template>
 <style scoped>
-.credential-fields {
-  min-width: 0;
-  margin: 20px 0 12px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-raised);
+.model-setup {
+  max-width: 800px;
 }
-.credential-fields legend {
-  padding: 0 6px;
+.model-basic-fields {
+  display: grid;
+  gap: 16px;
+  margin: 20px 0;
+}
+.model-details {
+  border-top: 1px solid var(--border);
+  padding: 14px 0;
+}
+.model-details summary {
+  cursor: pointer;
+  font-size: 13px;
   font-weight: 600;
+}
+.model-details summary span {
+  color: var(--muted);
+  font-weight: 400;
+}
+.model-detail-body {
+  padding-top: 8px;
+}
+.model-ready {
+  border-color: var(--status-done);
+}
+.model-setup-actions {
+  margin-top: 20px;
+}
+.model-save-note {
+  text-align: right;
+  margin-bottom: 0;
 }
 .admin-demo {
   padding: 12px 15px;
@@ -1415,47 +1372,6 @@ onMounted(load);
 }
 .model-state span {
   color: var(--muted);
-}
-.model-allowance {
-  margin-top: 16px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-.model-allowance .section-heading {
-  margin: 0 0 12px;
-}
-.model-allowance h3 {
-  margin: 0;
-  font-size: 14px;
-}
-.allowance-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px 32px;
-  margin: 0;
-  font-size: 13px;
-}
-.allowance-summary dt {
-  margin-bottom: 4px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.allowance-summary dd {
-  margin: 0;
-  font-weight: 600;
-}
-.allowance-editor {
-  margin: 16px 0 0;
-}
-.allowance-inputs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 12px;
-}
-.allowance-inputs label {
-  flex: 1 1 200px;
 }
 .admin-table-scroll {
   overflow: auto;

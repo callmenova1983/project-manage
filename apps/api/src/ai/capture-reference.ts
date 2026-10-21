@@ -1,9 +1,5 @@
-import { referenceInstruction } from './instructions.js';
-import {
-  referenceClassificationSchema,
-  classifyReferenceName,
-  type ReferenceClassification,
-} from "../../../../packages/domain/capture-reference.js";
+import { referenceInstruction } from "./instructions.js";
+import { referenceClassificationSchema } from "../../../../packages/domain/capture-reference.js";
 import type { Project } from "../../../../packages/domain/types.js";
 import type { QwenConfig } from "./config.js";
 export type ReferenceName = { id: string; name: string };
@@ -25,33 +21,6 @@ export function referenceContext(
       })),
   };
 }
-export function localReferenceClassification(
-  files: ReferenceName[],
-  notes: string,
-  projects: Project[],
-): ReferenceClassification {
-  return {
-    provider: "rules",
-    model: null,
-    files: files.map((file) => {
-      const context = `${file.name} ${notes}`;
-      const matches = projects.filter(
-        (p) =>
-          !p.intakeInbox &&
-          [p.name, p.shortName, ...p.aliases].some(
-            (name) => name && name.length >= 2 && context.includes(name),
-          ),
-      );
-      const category = classifyReferenceName(file.name);
-      return {
-        id: file.id,
-        category:
-          category === "other" ? classifyReferenceName(notes) : category,
-        projectId: matches.length === 1 ? matches[0]!.id : null,
-      };
-    }),
-  };
-}
 export function makeReferenceRequest(source: string, config: QwenConfig) {
   if (source.length > 24000) throw Error("项目名称过多，请先选择归档项目。");
   return {
@@ -65,8 +34,7 @@ export function makeReferenceRequest(source: string, config: QwenConfig) {
     messages: [
       {
         role: "system",
-        content:
-          referenceInstruction,
+        content: referenceInstruction,
       },
       { role: "user", content: source },
     ],

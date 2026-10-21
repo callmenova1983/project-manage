@@ -4,7 +4,6 @@ import {
   statistics,
   leafTasks,
   validateGraph,
-  suggest,
   parsePaste,
   dateSchema,
 } from "../../packages/domain/types.js";
@@ -64,32 +63,11 @@ describe("single-source project data", () => {
       expect(() => validateGraph(s.projects, s.tasks)).toThrow();
     }
   });
-  it("retains unmatched and ambiguous source lines for human review", () => {
-    const s = createSeed(now);
-    const result = suggest(
-      "Atlas: review copy\nAtlas and Meridian: align\nUnmatched next step",
-      s.projects,
-    );
-    expect(result[0]!.candidates).toHaveLength(1);
-    expect(result[1]!.candidates).toHaveLength(2);
-    expect(result[1]!.selectedProjectId).toBe("");
-    expect(result[2]!.sourceLine).toBe(3);
-    expect(result.every((r) => !r.confirmed)).toBe(true);
-  });
   it("parses TSV without executing markup and validates real calendar dates", () => {
     expect(
       parsePaste("Task\tJamie\t2026-10-12\n<script>alert(1)</script>")[1]!
         .title,
     ).toContain("<script>");
     expect(dateSchema.safeParse("2026-02-30").success).toBe(false);
-  });
-  it("does not turn attachment filename headings into pending tasks", () => {
-    const result = suggest(
-      "【会议记录.txt】\nAtlas: review equipment\n【报价方案.docx】\nMeridian: confirm scope",
-      createSeed(now).projects,
-    );
-    expect(result.map((row) => row.sourceLine)).toEqual([2, 4]);
-    expect(result).toHaveLength(2);
-    expect(result.every((row) => row.selectedProjectId)).toBe(true);
   });
 });

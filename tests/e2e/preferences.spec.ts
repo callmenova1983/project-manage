@@ -45,7 +45,7 @@ for (const language of ["en", "zh-CN"] as const)
         await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
         await expect(
           page.getByRole("heading", {
-            name: zh ? "项目 20" : "Projects 20",
+            name: zh ? "本周变化与近期事项" : "Changes & next work",
             exact: true,
           }),
         ).toBeVisible();

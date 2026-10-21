@@ -9,6 +9,7 @@ import {
   modelSettingsInput,
   modelCredentialInput,
   modelAllowanceInput,
+  modelConfigurationInput,
   defaultModelSettings,
   defaultCatalogs,
   checkCatalogs,
@@ -412,6 +413,100 @@ export function registerAdminRoutes(
     }),
   );
   app.get("/api/admin/model", (req) => state(requireAdmin(req).workspaceId));
+  app.put("/api/admin/model/configuration", (req) =>
+    mutate(req, (a) => {
+      adminActor(repo, a);
+      const input = modelConfigurationInput.parse(req.body);
+      const current = runtime(a.workspaceId);
+      const old = readModelSettings(repo, a.workspaceId, current);
+      const next = input.settings;
+      if (next.version !== old.version)
+        throw new HttpError(
+          409,
+          "Model settings changed. Reload before saving.",
+        );
+      if ((input.credential || input.allowance) && (base || !credentials))
+        throw new HttpError(
+          403,
+          "This allowance is managed by the server operator",
+        );
+      if (input.credential && !input.allowance && !current)
+        throw new HttpError(400, "请填写初始使用限制后保存并启用 AI。");
+      if (input.allowance && !input.credential && !current)
+        throw new HttpError(400, "请先填写百炼 API Key。");
+      const used = current
+        ? Number(
+            repo.db
+              .prepare(
+                "SELECT count(*) AS n FROM ai_attempts WHERE budget_id=?",
+              )
+              .get(current.budgetId)!.n,
+          )
+        : 0;
+      if (input.allowance && input.allowance.maxRequests < used)
+        throw new HttpError(400, "总调用上限不能少于已经使用的次数。");
+      let config = current;
+      if (input.credential) {
+        try {
+          config = credentials!.save(a.workspaceId, {
+            ...input.credential,
+            version: old.version,
+            region: next.region,
+            maxRequests: input.allowance?.maxRequests ?? current!.maxRequests,
+            expiresAt:
+              input.allowance?.expiresAt ??
+              new Date(current!.expiresAt).toISOString(),
+          });
+        } catch (e) {
+          if (
+            e instanceof Error &&
+            e.message.startsWith("Invalid or missing server AI configuration:")
+          )
+            throw new HttpError(400, e.message);
+          throw e;
+        }
+      } else if (input.allowance) {
+        config = credentials!.updateAllowance(a.workspaceId, {
+          ...input.allowance,
+          version: old.version,
+        });
+      }
+      // Credential selection is automatic; callers never need to choose a secret reference.
+      next.secretRef = config ? "server-default" : "";
+      if (next.enabled) {
+        if (!config) throw new HttpError(400, "请先填写百炼 API Key。");
+        if (next.region !== config.region)
+          throw new HttpError(
+            400,
+            "所选区域与已有密钥不匹配，请恢复原区域或更换密钥。",
+          );
+        if (config.expiresAt <= Date.now())
+          throw new HttpError(400, "AI 使用授权已到期，请先调整使用限制。");
+        if (used >= config.maxRequests)
+          throw new HttpError(400, "AI 调用次数已用完，请先调整使用限制。");
+      }
+      if (
+        config &&
+        (next.timeoutMs > config.timeoutMs || next.maxTokens > config.maxTokens)
+      )
+        throw new HttpError(400, "Settings exceed the server-approved limits");
+      next.version++;
+      repo.db
+        .prepare(
+          "INSERT INTO model_settings(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
+        )
+        .run(a.workspaceId, JSON.stringify(next));
+      adminAudit(
+        repo,
+        a,
+        next.enabled
+          ? "Saved AI configuration and enabled calls"
+          : "Saved AI configuration with calls disabled",
+        a.workspaceId,
+      );
+      return state(a.workspaceId);
+    }),
+  );
   app.put("/api/admin/model/allowance", (req) =>
     mutate(req, (a) => {
       adminActor(repo, a);

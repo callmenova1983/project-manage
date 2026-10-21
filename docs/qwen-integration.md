@@ -1,5 +1,7 @@
 # Qwen meeting-note suggestions
 
+> 当前入口与停用接口见 [AI 语义入口与旧逻辑清理](ai-semantic-entry.md)。旧版规则回退和独立纪要生成流程已移除。
+
 The server has a Qwen adapter, defaulting to `qwen3.8-max` and selectable in the administrator settings, **disabled by default**. No live provider request or credential verification was performed. Tests use synthetic responses. Configuration is not evidence of connectivity. The private browser-only Site continues to use the local rules adapter and cannot call Qwen.
 
 ## Verified provider and endpoints
@@ -39,7 +41,7 @@ Live activation remains pending provider/region choice, secure replacement-secre
 
 ### Attachment recognition depth
 
-The unified AI entry distinguishes **归档资料** from **识别成事项**. Added or dropped files default to reference archiving: bytes are stored without extracting the document or images. Only filenames/titles and a short user description are used for a small classification request (quotation, proposal, contract, drawing, report, site photo, task evidence or other). The user selects the project and presses **归档资料**; category adjustment and optional task association stay collapsed. This flow never creates tasks, expands quotation rows, changes project stage or marks tasks complete. Generic photo filenames remain unclassified unless the user supplies context. If AI is unavailable, filename-based preliminary classification remains available and is explicitly labeled.
+The unified AI entry distinguishes **归档资料** from **识别成事项**. Added or dropped files default to reference archiving: bytes are stored without extracting the document or images. Only filenames/titles and a short user description are used for a small classification request (quotation, proposal, contract, drawing, report, site photo, task evidence or other). The user selects the project and presses **归档资料**; category adjustment and optional task association stay collapsed. This flow never creates tasks, expands quotation rows, changes project stage or marks tasks complete. Generic photo filenames remain unclassified unless the user supplies context. If AI is unavailable, no filename rules are substituted; the source is retained and the user can retry or explicitly choose the category.
 
 Pasted screenshots default to **识别成事项**, which the user can switch back to archiving before submitting. This explicit processing flow extracts content only when submitted. Original attachments are not retained by default: recognized text is saved together with atomic cleanup of the uploader's temporary files. Failed text saves retain the files for retry; already-archived files, other users' files and files retained by earlier proposals cannot be discarded through this path. The optional **保留原附件** checkbox preserves the original source. Classification never requires image recognition; meeting screenshots and chat records use recognition only when requested.
 
@@ -49,7 +51,7 @@ Within content recognition, **仅文字** (`text`) reads document and table text
 
 The selected depth controls which content is processed, not a guaranteed token price or model reasoning budget. Long source text can still be expensive. Retention is separate from recognition depth: reference archives keep originals, while temporary recognition follows the user's retain-original choice. No allowance, credentials or attempt history is reset by this feature.
 
-Browser → authenticated same-origin `POST /api/proposals/qwen` → server-only adapter → validated draft → editable human review → existing transactional `POST /api/proposals/:id/apply`.
+Browser → authenticated same-origin `POST /api/assistant/interpret` → server-only adapter → validated draft → editable human review → existing transactional `POST /api/proposals/:id/apply`.
 
 `GET /api/ai/capabilities` requires a session and exposes configured provider/model/region and remaining attempts, never key or endpoint. `connectionVerified: false` avoids claiming connectivity from configuration. A generated proposal records provider/model/region/prompt version.
 

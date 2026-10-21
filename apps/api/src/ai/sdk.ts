@@ -1,5 +1,5 @@
 import { createAlibaba } from "@ai-sdk/alibaba";
-import { generateText, Output, tool, isStepCount, type ModelMessage } from "ai";
+import { generateText, Output, jsonSchema, type ModelMessage } from "ai";
 import { z } from "zod";
 import type { QwenConfig } from "./config.js";
 import { AiError } from "./provider.js";
@@ -14,15 +14,7 @@ const part = z.union([
   }),
 ]);
 const input = z.object({
-  sdkProjectLookup: z
-    .array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        aliases: z.array(z.string()),
-      }),
-    )
-    .optional(),
+  sdkOutputSchema: z.record(z.string(), z.unknown()).optional(),
   messages: z.array(
     z.union([
       z.object({ role: z.literal("system"), content: z.string() }),
@@ -43,7 +35,7 @@ export async function generateSdkJson<T>(
   request: unknown,
   config: QwenConfig,
   validate: (value: unknown) => T,
-  invoke: (request: unknown, allowLookup: boolean) => Promise<unknown>,
+  invoke: (request: unknown) => Promise<unknown>,
 ): Promise<T> {
   const parsed = input.parse(request);
   const messages: ModelMessage[] = parsed.messages
@@ -76,16 +68,16 @@ export async function generateSdkJson<T>(
         const body = JSON.parse(String(init?.body));
         // No search or automatic external tools in existing structured flows.
         body.enable_search = false;
+        if (body.response_format?.type === "json_schema")
+          body.response_format.json_schema.strict = true;
         calls++;
-        if (calls > (parsed.sdkProjectLookup ? 2 : 1))
+        if (calls > 1)
           throw new AiError(
             502,
             "AI_INVALID_OUTPUT",
             "Model step limit exceeded.",
           );
-        return Response.json(
-          await invoke(body, !!parsed.sdkProjectLookup && calls === 1),
-        );
+        return Response.json(await invoke(body));
       } catch (error) {
         transportFailure = error;
         throw error;
@@ -100,50 +92,9 @@ export async function generateSdkJson<T>(
         .filter((message) => message.role === "system")
         .map((message) => message.content)
         .join("\n\n"),
-      output: Output.json(),
-      ...(parsed.sdkProjectLookup
-        ? {
-            tools: {
-              searchProjects: tool({
-                description:
-                  "Find current-workspace project IDs by source-supported name fragments. Read-only.",
-                inputSchema: z
-                  .object({
-                    names: z
-                      .array(z.string().trim().min(2).max(100))
-                      .min(1)
-                      .max(5),
-                  })
-                  .strict(),
-                execute: async ({ names }) =>
-                  names.map((name) => {
-                    const matches = parsed.sdkProjectLookup!.filter((project) =>
-                      [project.name, ...project.aliases].some((label) =>
-                        label
-                          .toLocaleLowerCase()
-                          .includes(name.toLocaleLowerCase()),
-                      ),
-                    );
-                    return {
-                      name,
-                      total: matches.length,
-                      projects: matches.slice(0, 10),
-                    };
-                  }),
-              }),
-            },
-            stopWhen: isStepCount(2),
-            prepareStep: ({ stepNumber }: { stepNumber: number }) =>
-              stepNumber > 0
-                ? { toolChoice: "none" as const }
-                : {
-                    toolChoice: {
-                      type: "tool" as const,
-                      toolName: "searchProjects" as const,
-                    },
-                  },
-          }
-        : {}),
+      output: parsed.sdkOutputSchema
+        ? Output.object({ schema: jsonSchema(parsed.sdkOutputSchema) })
+        : Output.json(),
       maxRetries: 0,
       maxOutputTokens: Math.min(
         parsed.max_tokens ?? config.maxTokens,
@@ -153,12 +104,14 @@ export async function generateSdkJson<T>(
       providerOptions: { alibaba: { enableThinking: false } },
     });
     return validate(result.output);
-  } catch {
+  } catch (error) {
     if (transportFailure) throw transportFailure;
+    if (error instanceof AiError) throw error;
     throw new AiError(
       502,
       "AI_INVALID_OUTPUT",
       "Qwen returned incomplete or invalid suggestions. Nothing was applied.",
+      { stage: "sdk-output", reason: "invalid-json-or-schema" },
     );
   }
 }

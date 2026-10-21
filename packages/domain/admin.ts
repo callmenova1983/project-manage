@@ -148,6 +148,19 @@ export const modelAllowanceInput = modelCredentialInput.pick({
   expiresAt: true,
 });
 export type ModelAllowanceInput = z.infer<typeof modelAllowanceInput>;
+/** One explicit save applies settings, credentials and optional usage limits together. */
+export const modelConfigurationInput = z
+  .object({
+    settings: modelSettingsInput,
+    credential: modelCredentialInput
+      .pick({ apiKey: true, baseUrl: true })
+      .optional(),
+    allowance: modelAllowanceInput
+      .pick({ maxRequests: true, expiresAt: true })
+      .optional(),
+  })
+  .strict();
+export type ModelConfigurationInput = z.infer<typeof modelConfigurationInput>;
 export const defaultModelSettings: ModelSettings = {
   version: 1,
   enabled: false,
@@ -188,6 +201,7 @@ export interface ModelLog {
   outputTokens: number | null;
   cost: number | null;
   errorCode: string | null;
+  failureDiagnostic?: { stage: string; reason: string; paths?: string[] };
   attempts: number;
   /** Final provider usage per real request, excluding unknown/unreported usage. */
   callUsage?: {
@@ -198,7 +212,11 @@ export interface ModelLog {
   meteredAttempts?: number;
 }
 export interface ModelUsage {
-  speech?: { recordedSeconds: number; requests: number; unmeasuredRequests: number };
+  speech?: {
+    recordedSeconds: number;
+    requests: number;
+    unmeasuredRequests: number;
+  };
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;

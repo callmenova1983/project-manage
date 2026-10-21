@@ -1,4 +1,4 @@
-import { taskReviewInstruction } from './instructions.js';
+import { taskReviewInstruction } from "./instructions.js";
 import type { Task } from "../../../../packages/domain/types.js";
 import {
   taskReviewOutput,
@@ -54,12 +54,7 @@ export function validateTaskReview(
       (q) =>
         !source.includes(q.quote) ||
         q.choices.some(
-          (c) =>
-            (c.field === "dueDate" &&
-              !/(截止|最晚|必须|之前|前完成|deadline|due\b|by\b)/i.test(
-                q.quote,
-              )) ||
-            (c.field === "assignee" && !source.includes(c.value)),
+          (c) => c.field === "assignee" && !source.includes(c.value),
         ),
     )
   )

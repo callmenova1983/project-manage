@@ -69,26 +69,33 @@ it.each([false, true])(
               message: {
                 role: "assistant",
                 content: JSON.stringify({
-                  suggestions: [
+                  kind: "work",
+                  items: [
                     {
                       sourceLine,
                       quote: first,
                       title: first,
                       projectIds: [project.id],
-                      reason: "原文项目",
                       action: "update",
                       status: "done",
-                      reportMeaning: "performed",
+                      dailyReport: true,
+                      reporter: "林甲",
+                      assignee: explicit ? "李强" : "林甲",
+                      ...(explicit ? { workDate: "2026-10-12" } : {}),
                     },
                     {
                       sourceLine,
                       quote: second,
                       title: second,
                       projectIds: [project.id],
-                      reason: "同条项目",
                       action: "task",
                       status: "todo",
-                      reportMeaning: "planned",
+                      dailyReport: true,
+                      reporter: "林甲",
+                      assignee: explicit ? "王敏" : "林甲",
+                      ...(explicit
+                        ? { workDate: "2026-10-12", workWeek: "2026-10-19" }
+                        : {}),
                     },
                   ],
                 }),
@@ -99,12 +106,12 @@ it.each([false, true])(
         }),
       );
       const before = repo.snapshot(workspaceId);
-      const proposed = await post("/api/proposals/qwen", {
+      const proposed = await post("/api/assistant/interpret", {
         source: `林甲\n${explicit ? "2026年10月12日\n" : ""}今日工作总结\n1. ${first}，${second}`,
         externalProcessingConfirmed: true,
       });
       expect(proposed.statusCode, proposed.body).toBe(200);
-      const proposal = proposed.json<Proposal>();
+      const proposal = proposed.json().proposal as Proposal;
       expect(proposal.suggestions).toHaveLength(2);
       expect(proposal.suggestions.map((s) => s.assignee)).toEqual(
         explicit ? ["李强", "王敏"] : ["林甲", "林甲"],

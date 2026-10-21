@@ -10,7 +10,7 @@ const budgetMessages = {
 const aiMessages: Record<string, string> = {
   ...budgetMessages,
   AI_DISABLED:
-    "AI recognition is not enabled. Ask an administrator to check the AI settings.",
+    "AI is not enabled. An administrator can enable it in AI settings. Your input remains here.",
   AI_BUSY:
     "Another AI request is running in this workspace. Wait for it to finish, then retry.",
   AI_PENDING:
@@ -22,7 +22,7 @@ const aiMessages: Record<string, string> = {
   AI_PROVIDER:
     "The AI service is temporarily unavailable or rate-limited. Check the attempt allowance before retrying.",
   AI_INVALID_OUTPUT:
-    "The AI result could not be read reliably. No recognition result was applied; review the input before retrying.",
+    "The AI returned an invalid operation plan. Nothing was applied. Your input is retained; retry organizing it.",
   AI_INPUT_LIMIT:
     "This content exceeds the AI recognition limit. Split it into smaller batches and retry.",
   AI_STALE:
@@ -68,4 +68,13 @@ export function captureErrorMessage(error: unknown): string {
 export function isCaptureBudgetError(error: unknown): boolean {
   const text = captureErrorMessage(error);
   return Object.values(budgetMessages).some((value) => value === text);
+}
+
+export function isCaptureSetupError(error: unknown): boolean {
+  const text = captureErrorMessage(error);
+  return (
+    isCaptureBudgetError(error) ||
+    text === aiMessages.AI_DISABLED ||
+    text === aiMessages.AI_CONFIGURATION
+  );
 }

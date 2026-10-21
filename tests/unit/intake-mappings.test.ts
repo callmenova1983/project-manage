@@ -95,12 +95,19 @@ it("persists bounded validated templates under separate account/workspace/mode k
 it("groups source rows without merging provenance or skipping unresolved confirmations", () => {
   const rows = intakeCandidates(
     {
-      kind: "text",
+      kind: "csv",
       name: "Synthetic",
       sheet: "",
-      text: "Project: Test; Task: First\nProject: Else; Task: Second\nProject: Test; Task: Third",
+      text: "Test,First\nElse,Second\nTest,Third",
+      rows: [
+        ["Test", "First"],
+        ["Else", "Second"],
+        ["Test", "Third"],
+      ],
     },
     [],
+    ["project", "task"],
+    false,
   );
   const groups = groupIntakeCandidates(rows);
   expect(groups.map((g) => g.rows.map((c) => c.sourceRow))).toEqual([

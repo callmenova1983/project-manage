@@ -1,3 +1,11 @@
+import type {
+  WorkspaceDataArchive,
+  WorkspaceDataImportResult,
+} from "../../../../packages/domain/workspace-transfer";
+import type {
+  AssistantTurn,
+  AssistantTurnInput,
+} from "../../../../packages/domain/assistant-plan";
 import { sha256 } from "./browser-crypto";
 import {
   taskBulkConflictsInput,
@@ -8,11 +16,7 @@ import type {
   SpeechInput,
   SpeechTranscript,
 } from "../../../../packages/domain/speech";
-import type {
-  AssistantSession,
-  AssistantQueryInput,
-  AssistantAnswer,
-} from "../../../../packages/domain/assistant";
+import type { AssistantSession } from "../../../../packages/domain/assistant";
 import type { TaskDependencyReplace } from "../../../../packages/domain/task-dependencies";
 import type {
   ReferenceClassification,
@@ -67,12 +71,12 @@ import type {
   ModelSettings,
   ModelCredentialInput,
   ModelAllowanceInput,
+  ModelConfigurationInput,
   ModelLog,
   ModelUsage,
   AdminAudit,
 } from "../../../../packages/domain/admin";
 import type {
-  NoteDateInput,
   Activity,
   Actor,
   Project,
@@ -121,8 +125,8 @@ export class HttpApi implements WorkspaceApi {
   }) {
     return this.call<AssistantSession>("/assistant/session", "PUT", input);
   }
-  queryAssistant(input: AssistantQueryInput) {
-    return this.call<AssistantAnswer>("/assistant/query", "POST", input);
+  interpretAssistant(input: AssistantTurnInput) {
+    return this.call<AssistantTurn>("/assistant/interpret", "POST", input);
   }
 
   notifications() {
@@ -261,9 +265,9 @@ export class HttpApi implements WorkspaceApi {
           (method === "POST" && path.endsWith("/files")) || path === "/import"
             ? 120000
             : [
-                  "/proposals/qwen",
                   "/directory/wecom/sync",
                   "/assistant/transcribe",
+                  "/assistant/interpret",
                 ].includes(path) ||
                 path.endsWith("/review") ||
                 path.endsWith("/analyze")
@@ -323,8 +327,8 @@ export class HttpApi implements WorkspaceApi {
       (path.endsWith("/classify") ||
         path.endsWith("/analyze") ||
         path.endsWith("/review") ||
-        path === "/proposals/qwen" ||
-        path === "/assistant/transcribe")
+        path === "/assistant/transcribe" ||
+        path === "/assistant/interpret")
     )
       window.dispatchEvent(new Event("pm:ai-usage-changed"));
     if (!response.ok)
@@ -546,14 +550,21 @@ export class HttpApi implements WorkspaceApi {
   saveProjectOrder(input: ProjectOrderInput) {
     return this.call<string[]>("/project-order", "PUT", input);
   }
-  confirmNoteDate(projectId: string, data: NoteDateInput) {
-    return this.call<Task>(`/projects/${projectId}/note-dates`, "POST", data);
-  }
   addTasks(tasks: TaskInput[]) {
     return this.call<Task[]>("/tasks/batch", "POST", { tasks });
   }
   exportData() {
     return this.call<Snapshot>("/export");
+  }
+  exportWorkspaceData() {
+    return this.call<WorkspaceDataArchive>("/workspace-data");
+  }
+  importWorkspaceData(archive: WorkspaceDataArchive, revision: number) {
+    return this.call<WorkspaceDataImportResult>("/workspace-data", "POST", {
+      archive,
+      revision,
+      confirmed: true,
+    });
   }
   importData(data: unknown, revision: number) {
     return this.call<Snapshot>("/import", "POST", {
@@ -592,33 +603,11 @@ export class HttpApi implements WorkspaceApi {
       externalProcessingConfirmed: true,
     });
   }
-  propose(
-    source: string,
-    originalSource?: CaptureSource,
-    temporaryMaterialIds?: string[],
-  ) {
-    return this.call<Proposal>("/proposals", "POST", {
-      source,
-      ...(originalSource ? { originalSource } : {}),
-      ...(temporaryMaterialIds?.length ? { temporaryMaterialIds } : {}),
-    });
-  }
   aiCapabilities() {
     return this.call<AiCapabilities>("/ai/capabilities");
   }
   modelUsage() {
     return this.call<ModelUsage>("/ai/usage");
-  }
-  proposeQwen(
-    source: string,
-    externalProcessingConfirmed: boolean,
-    originalSource?: CaptureSource,
-  ) {
-    return this.call<Proposal>("/proposals/qwen", "POST", {
-      source,
-      externalProcessingConfirmed,
-      ...(originalSource ? { originalSource } : {}),
-    });
   }
   applyProposal(
     proposal: Proposal,
@@ -683,6 +672,13 @@ export class HttpApi implements WorkspaceApi {
   }
   modelAdmin() {
     return this.call<ModelAdminState>("/admin/model");
+  }
+  saveModelConfiguration(input: ModelConfigurationInput) {
+    return this.call<ModelAdminState>(
+      "/admin/model/configuration",
+      "PUT",
+      input,
+    );
   }
   saveModel(input: ModelSettings) {
     return this.call<ModelAdminState>("/admin/model", "PUT", input);

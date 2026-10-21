@@ -1,7 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
-  answerAssistantQuery,
-  assistantQueryInput,
   assistantSessionInput,
   type AssistantSession,
 } from "../../../packages/domain/assistant.js";
@@ -67,15 +65,4 @@ export function registerAssistantRoutes(
       } satisfies AssistantSession;
     }),
   );
-  app.post("/api/assistant/query", (req) => {
-    const a = actor(req);
-    const input = assistantQueryInput.parse(req.body);
-    const snapshot = repo.snapshot(a.workspaceId);
-    if (
-      input.projectId &&
-      !snapshot.projects.some((p) => p.id === input.projectId)
-    )
-      throw new HttpError(404, "Project not found");
-    return answerAssistantQuery(input, snapshot, a);
-  });
 }

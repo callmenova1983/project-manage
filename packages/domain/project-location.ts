@@ -284,7 +284,7 @@ export interface CityResolution {
   location: ProjectLocation | null;
 }
 export interface ProjectLocationAnalysis extends CityResolution {
-  provider: "qwen" | "rules";
+  provider: "qwen";
   model: string | null;
 }
 export const projectLocationAnalysisInput = z
@@ -491,25 +491,6 @@ export function resolveLocationText(text: string): CityResolution {
 
 /** Kept for callers created when only city-level suggestions were available. */
 export const resolveCityText = resolveLocationText;
-
-export function inferProjectLocation(project: {
-  name: string;
-  shortName?: string;
-  description?: string;
-  client?: string;
-  aliases?: readonly string[];
-}): CityResolution {
-  return resolveFields(
-    [
-      { name: "项目名称", text: project.name },
-      { name: "项目简称", text: project.shortName ?? "" },
-      { name: "项目描述", text: project.description ?? "" },
-      { name: "客户", text: project.client ?? "" },
-      ...(project.aliases ?? []).map((text) => ({ name: "项目别名", text })),
-    ],
-    "name",
-  );
-}
 
 /** Snap to a supported city only within the threshold; ocean/remote clicks stay unset. */
 export function nearestCity(

@@ -1,4 +1,4 @@
-import { locationInstruction } from './instructions.js';
+import { locationInstruction } from "./instructions.js";
 import { z } from "zod";
 import {
   projectCities,
@@ -37,8 +37,7 @@ export function makeProjectLocationRequest(
     messages: [
       {
         role: "system",
-        content:
-          locationInstruction,
+        content: locationInstruction,
       },
       {
         role: "user",
@@ -124,38 +123,7 @@ export function validateProjectLocationAnalysis(
       };
     },
   );
-  // The model may redundantly quote the city as context for a finer result.
-  // Keep a separate city candidate when its quote identifies another project
-  // or an unsupported county, so unrelated evidence is not silently discarded.
-  const candidates = validated.filter((candidate) => {
-    if (candidate.district) return true;
-    const finer = validated.filter(
-      (other) => other.district && other.city.id === candidate.city.id,
-    );
-    if (!finer.length) return true;
-    const parentNames = [
-      candidate.city.name,
-      `${candidate.city.name}市`,
-      candidate.city.id,
-    ];
-    const mentionsAnotherCounty = candidate.city.aliases.some(
-      (alias) =>
-        !parentNames.includes(alias) &&
-        candidate.evidence.includes(alias) &&
-        !finer.some((other) => other.district!.aliases.includes(alias)),
-    );
-    if (mentionsAnotherCounty) return true;
-    return !(
-      parentNames.includes(candidate.evidence) ||
-      finer.some(
-        (other) =>
-          other.evidence.includes(candidate.evidence) ||
-          other.district!.aliases.some((alias) =>
-            candidate.evidence.includes(alias),
-          ),
-      )
-    );
-  });
+  const candidates = validated;
   return {
     status:
       candidates.length === 1

@@ -1,3 +1,4 @@
+import { storedProposal } from "../fixtures/proposals";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { buildApp } from "../../apps/api/src/app";
@@ -113,11 +114,12 @@ it("persists private conversation, unfinished draft and attachment references wi
 });
 it("rehydrates the authoritative proposal so a lost apply response cannot re-create tasks", async () => {
   const project = ctx.repo.snapshot("assistant").projects[0]!;
-  const proposal = (
-    await send("POST", "/api/proposals", {
-      source: `${project.name}：确认现场点位`,
-    })
-  ).json();
+  const proposal = storedProposal(
+    ctx.repo,
+    "assistant",
+    `${project.name}：确认现场点位`,
+    [{ title: "确认现场点位", selectedProjectId: project.id }],
+  );
   await send("PUT", "/api/assistant/session", {
     version: 0,
     state: { proposal, composer: "" },
@@ -133,128 +135,6 @@ it("rehydrates the authoritative proposal so a lost apply response cannot re-cre
   expect(
     (await send("GET", "/api/assistant/session")).json().state.proposal.status,
   ).toBe("applied");
-});
-it("answers real task and project queries without external calls or mutations", async () => {
-  const before = ctx.repo.snapshot("assistant"),
-    project = before.projects[0]!;
-  const answer = await send("POST", "/api/assistant/query", {
-    text: `${project.name}进展怎么样？`,
-  });
-  expect(answer.statusCode).toBe(200);
-  expect(answer.json()).toMatchObject({ handled: true });
-  expect(answer.json().text).toContain(project.latestUpdate || "尚未记录进展");
-  const tasks = (
-    await send("POST", "/api/assistant/query", {
-      text: "有哪些未完成任务？",
-      projectId: project.id,
-    })
-  ).json();
-  expect(
-    tasks.links.every((link: { path: string }) =>
-      link.path.includes(project.id),
-    ),
-  ).toBe(true);
-  expect(
-    (
-      await send("POST", "/api/assistant/query", { text: "新建项目：现场平台" })
-    ).json().handled,
-  ).toBe(false);
-  expect(
-    (
-      await send("POST", "/api/assistant/query", {
-        text: "进展怎么样？",
-        projectId: "foreign-project",
-      })
-    ).statusCode,
-  ).toBe(404);
-  expect(ctx.repo.snapshot("assistant")).toEqual(before);
-  expect(fetcher).not.toHaveBeenCalled();
-});
-it("filters persisted tasks by day, week, owner, overdue, blocked and done without writes", async () => {
-  const snapshot = ctx.repo.snapshot("assistant");
-  const template = snapshot.tasks[0]!;
-  const member = snapshot.members?.find((m) => m.name === "Assistant Tester");
-  expect(member).toBeDefined();
-  if (!member) throw new Error("Missing authenticated member fixture");
-  ctx.repo.db
-    .prepare("DELETE FROM tasks WHERE workspace_id=?")
-    .run("assistant");
-  const cases = [
-    {
-      id: "today-open",
-      status: "todo",
-      workDates: ["2026-10-19"],
-      workWeek: "2026-10-19",
-      dueDate: null,
-    },
-    {
-      id: "week-open",
-      status: "in_progress",
-      workDates: ["2026-10-21"],
-      workWeek: "2026-10-19",
-      dueDate: null,
-    },
-    {
-      id: "late",
-      status: "todo",
-      workDates: [],
-      workWeek: null,
-      dueDate: "2026-10-18",
-    },
-    {
-      id: "blocked",
-      status: "blocked",
-      workDates: [],
-      workWeek: null,
-      dueDate: null,
-    },
-    {
-      id: "finished",
-      status: "done",
-      workDates: ["2026-10-19"],
-      workWeek: "2026-10-19",
-      dueDate: "2026-10-18",
-    },
-  ] as const;
-  for (const task of cases)
-    ctx.repo.putTask("assistant", {
-      ...template,
-      ...task,
-      title: task.id,
-      workDates: [...task.workDates],
-      assignee: task.id === "week-open" ? "Other Person" : member.name,
-      assigneeId: task.id === "week-open" ? null : member.id,
-    });
-  const before = ctx.repo.snapshot("assistant");
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-10-19T12:00:00Z"));
-  try {
-    await login("assistant@example.test");
-    for (const [text, expected] of [
-      ["今天有哪些任务？", ["today-open"]],
-      ["本周有哪些任务？", ["today-open", "week-open"]],
-      ["有哪些我的任务？", ["today-open", "late", "blocked", "finished"]],
-      ["有哪些逾期任务？", ["late"]],
-      ["有哪些受阻任务？", ["blocked"]],
-      ["有哪些已完成任务？", ["finished"]],
-    ] as const) {
-      const response = await send("POST", "/api/assistant/query", {
-        text,
-        projectId: template.projectId,
-      });
-      expect(response.statusCode, text).toBe(200);
-      const answer = response.json();
-      expect(answer.handled, text).toBe(true);
-      expect(
-        answer.links.map((link: { title: string }) => link.title).sort(),
-        text,
-      ).toEqual([...expected].sort());
-    }
-    expect(ctx.repo.snapshot("assistant")).toEqual(before);
-    expect(fetcher).not.toHaveBeenCalled();
-  } finally {
-    vi.useRealTimers();
-  }
 });
 it("defaults to Qwen ASR, sends audio only, persists actual usage and replays once", async () => {
   const capability = (await send("GET", "/api/assistant/speech")).json();
@@ -389,19 +269,4 @@ it("never retries a billed provider failure automatically or leaks its response"
     (await send("POST", "/api/assistant/transcribe", input)).statusCode,
   ).toBe(409);
   expect(fetcher).toHaveBeenCalledTimes(1);
-});
-
-it("honors the requested English locale without translating project or task data", async () => {
-  const before = ctx.repo.snapshot("assistant");
-  const response = await send("POST", "/api/assistant/query", {
-    text: "Show tasks this week",
-    locale: "en",
-  });
-  expect(response.statusCode).toBe(200);
-  const answer = response.json();
-  expect(answer.handled).toBe(true);
-  expect(answer.text).toContain("tasks found");
-  expect(answer.text).not.toMatch(/[\p{Script=Han}]/u);
-  expect(ctx.repo.snapshot("assistant")).toEqual(before);
-  expect(fetcher).not.toHaveBeenCalled();
 });

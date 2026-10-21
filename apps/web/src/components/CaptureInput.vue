@@ -9,7 +9,7 @@ import type {
   CaptureRecognitionDepth,
 } from "../../../../packages/domain/capture";
 import { assembleCaptureText } from "../../../../packages/domain/capture";
-import { inferAttachmentPurpose } from "../../../../packages/domain/capture-reference";
+import type { ReferenceClassification } from "../../../../packages/domain/capture-reference";
 import SpeechInput from "./SpeechInput.vue";
 import CaptureDepthSelect from "./CaptureDepthSelect.vue";
 import { t } from "../locales";
@@ -49,14 +49,32 @@ const purposeChosen = ref(false),
   depthChosen = ref(false),
   pastedImages = ref<string[]>([]);
 const uncertainPurpose = ref(false);
+const classification = ref<ReferenceClassification>();
+let classifiedSource = "";
+async function classifyFiles() {
+  if (!props.referenceMode || !materials.value.length || purposeChosen.value)
+    return;
+  const key = JSON.stringify([
+    materials.value.map((f) => f.id),
+    props.modelValue,
+  ]);
+  if (classifiedSource === key && classification.value) return;
+  const result = await api.classifyCaptureReferences(
+    materials.value.map((f) => f.id),
+    props.modelValue.slice(0, 2000),
+  );
+  if (result.provider !== "qwen" || result.files.some((file) => !file.purpose))
+    throw new Error(t("AI 未返回明确的附件用途，请重试或手动选择。"));
+  classification.value = result;
+  classifiedSource = key;
+  preparationVersion.value++;
+}
+
 const purposeFor = (file: ProgressMaterial) =>
   purposeChosen.value
     ? attachmentPurpose.value
-    : inferAttachmentPurpose(
-        file.name,
-        props.modelValue,
-        pastedImages.value.includes(file.id),
-      );
+    : (classification.value?.files.find((item) => item.id === file.id)
+        ?.purpose ?? "unknown");
 const referenceMaterials = computed(() =>
   props.referenceMode
     ? materials.value.filter((file) => purposeFor(file) === "reference")
@@ -73,6 +91,7 @@ watch(
     materials.value.map((file) => file.name).join(" "),
     pastedImages.value.join(","),
     purposeChosen.value,
+    classification.value,
   ],
   () => {
     if (!props.referenceMode || !hasFiles.value) {
@@ -80,7 +99,8 @@ watch(
       return;
     }
     const intents = materials.value.map(purposeFor);
-    uncertainPurpose.value = intents.includes("unknown");
+    uncertainPurpose.value =
+      !!classification.value && intents.includes("unknown");
     if (!depthChosen.value && !purposeChosen.value)
       recognitionDepth.value = materials.value.some(
         (file) =>
@@ -296,13 +316,15 @@ function prepareResult(text: string, source: CaptureSource) {
   return {
     text,
     originalSource: temporaryIds.length
-      ? { ...source, materialIds: [] }
+      ? { ...source, text, materialIds: [] }
       : source,
   };
 }
 function exportState() {
   return {
     materials: materials.value,
+    classification: classification.value,
+    classifiedSource,
     preparationVersion: preparationVersion.value,
     prepared,
     attachmentPurpose: attachmentPurpose.value,
@@ -317,6 +339,9 @@ function exportState() {
 function restoreState(value: unknown) {
   if (!value || typeof value !== "object") return;
   const state = value as ReturnType<typeof exportState>;
+  classification.value = state.classification;
+  classifiedSource =
+    typeof state.classifiedSource === "string" ? state.classifiedSource : "";
   if (
     !Array.isArray(state.materials) ||
     state.materials.length > 6 ||
@@ -371,6 +396,8 @@ function changePurpose(event: Event) {
 function clearFiles() {
   generation++;
   materials.value = [];
+  classification.value = undefined;
+  classifiedSource = "";
   error.value = "";
   warnings.value = [];
   busy.value = false;
@@ -412,6 +439,8 @@ function input(event: Event) {
   emit("change");
 }
 defineExpose({
+  classifyFiles,
+  classification,
   exportState,
   restoreState,
   resolveSource,

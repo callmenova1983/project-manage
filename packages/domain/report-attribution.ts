@@ -1,5 +1,4 @@
-import { Temporal } from "@js-temporal/polyfill";
-import { calendarWeek, zonedDay } from "./time-zone.js";
+import { zonedDay } from "./time-zone.js";
 import type { ProgressSource } from "./progress-material.js";
 import type { Member, Proposal, Suggestion, Task } from "./types.js";
 
@@ -42,8 +41,7 @@ export function matchingReportTask(
   assignment: { assignee: string; assigneeId?: string | null },
 ) {
   if (!suggestion.dailyReport) return undefined;
-  const workWeek = reportWorkWeek(suggestion, title);
-  if (!workWeek && /下周|下星期|本周|这周/.test(title)) return undefined;
+  const workWeek = reportWorkWeek(suggestion);
   const parents = new Set(
     tasks
       .filter((task) => !task.voided && task.parentId)
@@ -63,23 +61,8 @@ export function matchingReportTask(
   return matches.length === 1 ? matches[0] : undefined;
 }
 
-export function reportWorkWeek(suggestion: Suggestion, title: string) {
-  if (
-    !suggestion.dailyReport ||
-    !suggestion.workDate ||
-    suggestion.invalidWorkDate
-  )
-    return null;
-  const next = /下周|下星期/.test(title);
-  const current = /本周|这周/.test(title);
-  if (next === current) return null;
-  try {
-    return Temporal.PlainDate.from(calendarWeek(suggestion.workDate))
-      .add({ days: next ? 7 : 0 })
-      .toString();
-  } catch {
-    return null;
-  }
+export function reportWorkWeek(suggestion: Suggestion) {
+  return suggestion.workWeek ?? null;
 }
 
 export function reportProgressSource(

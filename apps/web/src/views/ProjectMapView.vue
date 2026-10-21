@@ -48,7 +48,6 @@ import {
   nextProjectMapTourId,
 } from "../../../../packages/domain/project-map-tour";
 import {
-  inferProjectLocation,
   pointLocation,
   locationKey,
   locationLabel,
@@ -87,7 +86,6 @@ function onVisibilityChange() {
   if (document.hidden) pauseTour();
 }
 const saving = ref(false);
-const recognizing = ref(false);
 const aiEnabled = ref(false);
 const aiProjectId = ref("");
 const notice = ref("");
@@ -110,7 +108,7 @@ onMounted(async () => {
     const capabilities = await api.aiCapabilities();
     if (alive) aiEnabled.value = capabilities.enabled;
   } catch {
-    // Local name matching and manual location remain available offline.
+    // Explicit manual location selection remains available offline.
   }
 });
 
@@ -123,22 +121,8 @@ const mapStages = computed(() => [
     ? [{ id: "unclassified" }]
     : []),
 ]);
-const inferred = computed(
-  () => new Map(projects.value.map((p) => [p.id, inferProjectLocation(p)])),
-);
 function locationFor(p: Project): ProjectLocation | null {
-  const matched = inferred.value.get(p.id)?.location;
-  const saved = p.location;
-  return (
-    pendingLocations.value[p.id] ??
-    (saved?.confirmed
-      ? saved
-      : saved?.precision === "city" && matched?.precision === "district"
-        ? matched
-        : saved) ??
-    matched ??
-    null
-  );
+  return pendingLocations.value[p.id] ?? p.location ?? null;
 }
 const filtered = computed(() =>
   projects.value.filter((p) => {
@@ -309,11 +293,7 @@ const selectedHasDraft = computed(
       !!dirtyText.value[selected.value.id]),
 );
 const candidates = computed(() =>
-  selected.value
-    ? (alternatives.value[selected.value.id] ??
-      inferred.value.get(selected.value.id)?.candidates ??
-      [])
-    : [],
+  selected.value ? (alternatives.value[selected.value.id] ?? []) : [],
 );
 const hasDraft = computed(
   () =>
@@ -616,39 +596,15 @@ async function recognizeWithAi() {
 }
 async function recognizeCities() {
   pauseTour();
-  recognizing.value = true;
-  try {
-    const matches = projects.value.filter((p) => {
-      const candidate = inferred.value.get(p.id)?.location;
-      return (
-        !!candidate &&
-        (!p.location?.confirmed ||
-          (p.location.precision === "city" &&
-            candidate.precision === "district"))
-      );
-    });
-    if (matches[0]) {
-      search.value = "";
-      stage.value = "";
-      chooseProject(matches[0].id);
-      editingLocation.value = true;
-      const first = matches[0];
-      const finer = inferred.value.get(first.id)?.location;
-      if (
-        finer?.precision === "district" &&
-        first.location?.precision === "city" &&
-        !pendingLocations.value[first.id] &&
-        !dirtyText.value[first.id]
-      )
-        pendingLocations.value[first.id] = finer;
-    }
-    notice.value = t(
-      "{count} location candidates found. Confirm each project before saving.",
-      { count: matches.length },
-    );
-  } finally {
-    recognizing.value = false;
-  }
+  const project =
+    selected.value ??
+    projects.value.find((project) => !project.location?.confirmed);
+  if (!project) return;
+  search.value = "";
+  stage.value = "";
+  chooseProject(project.id);
+  editingLocation.value = true;
+  await recognizeWithAi();
 }
 </script>
 
@@ -950,16 +906,16 @@ async function recognizeCities() {
                 {{ counts.missing }} {{ t("Not located") }}</span
               >
               <button
-                :disabled="recognizing || !projects.length"
+                :disabled="!!aiProjectId || !aiEnabled || !projects.length"
                 @click="recognizeCities"
               >
                 <PhSpinnerGap
-                  v-if="recognizing"
+                  v-if="aiProjectId"
                   :size="16"
                   class="spin"
                 /><PhSparkle v-else :size="16" />{{
                   t(
-                    recognizing
+                    aiProjectId
                       ? "Recognizing locations…"
                       : "Recognize locations",
                   )

@@ -116,15 +116,6 @@ async function drop(stage: string, event: DragEvent) {
 </script>
 <template>
   <div class="project-collection-layout">
-    <p class="layout-explanation">
-      {{
-        t(
-          mode === "board"
-            ? "Drag project cards between stage columns or use the stage menu. Only the project stage changes."
-            : "Project cards use the same filters and ordering as the list.",
-        )
-      }}
-    </p>
     <p v-if="error" class="error-box" role="alert">{{ t(error) }}</p>
     <p v-if="projection.inbox.length" class="inbox-note">
       {{
@@ -186,23 +177,31 @@ async function drop(stage: string, event: DragEvent) {
                 >{{ project.name }}</RouterLink
               ><ProjectFollow :id="project.id" :name="project.name" />
             </header>
-            <StatusBadge :stage="project.stage" />
-            <p class="card-owner">
-              {{ t("Owner") }} ·
-              {{
-                memberName(
-                  project.ownerId,
-                  project.owner,
-                  store.data.members ?? [],
-                )
-              }}
-            </p>
+            <div class="card-meta">
+              <StatusBadge :stage="project.stage" />
+              <p class="card-owner">
+                {{ t("Owner") }} ·
+                {{
+                  memberName(
+                    project.ownerId,
+                    project.owner,
+                    store.data.members ?? [],
+                  )
+                }}
+              </p>
+            </div>
             <p class="card-progress">
               {{
                 project.latestUpdate || t("No progress reports in this range")
               }}
             </p>
-            <dl>
+            <dl
+              :title="
+                t(
+                  'Open, overdue and coordination counts use all dates; planned work follows the selected work scope.',
+                )
+              "
+            >
               <div>
                 <dt>{{ t("Open work") }}</dt>
                 <dd>{{ projection.stats.get(project.id)?.open ?? 0 }}</dd>
@@ -254,18 +253,9 @@ async function drop(stage: string, event: DragEvent) {
         </div>
       </section>
     </div>
-    <p class="layout-explanation">
-      {{
-        t(
-          "Open, overdue and coordination counts use all dates; planned work follows the selected work scope.",
-        )
-      }}
-      · {{ store.timeZone }}
-    </p>
   </div>
 </template>
 <style scoped>
-.layout-explanation,
 .inbox-note {
   font-size: 12px;
   color: var(--muted);
@@ -276,13 +266,13 @@ async function drop(stage: string, event: DragEvent) {
 }
 .project-layout-columns.mode-board {
   display: flex;
-  gap: 12px;
+  gap: var(--space-4);
   overflow-x: auto;
   align-items: flex-start;
   padding-bottom: 12px;
 }
 .mode-board .project-stage-column {
-  flex: 0 0 290px;
+  flex: 0 0 320px;
   padding: 10px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
@@ -301,38 +291,51 @@ h3 small {
 }
 .mode-cards .project-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+  gap: var(--space-5);
 }
 .project-layout-card {
   min-width: 0;
-  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
-  margin-bottom: 10px;
 }
 .project-layout-card header {
   display: flex;
   gap: 8px;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 8px;
+  margin: 0;
 }
 header a {
+  font-size: 16px;
+  line-height: 1.5;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 p {
   overflow-wrap: anywhere;
 }
+.card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
 .card-owner {
-  font-size: 12px;
+  margin: 0;
+  font-size: 13px;
   color: var(--muted);
 }
 .card-progress {
-  font-size: 13px;
-  line-height: 1.6;
+  margin: 0;
+  min-height: 4.95em;
+  font-size: 14px;
+  line-height: 1.65;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -341,8 +344,11 @@ p {
 dl {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  font-size: 12px;
+  gap: var(--space-3) var(--space-4);
+  margin: 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: 13px;
 }
 dl div {
   display: flex;
@@ -357,14 +363,33 @@ dd {
   font-weight: 600;
 }
 label {
-  display: block;
-  font-size: 12px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: auto;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--muted);
 }
 select {
+  flex: 1 1 0;
   width: 100%;
-  min-height: 44px;
-  margin-top: 4px;
+  min-width: 0;
+  min-height: 40px;
+  color: var(--text);
 }
+.mode-board .project-layout-card {
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.mode-cards .project-layout-card :deep(.project-follow) {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+}
+
 .is-drop-target {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
@@ -378,8 +403,15 @@ select {
   .mode-board .project-stage-column {
     flex-basis: min(290px, 85vw);
   }
+  .project-layout-card {
+    padding: var(--space-4);
+  }
   .mode-cards .project-cards {
-    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+  select,
+  .mode-cards .project-layout-card :deep(.project-follow) {
+    min-height: 44px;
   }
 }
 </style>

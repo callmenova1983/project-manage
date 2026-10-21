@@ -1,10 +1,5 @@
 import { validateTaskDependencies } from "./task-dependencies.js";
-import {
-  fieldAliases as aliases,
-  normalizeName,
-  mentionsProject,
-  textFragments,
-} from "./intake-text.js";
+import { fieldAliases as aliases, normalizeName } from "./intake-text.js";
 export { normalizeName } from "./intake-text.js";
 import { defaultCatalogs, type Catalogs } from "./admin.js";
 import { captureSourceSchema } from "./capture.js";
@@ -47,6 +42,7 @@ export const intakeFields = [
   "shortName",
   "aliases",
   "client",
+  "address",
   "owner",
   "stage",
   "task",
@@ -222,113 +218,50 @@ export function intakeCandidates(
   catalog: Catalogs = defaultCatalogs,
 ): IntakeCandidate[] {
   intakeSourceSchema.parse(source);
+  if (!source.rows)
+    throw new DomainError(
+      "自由文本请通过 AI 助手识别；手工导入仅接受已映射的表格。",
+    );
   const rows = sourceRows(source);
   const columns =
     mapping ?? (source.rows ? detectColumns(rows[0] ?? []) : undefined);
   const first = source.rows && header ? 1 : 0;
   const result: IntakeCandidate[] = [];
-  const fragments = source.rows
-    ? rows.flatMap((cells, index) =>
-        index < first || !cells.some((c) => c.trim())
-          ? []
-          : [
-              {
-                cells,
-                index,
-                part: 0,
-                contextRows: [],
-                warnings: [],
-                fields: null,
-                text: cells.join(" "),
-              },
-            ],
-      )
-    : textFragments(source.text, projects).map((fragment) => ({
-        ...fragment,
-        cells: [fragment.text],
-      }));
-  for (const {
-    cells,
-    index,
-    part,
-    contextRows,
-    warnings: fragmentWarnings,
-    fields: parsed,
-    text,
-  } of fragments) {
-    const fields: Partial<Record<IntakeField, string>> = { ...parsed };
-    if (columns)
-      columns.forEach((key, i) => {
-        if (key !== "ignore") fields[key] = cells[i]?.trim() ?? "";
-      });
-    const inferredProject = !columns && !fields.project;
-    const mentionText = fields.task ?? "";
-    if (!columns && !fields.project) {
-      const mentioned = projects.filter(
-        (p) => !p.intakeInbox && mentionsProject(mentionText, p),
-      );
-      if (mentioned.length === 1) fields.project = mentioned[0]!.name;
-    }
+  const fragments = rows.flatMap((cells, index) =>
+    index < first || !cells.some((c) => c.trim())
+      ? []
+      : [{ cells, index, part: 0 }],
+  );
+  for (const { cells, index, part } of fragments) {
+    const fields: Partial<Record<IntakeField, string>> = {};
+    columns?.forEach((key, i) => {
+      if (key !== "ignore") fields[key] = cells[i]?.trim() ?? "";
+    });
     const name = fields.project ?? "",
       client = fields.client ?? "";
     const matches = projects.filter(
       (p) =>
-        [p.name, ...p.aliases].some(
-          (n) => normalizeName(n) === normalizeName(name),
-        ) &&
+        [p.name, p.shortName ?? "", ...p.aliases]
+          .filter(Boolean)
+          .some((n) => normalizeName(n) === normalizeName(name)) &&
         (!client || normalizeName(p.client) === normalizeName(client)),
     );
     const exactMatch = matches.length === 1;
     const partialMatches =
       name && !matches.length
         ? projects.filter((p) =>
-            [p.name, ...p.aliases].some((n) =>
-              normalizeName(n).includes(normalizeName(name)),
-            ),
+            [p.name, p.shortName ?? "", ...p.aliases]
+              .filter(Boolean)
+              .some((n) => normalizeName(n).includes(normalizeName(name))),
           )
         : [];
-    const mentioned = !source.rows
-      ? projects.filter(
-          (p) =>
-            !p.intakeInbox &&
-            mentionsProject(mentionText, p) &&
-            !(
-              client &&
-              [p.name, ...p.aliases].some(
-                (n) => normalizeName(n) === normalizeName(name),
-              ) &&
-              normalizeName(p.client) !== normalizeName(client)
-            ),
-        )
-      : [];
-    const primary = matches.length
-      ? matches
-      : partialMatches.length
-        ? partialMatches
-        : mentioned;
-    const hints = [
-      ...new Map([...primary, ...mentioned].map((p) => [p.id, p])).values(),
-    ];
-    const evidence = hints.map((p) => {
-      const exact = [p.name, ...p.aliases].find(
-        (n) => normalizeName(n) === normalizeName(name),
-      );
-      return {
-        projectId: p.id,
-        kind: inferredProject
-          ? "mention"
-          : exact
-            ? normalizeName(exact) === normalizeName(p.name)
-              ? "name"
-              : "alias"
-            : partialMatches.includes(p)
-              ? "partial"
-              : "mention",
-        value: inferredProject
-          ? (mentionsProject(mentionText, p) ?? name)
-          : (exact ?? mentionsProject(mentionText, p) ?? name),
-      } as NonNullable<IntakeCandidate["matchEvidence"]>[number];
-    });
+    const hints = matches.length ? matches : partialMatches;
+    const evidence = hints.map((project) => ({
+      projectId: project.id,
+      kind: (matches.includes(project) ? "name" : "partial") as
+        "name" | "partial",
+      value: name,
+    }));
     const needsInbox =
       !name || hints.length > 1 || (!exactMatch && hints.length > 0);
     const inbox = projects.find((p) => p.intakeInbox === true);
@@ -349,19 +282,10 @@ export function intakeCandidates(
         )?.id,
       status = statusMap[normalizeName(fields.status ?? "")];
     const date = fields.dueDate?.trim() ?? "";
-    const warnings: string[] = [...fragmentWarnings];
+    const warnings: string[] = [];
     if (fields.task && fields.task.length > 240)
       warnings.push(
         "Task title was shortened. The full original text is retained in the source.",
-      );
-    if (
-      !fields.dueDate &&
-      /\b(?:tomorrow|next (?:week|monday|tuesday|wednesday|thursday|friday))\b|明天|后天|下周|本周[一二三四五六日天]|周[一二三四五六日天]/i.test(
-        text,
-      )
-    )
-      warnings.push(
-        "Relative dates stay unset. Choose a date after reviewing the source.",
       );
     if (fields.stage && !stage)
       warnings.push("Unrecognized stage. Choose a stage.");
@@ -392,13 +316,11 @@ export function intakeCandidates(
       warnings.push(
         "Unresolved project. Save in Intake inbox and assign it later.",
       );
-    if (!source.rows && !Object.keys(fields).includes("client"))
-      warnings.push("Rule-assisted draft. Review the project details.");
     result.push({
       id: `row-${index + 1}-${part}`,
       sourceRow: index + 1,
       sourcePart: part,
-      contextRows,
+      contextRows: [],
       matchEvidence: evidence,
       sourceText: sourceAt(source, index + 1),
       requestedChannel: fields.channel,
@@ -407,7 +329,7 @@ export function intakeCandidates(
         name: target?.name ?? (needsInbox ? "Intake inbox" : name),
         channelId:
           target?.channelId ??
-          (Object.hasOwn(fields, "channel")
+          (fields.channel
             ? (channelEntries(catalog).find(
                 (channel) =>
                   !channel.archived &&
@@ -428,7 +350,15 @@ export function intakeCandidates(
             ? "unclassified"
             : (stage ?? (fields.stage ? "" : "unclassified"))),
         discipline: target?.discipline ?? "Unassigned",
-        description: needsInbox ? "" : (fields.description ?? ""),
+        description: needsInbox
+          ? ""
+          : [
+              fields.description,
+              fields.address ? `地址：${fields.address}` : "",
+            ]
+              .filter(Boolean)
+              .join("\n"),
+        ...(target?.location ? { location: target.location } : {}),
         latestUpdate: "",
         notes: "",
         aliases:
@@ -507,17 +437,6 @@ export function planIntake(
   const entries: IntakeBatch["entries"] = [];
   const names = new Map<string, Project>();
   const seenRows = new Set<string>();
-  const derived = !input.source.rows
-    ? new Map(
-        intakeCandidates(
-          input.source,
-          snapshot.projects,
-          undefined,
-          true,
-          snapshot.catalogs ?? defaultCatalogs,
-        ).map((c) => [`${c.sourceRow}:${c.sourcePart ?? 0}`, c]),
-      )
-    : null;
   for (const row of input.rows) {
     sourceAt(input.source, row.sourceRow);
     for (const line of row.contextRows ?? []) sourceAt(input.source, line);
@@ -534,21 +453,9 @@ export function planIntake(
         throw new DomainError(
           "Target project changed. Review the intake again.",
         );
-      const original = derived?.get(rowKey);
-      if (
-        original &&
-        original.matches.length > 1 &&
-        !target.intakeInbox &&
-        !row.matchConfirmed
-      )
-        throw new DomainError(
-          "Confirm the target for this ambiguous source before creating items.",
-        );
       project = target;
-      if (!row.task)
-        throw new DomainError(
-          "An existing project needs a new task. No project fields will be overwritten.",
-        );
+      // Repeated project-only intake links the existing record. It must not
+      // create a duplicate project or invent a task to satisfy this endpoint.
     } else {
       // A missing client must not create a second project, regardless of row order.
       // Conflicting known clients for the same name require an explicit correction.
@@ -563,9 +470,11 @@ export function planIntake(
       } else {
         if (
           snapshot.projects.some((p) =>
-            [p.name, ...p.aliases].some(
-              (n) => normalizeName(n) === normalizeName(row.project.name),
-            ),
+            [p.name, p.shortName ?? "", ...p.aliases]
+              .filter(Boolean)
+              .some(
+                (n) => normalizeName(n) === normalizeName(row.project.name),
+              ),
           ) &&
           !row.duplicateConfirmed
         )
@@ -607,7 +516,7 @@ export function planIntake(
     entries.push({
       sourceRow: row.sourceRow,
       sourcePart: row.sourcePart,
-      contextRows: derived?.get(rowKey)?.contextRows ?? row.contextRows,
+      contextRows: row.contextRows,
       projectId: project.id,
       taskId: row.task ? tasks.at(-1)!.id : null,
     });
@@ -632,7 +541,7 @@ export function intakeProvenance(batch: IntakeBatch, entityId: string) {
         e.projectId === entityId),
   );
   return (
-    `Rule-assisted intake · ${batch.source.name || "Pasted text"}${batch.source.sheet ? ` · ${batch.source.sheet}` : ""}\n` +
+    `Reviewed intake · ${batch.source.name || "Pasted text"}${batch.source.sheet ? ` · ${batch.source.sheet}` : ""}\n` +
     rows
       .map((e) =>
         [...new Set([...(e.contextRows ?? []), e.sourceRow])]

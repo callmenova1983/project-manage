@@ -3,8 +3,6 @@ export const intakeZh: Record<string, string> = {
     "原文提及多个项目，请核对所选目标。",
   "The source has a partial name match. Review your selected target.":
     "原文仅有部分名称匹配，请核对所选目标。",
-  "Use project headings followed by bullet tasks, or project/client/owner/task labels. Aliases and multiple matches stay visible for review. Relative dates remain unset. This is rule assistance; no model is called.":
-    "可按项目标题分段列出事项，或使用项目/客户/负责人/任务标签。别名及多个候选会显示供审阅。相对日期保持未设置。这是规则辅助，不会调用模型。",
   "Suggested project matches": "候选项目与匹配依据",
   "Exact project name": "项目名称完全匹配",
   "Exact alias": "别名完全匹配",
@@ -90,7 +88,6 @@ export const intakeZh: Record<string, string> = {
   "Add source": "添加内容",
   "Review candidates": "审阅候选",
   Created: "已创建",
-  "Rule-assisted · no AI connection": "规则辅助 · 未连接 AI",
   "Files are read in your browser. Nothing is created until you confirm.":
     "文件在浏览器内读取，确认后才会创建项目与任务。",
   "Paste anything to get started": "粘贴内容，开始整理",
@@ -152,8 +149,6 @@ export const intakeZh: Record<string, string> = {
   "Map a project name column before continuing": "请先映射项目名称列",
   "No candidates found. Add text or choose another sheet.":
     "未找到候选内容，请添加文字或选择其他工作表。",
-  "Rule-assisted draft. Review the project details.":
-    "这是规则辅助草稿，请检查项目资料。",
   "Several projects match. Choose the target.": "匹配到多个项目，请选择目标。",
   "Date needs review. Use YYYY-MM-DD.":
     "日期需要确认，请使用 YYYY-MM-DD 格式。",

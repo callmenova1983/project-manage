@@ -12,7 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createDecipheriv, createHash, randomUUID } from "node:crypto";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { generateQwen, generateJson } from "../apps/api/src/ai/provider.js";
+import { generateJson } from "../apps/api/src/ai/provider.js";
 import {
   makeMapTranslationRequest,
   validateMapTranslation,
@@ -30,7 +30,11 @@ import {
   validateProjectLocationAnalysis,
 } from "../apps/api/src/ai/project-location.js";
 import type { QwenConfig } from "../apps/api/src/ai/config.js";
-import { modelSettingsInput, type ModelLog } from "../packages/domain/admin.js";
+import {
+  defaultCatalogs,
+  modelSettingsInput,
+  type ModelLog,
+} from "../packages/domain/admin.js";
 import { recordModelCallUsage } from "../apps/api/src/ai/usage.js";
 import { allowanceReason } from "../apps/api/src/ai/allowance.js";
 import { createSeed } from "../packages/domain/seed.js";
@@ -38,7 +42,38 @@ import { dailyReportEvaluation } from "../tests/fixtures/daily-report-evaluation
 import { dailyReportHoldout } from "../tests/fixtures/daily-report-holdout.js";
 import { dailyReportHoldoutV2 } from "../tests/fixtures/daily-report-holdout-v2.js";
 import { compareAssistantRuns } from "./assistant-comparison.js";
+import {
+  makeAssistantRequest,
+  validateAssistantPlan,
+  assistantWorkProposal,
+} from "../apps/api/src/ai/assistant-plan.js";
 import { instructionVersions } from "../apps/api/src/ai/instructions.js";
+
+// Benchmark the same semantic interpreter used by the application. No rule fallback.
+async function generateAssistantWork(
+  source: string,
+  projects: ReturnType<typeof createSeed>["projects"],
+  config: QwenConfig,
+  reserve: () => void,
+  fetcher: typeof fetch,
+  usage: (value: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+  }) => void,
+) {
+  const input = { source, externalProcessingConfirmed: true as const };
+  const plan = await generateJson(
+    makeAssistantRequest(input, projects, defaultCatalogs, undefined, config),
+    config,
+    reserve,
+    (value) => validateAssistantPlan(value, input, projects),
+    fetcher,
+    usage,
+  );
+  if (plan.kind !== "work")
+    throw new Error("Model did not return report work items");
+  return assistantWorkProposal(plan, input, config).suggestions;
+}
 
 // Operator-only local acceptance runner. Synthetic input; no business writes.
 // Default is read-only inspection. --run permits two metered model requests.
@@ -533,8 +568,8 @@ try {
             errorCode: null,
             attempts: 0,
             runtime,
-            purpose: "work-capture",
-            instructionVersion: instructionVersions["work-capture"],
+            purpose: "assistant-turn",
+            instructionVersion: instructionVersions["assistant-turn"],
           };
           const saveLog = () =>
             db
@@ -545,7 +580,7 @@ try {
           const start = performance.now();
           saveLog();
           try {
-            const output = await generateQwen(
+            const output = await generateAssistantWork(
               example.source,
               projects,
               { ...config, runtime },

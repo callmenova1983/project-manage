@@ -89,14 +89,8 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
       notes: "",
       externalProcessingConfirmed: true,
     });
-    expect(result.statusCode).toBe(200);
-    expect(result.json()).toMatchObject({
-      provider: "rules",
-      files: [
-        { id: ids[0], category: "site-photo" },
-        { id: ids[1], category: "other" },
-      ],
-    });
+    expect(result.statusCode).toBe(429);
+    expect(result.json().code).toBe("AI_BUDGET_EXHAUSTED");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
       ctx.repo.db.prepare("SELECT count(*) AS total FROM ai_attempts").get()!
@@ -283,9 +277,10 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
       externalProcessingConfirmed: true,
     });
     expect(analysis.statusCode).toBe(200);
-    const invalid = await request("POST", "/api/proposals", {
+    const invalid = await request("POST", "/api/assistant/interpret", {
       source: "",
       temporaryMaterialIds: [id],
+      externalProcessingConfirmed: true,
     });
     expect(invalid.statusCode).toBe(400);
     expect(
@@ -296,12 +291,39 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
         source: analysis.json().text,
         originalSource: { text: "会议记录", materialIds: [] },
         temporaryMaterialIds: [id],
+        externalProcessingConfirmed: true,
       };
-    const saved = await request("POST", "/api/proposals", input, key);
+    fetchMock.mockResolvedValue(
+      Response.json({
+        model: QWEN_MODEL,
+        choices: [
+          {
+            index: 0,
+            finish_reason: "stop",
+            message: {
+              role: "assistant",
+              content: JSON.stringify({
+                kind: "work",
+                items: [
+                  {
+                    quote: analysis.json().text,
+                    title: "本周确认设备清单",
+                    projectIds: [],
+                    action: "task",
+                    status: "todo",
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      }),
+    );
+    const saved = await request("POST", "/api/assistant/interpret", input, key);
     expect(saved.statusCode).toBe(200);
-    expect(saved.json().source).toContain("本周确认设备清单");
+    expect(saved.json().proposal.source).toContain("本周确认设备清单");
     expect(
-      (await request("POST", "/api/proposals", input, key)).json(),
+      (await request("POST", "/api/assistant/interpret", input, key)).json(),
     ).toEqual(saved.json());
     expect(
       (await request("GET", `/api/capture/materials/${id}`)).statusCode,
@@ -315,18 +337,46 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
       referenceOnly: true,
     });
     const id = upload.json().id;
+    fetchMock.mockResolvedValue(
+      Response.json({
+        model: QWEN_MODEL,
+        choices: [
+          {
+            index: 0,
+            finish_reason: "stop",
+            message: {
+              role: "assistant",
+              content: JSON.stringify({
+                kind: "work",
+                items: [
+                  {
+                    quote: "已保存记录",
+                    title: "已保存记录",
+                    projectIds: [],
+                    action: "update",
+                    status: "in_progress",
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      }),
+    );
     expect(
       (
-        await request("POST", "/api/proposals", {
+        await request("POST", "/api/assistant/interpret", {
           source: "已保存记录",
+          externalProcessingConfirmed: true,
           originalSource: { text: "记录", materialIds: [id] },
         })
       ).statusCode,
     ).toBe(200);
     expect(
       (
-        await request("POST", "/api/proposals", {
+        await request("POST", "/api/assistant/interpret", {
           source: "另一条记录",
+          externalProcessingConfirmed: true,
           temporaryMaterialIds: [id],
         })
       ).statusCode,
@@ -352,8 +402,9 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     csrf = login.json().csrf;
     expect(
       (
-        await request("POST", "/api/proposals", {
+        await request("POST", "/api/assistant/interpret", {
           source: "记录",
+          externalProcessingConfirmed: true,
           temporaryMaterialIds: [privateFile.json().id],
         })
       ).statusCode,
@@ -362,7 +413,7 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
       (await request("GET", `/api/capture/materials/${privateFile.json().id}`))
         .statusCode,
     ).toBe(200);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("reads a pasted screenshot before a project exists and sends image bytes with notes to the configured model", async () => {
     const before = ctx.repo.snapshot("capture");
@@ -430,8 +481,35 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(ctx.repo.snapshot("capture").projects).toEqual(before.projects);
     expect(ctx.repo.snapshot("capture").tasks).toEqual(before.tasks);
-    const saved = await request("POST", "/api/proposals", {
+    fetchMock.mockResolvedValue(
+      Response.json({
+        model: QWEN_MODEL,
+        choices: [
+          {
+            index: 0,
+            finish_reason: "stop",
+            message: {
+              role: "assistant",
+              content: JSON.stringify({
+                kind: "work",
+                items: [
+                  {
+                    quote: analysis.json().text,
+                    title: "保留来源记录",
+                    projectIds: [],
+                    action: "update",
+                    status: "in_progress",
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      }),
+    );
+    const saved = await request("POST", "/api/assistant/interpret", {
       source: analysis.json().text,
+      externalProcessingConfirmed: true,
       originalSource: {
         text: body.text,
         materialIds: [id],
@@ -439,7 +517,7 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
       },
     });
     expect(saved.statusCode).toBe(200);
-    expect(saved.json().originalSource.materialIds).toEqual([id]);
+    expect(saved.json().proposal.originalSource.materialIds).toEqual([id]);
     const picture = await request(
       "GET",
       `/api/capture/materials/${id}/images/0`,
@@ -706,8 +784,9 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     ).toBe(404);
     expect(
       (
-        await request("POST", "/api/proposals", {
+        await request("POST", "/api/assistant/interpret", {
           source: "保存事项",
+          externalProcessingConfirmed: true,
           originalSource: { text: "", materialIds: [upload.json().id] },
         })
       ).statusCode,

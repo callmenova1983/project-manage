@@ -39,13 +39,13 @@ function reply(projectId: string) {
         finish_reason: "stop",
         message: {
           content: JSON.stringify({
-            suggestions: [
+            kind: "work",
+            items: [
               {
                 sourceLine: 1,
                 quote: "acceptance completed",
                 title: "Acceptance completed",
                 projectIds: [projectId],
-                reason: "Atlas name",
                 action: "update",
                 status: "done",
               },
@@ -71,7 +71,7 @@ const request = (
 const propose = (key = randomUUID()) =>
   request(
     "POST",
-    "/api/proposals/qwen",
+    "/api/assistant/interpret",
     { source, externalProcessingConfirmed: true },
     key,
   );
@@ -113,7 +113,7 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
       (
         await ctx.app.inject({
           method: "POST",
-          url: "/api/proposals/qwen",
+          url: "/api/assistant/interpret",
           payload: { source },
           headers: { cookie },
         })
@@ -121,7 +121,7 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
     ).toBe(403);
     expect(
       (
-        await request("POST", "/api/proposals/qwen", {
+        await request("POST", "/api/assistant/interpret", {
           source,
           externalProcessingConfirmed: false,
         })
@@ -147,19 +147,19 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
     const key = randomUUID();
     const result = await propose(key);
     expect(result.statusCode).toBe(200);
-    const proposal = result.json<Proposal>();
+    const proposal = result.json().proposal as Proposal;
     expect(proposal.generator).toMatchObject({
       provider: "qwen",
       model: QWEN_MODEL,
     });
     expect(proposal.suggestions[0]).toMatchObject({
-      sourceText: source,
+      sourceText: "acceptance completed",
       confirmed: false,
       overwriteConfirmed: false,
-      selectedProjectId: "",
+      selectedProjectId: "project-1",
     });
     expect(ctx.repo.snapshot("test")).toEqual(before);
-    expect((await propose(key)).json().id).toBe(proposal.id);
+    expect((await propose(key)).json().proposal.id).toBe(proposal.id);
     expect(mock).toHaveBeenCalledTimes(1);
     const project = before.projects[0]!;
     const s = {
@@ -197,7 +197,9 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
       ctx.repo.snapshot("test").projects.find((p) => p.id === project.id)!
         .latestUpdate,
     ).toBe("Reviewed completion");
-    expect(ctx.repo.snapshot("test").activities[0]!.source).toContain(source);
+    expect(ctx.repo.snapshot("test").activities[0]!.source).toContain(
+      "acceptance completed",
+    );
     expect(
       (
         await request("POST", `/api/proposals/${proposal.id}/apply`, {
@@ -262,7 +264,7 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
       ctx.repo.db.prepare("SELECT count(*) AS n FROM proposals").get()!.n,
     ).toBe(0);
   });
-  it("default server remains rules-only even when a Qwen route is requested", async () => {
+  it("default server keeps AI disabled even when a Qwen route is requested", async () => {
     await ctx.app.close();
     ctx = await buildApp({
       databasePath: join(dir, "db.sqlite"),
@@ -276,7 +278,7 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
     expect(mock).not.toHaveBeenCalled();
     expect(
       (await request("POST", "/api/proposals", { source })).statusCode,
-    ).toBe(200);
+    ).toBe(410);
   });
 });
 

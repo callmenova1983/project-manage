@@ -76,7 +76,7 @@ export async function fixture(projectCount = 20, tasksPerProject = 0) {
       PORT: String(port),
       APP_ORIGIN: origin,
       DATABASE_PATH: path,
-      AI_PROVIDER: "rules",
+      AI_PROVIDER: "disabled",
       AI_CALLS_ENABLED: "false",
     },
     stdio: ["ignore", "pipe", "pipe"],

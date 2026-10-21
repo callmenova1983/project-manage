@@ -5,13 +5,14 @@ import { api } from "../services/api";
 import { useWorkspace } from "../stores/workspace";
 import type { ProgressMaterial } from "../../../../packages/domain/progress-material";
 import {
-  classifyReferenceName,
   referenceCategories,
   referenceLabels,
   type ReferenceArchiveInput,
+  type ReferenceClassification,
 } from "../../../../packages/domain/capture-reference";
 const props = defineProps<{
   files: ProgressMaterial[];
+  classification?: ReferenceClassification;
   notes: string;
   disabled?: boolean;
   defaultProjectId?: string;
@@ -47,27 +48,24 @@ const categorySummary = computed(() =>
   ].join(", "),
 );
 watch(
-  () => [props.files.map((f) => f.id).join(","), props.notes],
+  () => [props.files.map((f) => f.id).join(","), props.classification],
   () => {
     for (const file of props.files)
-      if (!edited.has(file.id)) {
-        const kind = classifyReferenceName(file.name);
+      if (!edited.has(file.id))
         categories.value[file.id] =
-          kind === "other" ? classifyReferenceName(props.notes) : kind;
-      }
+          props.classification?.files.find((f) => f.id === file.id)?.category ??
+          "other";
     if (!projectId.value) {
-      const text = props.files.map((f) => f.name).join(" ") + " " + props.notes;
-      const matches = projects.value.filter((p) =>
-        [p.name, p.shortName, ...p.aliases].some(
-          (name) => name && name.length >= 2 && text.includes(name),
+      const ids = [
+        ...new Set(
+          props.classification?.files
+            .filter((f) => props.files.some((file) => file.id === f.id))
+            .map((f) => f.projectId)
+            .filter(Boolean),
         ),
-      );
-      if (matches.length === 1) projectId.value = matches[0]!.id;
-      else if (
-        !matches.length &&
-        projects.value.some((p) => p.id === props.defaultProjectId)
-      )
-        projectId.value = props.defaultProjectId!;
+      ];
+      if (ids.length === 1 && projects.value.some((p) => p.id === ids[0]))
+        projectId.value = ids[0]!;
     }
   },
   { immediate: true },
@@ -84,27 +82,17 @@ async function archive() {
     target.id,
   ]);
   if (classified !== key) {
-    try {
-      const result = await api.classifyCaptureReferences(
+    const result =
+      props.classification ??
+      (await api.classifyCaptureReferences(
         props.files.map((f) => f.id),
-        // Mixed inputs can contain long meeting records; only a short hint
-        // is needed to classify the file. Extraction keeps the complete text.
-        t("{p0} 归档项目：{p1}", {
-          p0: props.notes.slice(0, 800),
-          p1: target.name.slice(0, 160),
-        }),
-      );
-      for (const file of result.files)
-        if (!edited.has(file.id)) categories.value[file.id] = file.category;
-      classificationNote =
-        result.provider === "rules"
-          ? t("模型未调用，按文件名和说明初步归类。")
-          : t("仅按文件名和说明分类，未读取正文。");
-    } catch {
-      classificationNote = t(
-        "智能分类暂不可用，按已显示的类别归档，未读取正文。",
-      );
-    }
+        props.notes.slice(0, 2000),
+      ));
+    if (result.provider !== "qwen")
+      throw Error(t("AI 分类未完成，请重试或手动确认附件。"));
+    for (const file of result.files)
+      if (!edited.has(file.id)) categories.value[file.id] = file.category;
+    classificationNote = t("仅按文件名和说明分类，未读取正文。");
     classified = key;
   }
   const saved = await api.archiveCaptureReferences({
