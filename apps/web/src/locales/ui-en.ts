@@ -1,6 +1,37 @@
 /** Explicit interface translations; user-entered content is never translated. */
 import { statisticsEnglish } from "./statistics-en";
 export const uiEnglish: Record<string, string> = {
+  企业微信免登: "WeCom sign-in",
+  "从企业微信工作台打开 PM，自动识别员工并使用现有账号和项目权限。":
+    "Open PM from the WeCom workplace to sign in with your existing account and project permissions.",
+  "演示模式不连接企业微信，请登录团队工作区后配置。":
+    "Demo mode does not connect to WeCom. Sign in to your team workspace to configure it.",
+  启用企微免登: "Enable WeCom sign-in",
+  "企业 CorpID": "Enterprise CorpID",
+  "应用 Secret": "Application Secret",
+  "填写工作台中 PM 应用的凭据；通讯录同步凭据和通知配置分别管理。更换企业或应用时需要重新填写 Secret。":
+    "Enter the credentials for the PM workplace application. Directory sync and notifications are configured separately. Enter a new Secret when changing the enterprise or application.",
+  首次访问自动开通普通成员:
+    "Automatically create a member account on first visit",
+  "默认仅允许已关联、已激活的系统账号登录。自动开通仅面向已同步的有效员工；发现同邮箱账号时仍需管理员确认绑定。":
+    "By default, only linked, activated accounts can sign in. Automatic provisioning is limited to synced active employees. An administrator must link any existing account with the same email.",
+  前往团队通讯录关联员工账号: "Link employee accounts in the team directory",
+  检查已保存的应用凭据: "Check saved application credentials",
+  工作台应用入口: "Workplace application entry",
+  授权回调地址: "Authorization callback URL",
+  网页授权可信域名: "Trusted domain for web authorization",
+  "地址由服务器 APP_ORIGIN 生成。请确认它是员工可访问的正式地址，在企微后台设置应用主页、网页授权可信域名、应用可见范围及服务器可信 IP。":
+    "These URLs use the server APP_ORIGIN. Confirm that employees can access this production address, then configure the application homepage, trusted web authorization domain, application visibility and trusted server IP in WeCom.",
+  "最近登录结果：": "Latest sign-in result:",
+  刷新配置与登录结果: "Refresh settings and sign-in results",
+  "已保存，留空保留原值": "Saved; leave blank to keep the current value",
+  "填写此应用的 Secret": "Enter the Secret for this application",
+  保存免登设置: "Save sign-in settings",
+  "请求失败，请重试。": "Request failed. Please try again.",
+  "请填写企业 CorpID 和数字格式的应用 AgentID。":
+    "Enter the enterprise CorpID and a numeric application AgentID.",
+  "企微免登设置已保存。请在企业微信后台配置下方入口和可信域名，再从企微验证登录。":
+    "WeCom sign-in settings saved. Configure the entry URL and trusted domain below in WeCom, then verify sign-in from WeCom.",
   "粘贴工作记录，AI 整理项目归属；日期和日志人可统一填写。":
     "Paste work notes for AI to organize by project. Set a shared work date and reporter if needed.",
   ...statisticsEnglish,
