@@ -68,13 +68,6 @@ async function move(project: Project, stage: string) {
     error.value = (reason as Error).message;
   }
 }
-async function selectStage(project: Project, event: Event) {
-  const control = event.target as HTMLSelectElement;
-  if (confirmDiscard()) await move({ ...project }, control.value);
-  control.value =
-    store.data.projects.find((item) => item.id === project.id)?.stage ??
-    project.stage;
-}
 function start(project: Project, event: DragEvent) {
   if (
     props.mode !== "board" ||
@@ -219,33 +212,6 @@ async function drop(stage: string, event: DragEvent) {
                 <dd>{{ projection.stats.get(project.id)?.blocked ?? 0 }}</dd>
               </div>
             </dl>
-            <label
-              >{{ t("Stage")
-              }}<select
-                :value="project.stage"
-                :disabled="store.busy"
-                :aria-label="t('Stage for {name}', { name: project.name })"
-                @change="selectStage(project, $event)"
-              >
-                <option
-                  v-if="!permitted(project.stage)"
-                  :value="project.stage"
-                  disabled
-                >
-                  {{ catalogLabel("stages", project.stage) }}
-                </option>
-                <option
-                  v-for="stage in activeStages"
-                  :key="stage.id"
-                  :value="stage.id"
-                >
-                  {{ catalogLabel("stages", stage.id) }}
-                </option>
-                <option value="unclassified">
-                  {{ catalogLabel("stages", "unclassified") }}
-                </option>
-              </select></label
-            >
           </article>
           <p v-if="!section.projects.length" class="empty-column">
             {{ t("No matching projects") }}
@@ -362,24 +328,6 @@ dd {
   margin: 0;
   font-weight: 600;
 }
-label {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: auto;
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border);
-  font-size: 13px;
-  color: var(--muted);
-}
-select {
-  flex: 1 1 0;
-  width: 100%;
-  min-width: 0;
-  min-height: 40px;
-  color: var(--text);
-}
 .mode-board .project-layout-card {
   padding: var(--space-4);
   margin-bottom: var(--space-3);
@@ -409,7 +357,6 @@ select {
   .mode-cards .project-cards {
     gap: var(--space-4);
   }
-  select,
   .mode-cards .project-layout-card :deep(.project-follow) {
     min-height: 44px;
   }

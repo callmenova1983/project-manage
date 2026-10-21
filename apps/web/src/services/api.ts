@@ -110,6 +110,21 @@ import type {
 export { ApiError } from "./contracts";
 export type { WorkspaceApi, ReviewedSuggestion } from "./contracts";
 export class HttpApi implements WorkspaceApi {
+  aiAccessState() {
+    return this.call<
+      import("../../../../packages/domain/ai-access").AiAccessState
+    >("/ai-access/token");
+  }
+  generateAiAccessToken() {
+    return this.call<
+      import("../../../../packages/domain/ai-access").AiAccessGrant
+    >("/ai-access/token", "POST", {});
+  }
+  revokeAiAccessToken() {
+    return this.call<
+      import("../../../../packages/domain/ai-access").AiAccessState
+    >("/ai-access/token", "DELETE", {});
+  }
   speechCapabilities() {
     return this.call<SpeechCapabilities>("/assistant/speech");
   }

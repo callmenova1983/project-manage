@@ -112,6 +112,49 @@ it("persists private conversation, unfinished draft and attachment references wi
     {},
   );
 });
+it("clears only the personal conversation, keeps business data and rejects old-tab resurrection", async () => {
+  const project = ctx.repo.snapshot("assistant").projects[0]!;
+  const proposal = storedProposal(
+    ctx.repo,
+    "assistant",
+    `${project.name}：现场核对`,
+    [{ title: "现场核对", selectedProjectId: project.id }],
+  );
+  const state = {
+    messages: [{ role: "user", text: "history to clear" }],
+    composer: "unfinished draft",
+    proposal,
+    attachments: { materials: [{ id: randomUUID(), name: "unsubmitted.txt" }] },
+  };
+  expect(
+    (await send("PUT", "/api/assistant/session", { version: 0, state }))
+      .statusCode,
+  ).toBe(200);
+  const before = ctx.repo.snapshot("assistant");
+  const cleared = await send("PUT", "/api/assistant/session", {
+    version: 1,
+    state: {},
+  });
+  expect(cleared.statusCode).toBe(200);
+  expect(cleared.json()).toMatchObject({ version: 2, state: {} });
+  expect((await send("GET", "/api/assistant/session")).json()).toMatchObject({
+    version: 2,
+    state: {},
+  });
+  expect(ctx.repo.snapshot("assistant")).toEqual(before);
+  expect(
+    ctx.repo.db
+      .prepare("SELECT data FROM proposals WHERE workspace_id=? AND id=?")
+      .get("assistant", proposal.id),
+  ).toBeDefined();
+  expect(
+    (await send("PUT", "/api/assistant/session", { version: 1, state }))
+      .statusCode,
+  ).toBe(409);
+  expect((await send("GET", "/api/assistant/session")).json().state).toEqual(
+    {},
+  );
+});
 it("rehydrates the authoritative proposal so a lost apply response cannot re-create tasks", async () => {
   const project = ctx.repo.snapshot("assistant").projects[0]!;
   const proposal = storedProposal(

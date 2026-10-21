@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import {
+  enterpriseBrowser,
+  enterpriseLoginUrl,
+  enterpriseLoginError,
+} from "./services/wecom-login";
 import AssistantDock from "./components/AssistantDock.vue";
 import {
   assistantPanel,
@@ -36,6 +41,46 @@ import TokenUsage from "./components/TokenUsage.vue";
 import { initialActivationToken } from "./services/activation";
 import { createClickThroughGuard } from "./services/click-through-guard";
 const activationToken = ref(initialActivationToken);
+const wecomError = ref(enterpriseLoginError());
+const wecomEntry = ref("");
+const wecomRedirecting = ref(false);
+function startWecomLogin() {
+  const url = enterpriseLoginUrl(
+    wecomEntry.value,
+    window.location.pathname + window.location.search + window.location.hash,
+  );
+  if (url) {
+    wecomRedirecting.value = true;
+    window.location.assign(url);
+  }
+}
+async function initializeLogin() {
+  await store.initialize();
+  if (
+    store.mode !== "server" ||
+    store.sessionState !== "signed_out" ||
+    !enterpriseBrowser(navigator.userAgent)
+  )
+    return;
+  try {
+    const response = await fetch("/api/auth/wecom/options", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    wecomEntry.value = typeof data.entryUrl === "string" ? data.entryUrl : "";
+    if (
+      store.sessionState === "signed_out" &&
+      wecomEntry.value &&
+      !wecomError.value &&
+      sessionStorage.getItem("pm-wecom-logout") !== "1"
+    )
+      startWecomLogin();
+  } catch {
+    /* Account and password login remains available. */
+  }
+}
 const store = useWorkspace(),
   router = useRouter();
 const sidebarPanel = ref<HTMLElement | null>(null);
@@ -49,8 +94,8 @@ const nav = [
   { path: "/projects", label: "Projects", icon: PhSquaresFour },
   { path: "/tasks", label: "Tasks", icon: PhCheckSquare },
   { path: "/directory", label: "Team", icon: PhUsers },
-  { path: "/activity", label: "Activity", icon: PhClockCounterClockwise },
-  { path: "/project-map", label: "Project map", icon: PhGlobeHemisphereEast },
+  { path: "/activity", label: "活动", icon: PhClockCounterClockwise },
+  { path: "/project-map", label: "地图", icon: PhGlobeHemisphereEast },
   { path: "/intake", label: t("AI 工作助手"), icon: PhSparkle },
 ];
 watch(
@@ -129,7 +174,7 @@ function shortcut(event: KeyboardEvent) {
   }
 }
 onMounted(() => {
-  if (!activationToken.value) void store.initialize();
+  if (!activationToken.value) void initializeLogin();
   window.addEventListener("keydown", shortcut);
   window.addEventListener("click", guardRepeatedActivation, true);
   window.addEventListener("online", resumeSync);
@@ -162,6 +207,7 @@ async function signOut() {
   if (window.confirm(t("Sign out? Save any open changes first."))) {
     expanded.value = false;
     await store.logout();
+    sessionStorage.setItem("pm-wecom-logout", "1");
   }
 }
 function search() {
@@ -236,6 +282,17 @@ function search() {
         {{ t("A shared space for work that moves forward.") }}
       </p>
       <h2>{{ t("Welcome back") }}</h2>
+      <p v-if="wecomError" class="error-box" role="alert">{{ wecomError }}</p>
+      <button
+        v-if="wecomEntry"
+        type="button"
+        :disabled="wecomRedirecting"
+        @click="startWecomLogin"
+      >
+        {{
+          wecomRedirecting ? "正在通过企业微信登录…" : "通过企业微信登录 / 重试"
+        }}
+      </button>
       <label
         >{{ t("Login name or email")
         }}<input

@@ -1,3 +1,4 @@
+import { registerWecomLogin, publicWecomLoginPaths } from "./wecom-login.js";
 import { registerSpeechRoutes } from "./ai/speech.js";
 import { registerWorkspaceTransfer } from "./workspace-transfer.js";
 import {
@@ -40,6 +41,8 @@ import {
 import { exportProgress, importProgress } from "./progress-export.js";
 import { registerProgressMaterials } from "./progress-materials.js";
 import { registerProjectFiles } from "./project-files.js";
+import { personalTokenActor, registerAiAccess } from "./ai-access.js";
+import type { ApiRoute } from "./ai-access-docs.js";
 import { WORKSPACE_IMPORT_LIMIT } from "../../../packages/domain/progress-material.js";
 import {
   attributedReportSuggestion,
@@ -260,6 +263,35 @@ export async function buildApp(options: {
         ),
       );
     }
+    if (req.headers.authorization !== undefined) {
+      // Use the matched route to prevent encoded paths bypassing browser-only boundaries.
+      const route = req.routeOptions.url ?? path;
+      if (
+        route.startsWith("/api/auth/") ||
+        route === "/api/ai-access/token" ||
+        route.startsWith("/api/admin/wecom-login")
+      )
+        throw new HttpError(
+          403,
+          "Use the signed-in browser for authentication and token management",
+        );
+      const a = personalTokenActor(repo, req.headers.authorization);
+      if (
+        mutation &&
+        req.headers.origin &&
+        !allowedOrigins.some((origin) =>
+          allowedMutationOrigin(
+            req.headers,
+            req.raw.socket.remoteAddress,
+            origin,
+            options.codespacesOriginRewrite,
+          ),
+        )
+      )
+        throw new HttpError(403, "Origin not allowed");
+      identity.set(req, { actor: a, csrf: "" });
+      return;
+    }
     if (
       mutation &&
       !allowedOrigins.some((origin) =>
@@ -273,6 +305,7 @@ export async function buildApp(options: {
     )
       throw new HttpError(403, "Origin not allowed");
     if (
+      (req.method === "GET" && publicWecomLoginPaths.has(path)) ||
       path === "/api/health" ||
       path === "/api/auth/login" ||
       path === "/api/auth/activate"
@@ -323,6 +356,22 @@ export async function buildApp(options: {
     repo.close();
   });
   const actor = (r: FastifyRequest) => identity.get(r)!.actor;
+  const apiRoutes: ApiRoute[] = [];
+  app.addHook("onRoute", (route) => {
+    if (
+      !route.url.startsWith("/api/") ||
+      route.url.startsWith("/api/auth/") ||
+      route.url === "/api/ai-access/token"
+    )
+      return;
+    for (const method of [route.method].flat()) {
+      if (method === "HEAD" || method === "OPTIONS") continue;
+      if (!apiRoutes.some((r) => r.method === method && r.path === route.url))
+        apiRoutes.push({ method, path: route.url });
+    }
+  });
+  registerWecomLogin(app, repo, actor, { ...options, origin: allowedOrigin });
+  registerAiAccess(app, repo, actor, apiRoutes);
   registerAiRoutes(app, repo, actor, options.qwen, options.aiFetch, (a) => {
     const config = workspaceQwen(
       repo,

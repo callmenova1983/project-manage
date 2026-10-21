@@ -1,6 +1,22 @@
 # API contract
 
-All routes use `/api`. JSON responses. `/health` and `/auth/login` are public; every other route requires the HttpOnly session cookie. POST/PUT additionally require `x-csrf-token` from login/session. Domain mutations require UUID `idempotency-key`. Same key + same payload replays the original response for seven days; a different payload returns 409. Workspace identity is always taken from the authenticated user, never client input.
+All routes use `/api`. JSON responses. `/health`, `/auth/login` and `/auth/activate` are public. Browser requests use the HttpOnly session cookie; mutations additionally require an allowed Origin and `x-csrf-token` from login/session. Business APIs also accept `Authorization: Bearer <personal token>` without cookies or CSRF. If a Bearer mutation includes Origin, it must be an allowed origin. Invalid Bearer credentials never fall back to a browser cookie. Domain mutations require UUID `idempotency-key`. Same key + same payload replays the original response for seven days; a different payload returns 409. Workspace identity is always taken from the authenticated user, never client input.
+
+## Personal AI access
+
+Open the global **AI assistant** and choose **AI 接入** beside its sidebar heading. It generates a personal credential and copies the current system origin, Bearer header, API-reference URL and initialization URL. It does not select or bind a project. Paste the instructions into WorkBuddy, Codex or another HTTP-capable assistant. The client must be able to reach the copied system address.
+
+Each member has one active personal token, valid until revoked or regenerated. Generating a replacement invalidates the old token immediately. Only its SHA-256 hash, masked prefix and timestamps are stored; plaintext is returned once and kept only in the open dialog, never in browser storage or the mutation response ledger. Closing the dialog clears the plaintext; reopening offers regeneration. Copy failure leaves the full instructions selectable for manual copying.
+
+| Method | Route | Authentication / response |
+|---|---|---|
+| GET | `/ai-access/token` | Browser session only → `{token:{prefix,createdAt,lastUsedAt}\|null}` |
+| POST | `/ai-access/token` | Browser session + CSRF + allowed Origin, body `{}` → `{token,info}`; generates or replaces personal token, max 10/min/IP |
+| DELETE | `/ai-access/token` | Browser session + CSRF + allowed Origin → `{token:null}`; immediate, repeatable revocation |
+| GET | `/ai-access/context` | Bearer or session → `{actor,access,revision,settings,catalogs,projectCount,projects,taskOverview,links}` |
+| GET | `/ai-access/docs` | Bearer or session → machine-readable HTTP reference, live route catalog and core payload JSON Schemas generated from handler validators |
+
+Context includes **all** projects in the member's current workspace, each with task counts, plus overall counts. Counts follow the existing active-leaf-task convention, excluding parent and voided tasks; `recordCount` separately counts all task records. Full records are available through `/workspace`, `/projects` and `/tasks`. No projects are silently truncated or preselected. Existing APIs keep their member/admin checks, version checks, idempotency, activity history and workspace isolation. User role, workspace, active status and activation requirement are resolved on every Bearer request. Login/session/logout and token management remain browser-only. The copied instructions only initialize the connection; no AI execution workflow is imposed.
 
 | Method | Route | Purpose |
 |---|---|---|

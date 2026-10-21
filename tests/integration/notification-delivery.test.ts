@@ -110,11 +110,7 @@ async function enable() {
       "INSERT INTO notification_directory_scope(workspace_id,corp_id,directory_version,synced_at) VALUES('w','corp-test',1,?) ON CONFLICT(workspace_id) DO UPDATE SET synced_at=excluded.synced_at",
     )
     .run(synced);
-  result = await request(admin, "POST", "/api/admin/notifications/bindings", {
-    employeeIds: ["employee"],
-    configVersion: 1,
-  });
-  expect(result.statusCode).toBe(200);
+  result = await request(admin, "GET", "/api/admin/notifications");
   expect(result.json().bindings[0].confirmed).toBe(true);
   result = await request(worker, "PUT", "/api/notifications/preferences", {
     version: 1,
@@ -415,11 +411,13 @@ it("creates one new personal occurrence for snooze after an accepted and read re
     fetcher.mock.calls.filter(([url]) => String(url).includes("message/send")),
   ).toHaveLength(2);
 });
-it("resumes current blocked deliveries after administrator verifies the recipient", async () => {
+it("resumes current blocked deliveries when the directory account is bound", async () => {
   await enable();
+  const directory = ctx.repo.directory("w");
+  directory.employees[0]!.userId = null;
   ctx.repo.db
-    .prepare("DELETE FROM notification_bindings WHERE workspace_id='w'")
-    .run();
+    .prepare("UPDATE workspace_directory SET data=? WHERE workspace_id='w'")
+    .run(JSON.stringify(directory));
   task();
   clock = new Date(clock.getTime() + 120000);
   await ctx.notifications.tick();
@@ -428,16 +426,52 @@ it("resumes current blocked deliveries after administrator verifies the recipien
     (await request(admin, "GET", "/api/admin/notifications")).json()
       .deliveries[0].state,
   ).toBe("blocked");
-  expect(
-    (
-      await request(admin, "POST", "/api/admin/notifications/bindings", {
-        employeeIds: ["employee"],
-        configVersion: 1,
-      })
-    ).statusCode,
-  ).toBe(200);
+  directory.employees[0]!.userId = worker.id;
+  ctx.repo.db
+    .prepare("UPDATE workspace_directory SET data=? WHERE workspace_id='w'")
+    .run(JSON.stringify(directory));
   await ctx.notifications.tick();
   expect(
     fetcher.mock.calls.filter(([url]) => String(url).includes("message/send")),
   ).toHaveLength(1);
 });
+it("keeps directory account bindings associated when notifications are disabled", async () => {
+  await enable();
+  const response = await request(
+    admin,
+    "PUT",
+    "/api/admin/notifications/config",
+    {
+      version: 1,
+      enabled: false,
+      corpId: "corp-test",
+      agentId: 1000001,
+      baseUrl: "https://pm.example.test",
+      secret: "",
+    },
+  );
+  expect(response.statusCode).toBe(200);
+  expect(response.json().bindings[0]).toMatchObject({
+    confirmed: true,
+    active: false,
+  });
+});
+it.each(["@all", "person|other", "person other"])(
+  "rejects invalid directory recipients %s without confirmation",
+  async (target) => {
+    await enable();
+    const directory = ctx.repo.directory("w");
+    directory.employees[0]!.wecomUserId = target;
+    ctx.repo.db
+      .prepare("UPDATE workspace_directory SET data=? WHERE workspace_id='w'")
+      .run(JSON.stringify(directory));
+    task();
+    clock = new Date(clock.getTime() + 120000);
+    await ctx.notifications.tick();
+    expect(fetcher).not.toHaveBeenCalled();
+    const state = (
+      await request(admin, "GET", "/api/admin/notifications")
+    ).json();
+    expect(state.bindings[0]).toMatchObject({ confirmed: true, active: false });
+  },
+);

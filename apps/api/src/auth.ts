@@ -64,6 +64,22 @@ export function sessionActor(
     )
     .get(hashToken(token), Date.now());
   if (!row) throw new HttpError(401, "Your session expired. Sign in again.");
+  const enterprise = repo.db
+    .prepare("SELECT * FROM wecom_login_sessions WHERE token_hash=?")
+    .get(hashToken(token));
+  if (
+    enterprise &&
+    !repo
+      .directory(String(enterprise.workspace_id))
+      .employees.some(
+        (e) =>
+          e.active &&
+          e.userId === row.id &&
+          e.wecomCorpId === enterprise.corp_id &&
+          e.wecomUserId === enterprise.wecom_user_id,
+      )
+  )
+    throw new HttpError(401, "Enterprise membership is no longer active");
   return {
     actor: {
       id: String(row.id),

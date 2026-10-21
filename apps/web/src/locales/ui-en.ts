@@ -530,6 +530,14 @@ export const uiEnglish: Record<string, string> = {
   尚未配置密钥: "No secret configured",
   保存配置: "Save configuration",
   成员接收关联: "Member delivery links",
+  "通讯录成员绑定登录账号后自动关联，无需再次确认。":
+    "Directory members are linked automatically when bound to a login account. No additional confirmation is needed.",
+  "使用独立的通知应用凭据，通讯录同步 Secret 不等于通知应用 Secret。开启后向已绑定登录账号的有效成员发送，无需再次确认。":
+    "Use separate notification app credentials. Enabled notifications are delivered to eligible members bound to login accounts, without additional confirmation.",
+  "请先保存应用配置，再查看接收状态或重试投递。":
+    "Save the application settings before reviewing delivery eligibility or retrying.",
+  关联状态: "Link status",
+  未就绪: "Not ready",
   "登录账号、通讯录成员和企业微信 UserID 确认对应后才投递。":
     "Delivery starts only after the login account, directory member and WeCom UserID are confirmed to match.",
   确认选中: "Confirm selected",
@@ -920,4 +928,37 @@ export const uiEnglish: Record<string, string> = {
   现场照片: "Site photos",
   任务执行凭证: "Task evidence",
   "其他资料 / 待确认": "Other materials / needs confirmation",
+  "AI 接入": "AI access",
+  清空聊天记录: "Clear chat history",
+  "清空当前聊天记录和未提交内容？已保存的项目、任务、资料和活动记录会保留。":
+    "Clear this chat history and unsubmitted content? Saved projects, tasks, files and activity records will be kept.",
+  "正在清空聊天记录…": "Clearing chat history…",
+  聊天记录已清空: "Chat history cleared",
+  "另一端更新了对话。请先恢复云端对话，再清空聊天记录。":
+    "The conversation changed on another device. Restore the synced conversation before clearing it.",
+  "未能清空聊天记录，原对话仍保留，请重试。":
+    "Could not clear chat history. Your conversation is kept; please try again.",
+  活动: "Activity",
+  地图: "Map",
+  "复制接入说明给 WorkBuddy 或 Codex，即可连接 PM，读取你的身份、所有可访问项目和任务概况。":
+    "Paste the connection instructions into WorkBuddy or Codex to connect to PM and read your identity, accessible projects and task overview.",
+  沿用你的成员权限: "Uses your current member permissions",
+  个人接入凭据: "Personal access token",
+  已启用: "Active",
+  最近访问: "Last used",
+  暂无访问: "Not used yet",
+  "持续有效，直到撤销或重新生成。": "Valid until revoked or regenerated.",
+  "为保护凭据，旧 Token 无法再次显示。重新生成后，旧 Token 立即失效。":
+    "The existing token cannot be displayed again. Regenerating it immediately invalidates the old token.",
+  复制接入说明: "Copy connection instructions",
+  重新生成并复制接入指令: "Regenerate and copy instructions",
+  生成并复制接入指令: "Generate and copy instructions",
+  接入说明: "Connection instructions",
+  查看接口文档: "View API reference",
+  撤销接入: "Revoke access",
+  "接入凭据已撤销。": "Access token revoked.",
+  "接入说明已复制，粘贴给 WorkBuddy 或 Codex 即可。":
+    "Instructions copied. Paste them into WorkBuddy or Codex.",
+  "浏览器无法自动复制，请复制下方已选中的完整说明。":
+    "Automatic copying is unavailable. Copy the selected instructions below.",
 };

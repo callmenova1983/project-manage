@@ -15,7 +15,7 @@ export function workspaceCredentialKey(
     if (
       repo.db
         .prepare(
-          "SELECT 1 FROM workspace_ai_credentials UNION ALL SELECT 1 FROM workspace_wecom_credentials UNION ALL SELECT 1 FROM notification_wecom_config LIMIT 1",
+          "SELECT 1 FROM workspace_ai_credentials UNION ALL SELECT 1 FROM workspace_wecom_credentials UNION ALL SELECT 1 FROM notification_wecom_config UNION ALL SELECT 1 FROM wecom_login_config LIMIT 1",
         )
         .get()
     )

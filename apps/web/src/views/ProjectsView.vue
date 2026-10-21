@@ -807,15 +807,17 @@ function edit(id: string) {
               <ProjectFollow :id="project.id" :name="project.name" />
               <div class="project-name">
                 <ProjectQuickActions :project="project" showName />
-                <ClientLabel :client="project.client" />
-                <small class="muted" style="display: block; font-size: 10px"
-                  >{{ t("渠道：")
-                  }}{{
-                    channelEntries(catalogs).find(
-                      (c) => c.id === projectChannel(project),
-                    )?.shortName ?? projectChannel(project)
-                  }}</small
-                >
+                <div class="project-metadata">
+                  <ClientLabel :client="project.client" />
+                  <span class="project-channel">
+                    {{ t("渠道：")
+                    }}{{
+                      channelEntries(catalogs).find(
+                        (c) => c.id === projectChannel(project),
+                      )?.shortName ?? projectChannel(project)
+                    }}
+                  </span>
+                </div>
               </div>
             </div>
             <StatusBadge :stage="project.stage" />
@@ -1083,16 +1085,155 @@ function edit(id: string) {
 .project-row {
   height: auto;
 }
+.project-table {
+  overflow-x: auto;
+}
+.project-row .project-cell {
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+.project-row .project-drag-grip,
+.project-row .expand-button,
+.project-row :deep(.project-follow) {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+.project-row .project-drag-grip {
+  width: 18px;
+  min-width: 18px;
+}
+.project-row .expand-button {
+  margin-left: 0;
+}
+.project-row .project-name {
+  flex: 1;
+  gap: var(--space-2);
+}
+.project-row .project-name :deep(.project-quick-actions) {
+  position: relative;
+  min-height: 24px;
+  gap: var(--space-1);
+  align-items: center;
+}
+.project-row .project-name :deep(.quick-project-name) {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 16px;
+  line-height: 24px;
+}
+.project-row .project-name :deep(.quick-action) {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 0;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  background: var(--surface-hover);
+}
+.project-row .project-name :deep(.quick-action:first-of-type) {
+  inset-inline-end: 28px;
+}
+.project-metadata {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 16px;
+  overflow: hidden;
+}
+.project-metadata :deep(.client-label) {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+}
+.project-channel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .project-record :deep(.quick-action) {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .project-record:hover :deep(.quick-action),
+  .project-record:focus-within :deep(.quick-action) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .project-record:hover :deep(.quick-project-name),
+  .project-record:focus-within :deep(.quick-project-name) {
+    padding-inline-end: 60px;
+  }
+}
+@media (hover: none), (pointer: coarse) {
+  .project-row .project-name :deep(.quick-project-name) {
+    padding-inline-end: 60px;
+  }
+}
 @media (min-width: 761px) {
   .project-table-head,
   .project-row {
+    min-width: 1280px;
     grid-template-columns:
-      minmax(210px, 1.15fr) 104px 64px minmax(230px, 1.55fr)
-      minmax(210px, 1.25fr) 158px 24px;
-    gap: 12px;
+      minmax(320px, 1.35fr) 110px 56px minmax(280px, 1.6fr)
+      minmax(210px, 1.25fr) 144px 24px;
+    gap: var(--space-4);
+    padding-inline: var(--space-4);
+  }
+  .project-row {
+    min-height: 60px;
+    padding-block: var(--space-2);
+    align-items: start;
+  }
+  .project-row .project-name {
+    gap: var(--space-1);
+  }
+  .project-row :deep(.project-owner-cell.compact .owner-value),
+  .project-row > .icon-button {
+    width: 24px;
+    height: 24px;
+    min-height: 24px;
+    padding: 0;
   }
 }
 @media (max-width: 760px) {
+  .project-row .project-name :deep(.project-quick-actions) {
+    flex-wrap: wrap;
+  }
+  .project-row .project-name :deep(.quick-project-name) {
+    flex-basis: 100%;
+    padding-inline-end: 0;
+  }
+  .project-row .project-name :deep(.quick-action) {
+    position: static;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    background: transparent;
+  }
+  .project-row .expand-button,
+  .project-row :deep(.project-follow) {
+    min-width: 44px;
+    min-height: 44px;
+  }
   .project-row > .project-scope-summary,
   .project-row > .icon-button {
     grid-row: 5;

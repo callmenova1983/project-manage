@@ -556,7 +556,7 @@ export class NotificationService {
       !!scope &&
       scope.corp_id === config.corpId &&
       (this.options.directoryCorpId?.(ws) ?? config.corpId) === config.corpId;
-    const binding = this.repo.db
+    let binding = this.repo.db
       .prepare(
         "SELECT * FROM notification_bindings WHERE workspace_id=? AND user_id=?",
       )
@@ -578,12 +578,38 @@ export class NotificationService {
     )
       reason = "当前通讯录同步未确认该成员，请核验应用可见范围或重新同步。";
     else if (
-      !binding ||
-      binding.corp_id !== config.corpId ||
-      binding.wecom_user_id !== employee.wecomUserId ||
-      binding.fingerprint !== fingerprint
+      employee.wecomUserId.toLowerCase() === "@all" ||
+      /[|\s]/.test(employee.wecomUserId)
     )
-      reason = "请管理员确认本地账号与企业微信成员的通知绑定。";
+      reason = "企业微信成员标识无效。";
+    if (
+      !reason &&
+      employee &&
+      config &&
+      (!binding ||
+        binding.corp_id !== config.corpId ||
+        binding.wecom_user_id !== employee.wecomUserId ||
+        binding.fingerprint !== fingerprint)
+    ) {
+      this.repo.db
+        .prepare(
+          "INSERT INTO notification_bindings(workspace_id,user_id,employee_id,corp_id,wecom_user_id,fingerprint,version,confirmed_at) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(workspace_id,user_id) DO UPDATE SET employee_id=excluded.employee_id,corp_id=excluded.corp_id,wecom_user_id=excluded.wecom_user_id,fingerprint=excluded.fingerprint,version=notification_bindings.version+1,confirmed_at=excluded.confirmed_at",
+        )
+        .run(
+          ws,
+          userId,
+          employee.id,
+          config.corpId,
+          employee.wecomUserId,
+          fingerprint,
+          iso(this.now()),
+        );
+      binding = this.repo.db
+        .prepare(
+          "SELECT * FROM notification_bindings WHERE workspace_id=? AND user_id=?",
+        )
+        .get(ws, userId);
+    }
     return {
       config,
       version: stored?.version ?? 0,
@@ -804,27 +830,19 @@ export class NotificationService {
         directoryCorpId === config?.corpId,
       bindings: directory.employees.map((employee) => {
         const binding = this.binding(a.workspaceId, employee.userId ?? "");
-        const active =
-          employee.active &&
+        const associated =
+          !!employee.userId &&
+          !!employee.wecomUserId &&
           !!this.repo.db
-            .prepare(
-              "SELECT 1 FROM users WHERE workspace_id=? AND id=? AND status='active' AND requires_activation=0",
-            )
-            .get(a.workspaceId, employee.userId!) &&
-          employee.wecomCorpId === config?.corpId &&
-          employee.wecomSeenAt ===
-            this.repo.db
-              .prepare(
-                "SELECT synced_at FROM notification_directory_scope WHERE workspace_id=?",
-              )
-              .get(a.workspaceId)?.synced_at;
+            .prepare("SELECT 1 FROM users WHERE workspace_id=? AND id=?")
+            .get(a.workspaceId, employee.userId);
         return {
           employeeId: employee.id,
           userId: employee.userId ?? "",
           name: employee.name,
           wecomUserId: employee.wecomUserId,
-          active,
-          confirmed: binding.valid,
+          active: binding.valid,
+          confirmed: associated,
           reason: employee.userId
             ? binding.reason
             : "请先在团队通讯录中关联登录账号。",
@@ -912,7 +930,8 @@ export class NotificationService {
         !employee?.userId ||
         !employee.active ||
         !employee.wecomUserId ||
-        (employee.wecomUserId.toLowerCase()==="@all" || /[|\s]/.test(employee.wecomUserId)) ||
+        employee.wecomUserId.toLowerCase() === "@all" ||
+        /[|\s]/.test(employee.wecomUserId) ||
         employee.wecomCorpId !== current.config.corpId ||
         employee.wecomSeenAt !== scope.synced_at ||
         !this.repo.db
@@ -1102,6 +1121,34 @@ export class NotificationService {
   private async drain() {
     const now = this.now(),
       stamp = iso(now);
+    // Directory account bindings are authoritative; recover blocked deliveries
+    // after a member is linked without requiring another confirmation step.
+    const blocked = this.repo.db
+      .prepare(
+        "SELECT * FROM notification_outbox WHERE state='blocked' ORDER BY updated_at LIMIT 200",
+      )
+      .all();
+    for (const row of blocked) {
+      const check = this.validDelivery(row);
+      if (!check.valid && check.blocked) continue;
+      const recent =
+        Date.parse(String(row.created_at)) >= now.getTime() - 86400000;
+      this.repo.db
+        .prepare(
+          "UPDATE notification_outbox SET state=?,next_at=?,updated_at=?,error=? WHERE id=? AND state='blocked'",
+        )
+        .run(
+          (check.valid || check.until) && recent ? "pending" : "cancelled",
+          check.until ?? stamp,
+          stamp,
+          check.valid
+            ? recent
+              ? ""
+              : "过旧提醒保留在站内，请查看当前待办"
+            : check.reason,
+          String(row.id),
+        );
+    }
     const rows = this.repo.db
       .prepare(
         "SELECT * FROM notification_outbox WHERE state='pending' AND next_at<=? ORDER BY created_at LIMIT 200",

@@ -40,8 +40,7 @@ const dirty = computed(
     JSON.stringify(draft.value) !== baseline.value,
 );
 watch(dirty, (value) => emit("dirty", value), { immediate: true });
-const selected = ref<string[]>([]),
-  memberQuery = ref("");
+const memberQuery = ref("");
 const unknownRetryId = ref("");
 const bindings = computed(() =>
   (state.value?.bindings ?? []).filter((member) =>
@@ -50,29 +49,6 @@ const bindings = computed(() =>
       .includes(memberQuery.value.trim().toLowerCase()),
   ),
 );
-function canConfirm(member: NotificationAdminState["bindings"][number]) {
-  return (
-    !demo &&
-    !dirty.value &&
-    !!state.value?.directoryVerified &&
-    member.active &&
-    !!member.userId &&
-    !!member.wecomUserId &&
-    !member.confirmed
-  );
-}
-const selectable = computed(() => bindings.value.filter(canConfirm));
-const allSelected = computed(
-  () =>
-    selectable.value.length > 0 &&
-    selectable.value.every((m) => selected.value.includes(m.employeeId)),
-);
-function toggleAll() {
-  const ids = new Set(selectable.value.map((m) => m.employeeId));
-  selected.value = allSelected.value
-    ? selected.value.filter((id) => !ids.has(id))
-    : [...new Set([...selected.value, ...ids])];
-}
 function accept(value: NotificationAdminState) {
   state.value = value;
   draft.value = {
@@ -84,7 +60,6 @@ function accept(value: NotificationAdminState) {
     secret: "",
   };
   baseline.value = JSON.stringify(draft.value);
-  selected.value = [];
 }
 async function load() {
   if (demo || loading.value || busy.value || dirty.value) return;
@@ -136,13 +111,6 @@ async function save() {
     accept(value);
     return value;
   }, t("企业微信通知设置已保存"));
-}
-async function confirmBindings() {
-  if (!state.value || !selected.value.length || dirty.value) return;
-  await perform(
-    () => service.confirmBindings(selected.value, state.value!.config.version),
-    t("成员接收关联已确认"),
-  );
 }
 async function retry(id: string, confirmUnknown = false) {
   if (dirty.value) return;
@@ -232,7 +200,7 @@ onBeforeUnmount(() => {
         <p class="muted">
           {{
             t(
-              "使用独立的通知应用凭据，通讯录同步 Secret 不等于通知应用 Secret。开启后仅向已确认关联的成员发送。",
+              "使用独立的通知应用凭据，通讯录同步 Secret 不等于通知应用 Secret。开启后向已绑定登录账号的有效成员发送，无需再次确认。",
             )
           }}
         </p>
@@ -313,25 +281,9 @@ onBeforeUnmount(() => {
           <div>
             <h3>{{ t("成员接收关联") }}</h3>
             <p class="muted">
-              {{
-                t("登录账号、通讯录成员和企业微信 UserID 确认对应后才投递。")
-              }}
+              {{ t("通讯录成员绑定登录账号后自动关联，无需再次确认。") }}
             </p>
           </div>
-          <button
-            class="button"
-            :disabled="
-              demo ||
-              busy ||
-              dirty ||
-              !state?.directoryVerified ||
-              !selected.length
-            "
-            @click="confirmBindings"
-          >
-            {{ t("确认选中") }} {{ formatNumber(selected.length) }}
-            {{ t("人") }}
-          </button>
         </div>
         <p v-if="!state?.directoryVerified" class="notice warning" role="note">
           <PhWarningCircle :size="17" />{{
@@ -341,7 +293,7 @@ onBeforeUnmount(() => {
           }}<RouterLink to="/team">{{ t("前往团队") }}</RouterLink>
         </p>
         <p v-if="dirty" class="muted">
-          {{ t("请先保存应用配置，再确认成员关联或重试投递。") }}
+          {{ t("请先保存应用配置，再查看接收状态或重试投递。") }}
         </p>
         <input
           v-model="memberQuery"
@@ -354,34 +306,16 @@ onBeforeUnmount(() => {
           <table class="notification-table">
             <thead>
               <tr>
-                <th class="check-column">
-                  <input
-                    type="checkbox"
-                    :checked="allSelected"
-                    :disabled="busy || !selectable.length"
-                    :aria-label="t('选择当前可确认成员')"
-                    @change="toggleAll"
-                  />
-                </th>
                 <th>{{ t("成员") }}</th>
                 <th>{{ t("企业微信 UserID") }}</th>
                 <th>{{ t("账号") }}</th>
                 <th>{{ t("接收状态") }}</th>
-                <th>{{ t("关联确认") }}</th>
+                <th>{{ t("关联状态") }}</th>
                 <th>{{ t("说明") }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="member in bindings" :key="member.employeeId">
-                <td class="check-column">
-                  <input
-                    v-model="selected"
-                    type="checkbox"
-                    :value="member.employeeId"
-                    :disabled="busy || !canConfirm(member)"
-                    :aria-label="t('确认 {p0} 的接收关联', { p0: member.name })"
-                  />
-                </td>
                 <th scope="row">{{ member.name }}</th>
                 <td>{{ member.wecomUserId || t("未关联") }}</td>
                 <td>
@@ -404,13 +338,13 @@ onBeforeUnmount(() => {
                       'status',
                       member.confirmed ? 'success' : 'neutral',
                     ]"
-                    >{{ member.confirmed ? t("已确认") : t("待确认") }}</span
+                    >{{ member.confirmed ? t("已关联") : t("未就绪") }}</span
                   >
                 </td>
                 <td class="reason-cell">{{ member.reason || "—" }}</td>
               </tr>
               <tr v-if="!bindings.length">
-                <td colspan="7" class="empty-row">
+                <td colspan="6" class="empty-row">
                   {{
                     demo
                       ? t("演示模式不读取真实成员关联。")

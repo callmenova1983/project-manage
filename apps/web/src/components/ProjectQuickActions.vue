@@ -254,7 +254,7 @@ async function save() {
       v-if="showName"
       :href="router.resolve(`/projects/${project.id}`).href"
       class="quick-project-name"
-      :title="t('Double-click to edit name, short name and channel')"
+      :title="project.name"
       @click="nameClick"
       @dblclick.prevent="open('rename')"
       @keydown.f2.prevent="open('rename')"

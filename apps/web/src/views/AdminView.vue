@@ -19,6 +19,7 @@ import {
   PhBell,
 } from "@phosphor-icons/vue";
 import ChannelManagement from "../components/ChannelManagement.vue";
+import WecomLoginSettings from "../components/WecomLoginSettings.vue";
 import WecomNotificationSettings from "../components/WecomNotificationSettings.vue";
 import { api } from "../services/api";
 import { useWorkspace } from "../stores/workspace";
@@ -46,6 +47,7 @@ const tabs = [
   { id: "channels", label: t("渠道与项目信息"), icon: PhFolders },
   { id: "catalogs", label: "Stages & categories", icon: PhFolders },
   { id: "model", label: "AI settings", icon: PhCpu },
+  { id: "wecom-login", label: "企微免登", icon: PhShieldCheck },
   { id: "notifications", label: t("企业微信通知"), icon: PhBell },
   { id: "logs", label: "Call logs", icon: PhListBullets },
   { id: "audit", label: "Admin activity", icon: PhShieldCheck },
@@ -89,6 +91,7 @@ const tab = ref<Tab>(requestedTab() ?? "users"),
   copied = ref(false);
 const channelDirty = ref(false);
 const notificationDirty = ref(false);
+const wecomLoginDirty = ref(false);
 const allowanceLimit = ref<number | string>("");
 const allowanceUntil = ref("");
 const allowanceBaseline = ref("");
@@ -102,6 +105,7 @@ const dirty = computed(
   () =>
     channelDirty.value ||
     notificationDirty.value ||
+    wecomLoginDirty.value ||
     allowanceDirty.value ||
     !!apiKey.value ||
     (editingId.value !== null &&
@@ -734,6 +738,10 @@ onMounted(load);
             catalog = $event;
             catalogBaseline = JSON.stringify($event);
           "
+        />
+        <WecomLoginSettings
+          v-else-if="tab === 'wecom-login'"
+          @dirty="wecomLoginDirty = $event"
         />
         <WecomNotificationSettings
           v-else-if="tab === 'notifications'"

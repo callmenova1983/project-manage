@@ -86,6 +86,39 @@ export function useAssistantSession(
       backup();
     }
   }
+  async function clear(): Promise<boolean> {
+    if (!enabled || !ready.value || saving.value || conflict.value || disposed)
+      return false;
+    clearTimeout(timer);
+    ready.value = false;
+    saving.value = true;
+    try {
+      // Keep the versioned row: older tabs must conflict instead of restoring cleared history.
+      remote = await api.saveAssistantSession({ version, state: {} });
+      version = remote.version;
+      dirty = false;
+      generation++;
+      conflict.value = false;
+      issue.value = "";
+      if (!disposed) await restore(remote.state);
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        /* The remote conversation is already cleared; backup reports local storage issues. */
+      }
+      return true;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        conflict.value = true;
+        issue.value = "另一端更新了对话。请先恢复云端对话，再清空聊天记录。";
+      } else issue.value = "未能清空聊天记录，原对话仍保留，请重试。";
+      return false;
+    } finally {
+      ready.value = true;
+      saving.value = false;
+      if (!disposed) backup();
+    }
+  }
   onMounted(async () => {
     if (!enabled) return;
     let local: Backup | undefined;
@@ -147,5 +180,5 @@ export function useAssistantSession(
     document.removeEventListener("visibilitychange", resume);
     window.removeEventListener("pagehide", leave);
   });
-  return { ready, saving, issue, conflict, flush, recoverRemote };
+  return { ready, saving, issue, conflict, flush, recoverRemote, clear };
 }

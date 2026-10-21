@@ -179,6 +179,10 @@ const persistence = useAssistantSession(
     referenceArchive: referenceReview.value?.exportState(),
   }),
   async (state) => {
+    input.value?.clearFiles();
+    error.value = "";
+    projectSearch.value = "";
+    showReply.value = false;
     if (
       typeof state.contextProjectId === "string" ||
       state.contextProjectId === null
@@ -303,9 +307,49 @@ const composerVisible = computed(
 function closePanel() {
   if (!busy.value && (props.modal || discard())) emit("close");
 }
+const canClearHistory = computed(
+  () =>
+    props.assistant &&
+    persistence.ready.value &&
+    !persistence.saving.value &&
+    !persistence.conflict.value &&
+    !busy.value &&
+    (!!messages.value.length ||
+      !!composer.value.trim() ||
+      !!input.value?.hasFiles ||
+      !!pending.value.length ||
+      structuredSource.value !== null ||
+      logMode.value),
+);
+async function clearHistory() {
+  if (
+    !canClearHistory.value ||
+    !window.confirm(
+      t(
+        "清空当前聊天记录和未提交内容？已保存的项目、任务、资料和活动记录会保留。",
+      ),
+    )
+  )
+    return;
+  working.value = true;
+  phase.value = t("正在清空聊天记录…");
+  let cleared: boolean;
+  try {
+    cleared = await persistence.clear();
+  } finally {
+    working.value = false;
+    phase.value = "";
+  }
+  if (cleared) {
+    store.notify(t("聊天记录已清空"));
+    await focusReply();
+  }
+}
 defineExpose({
   closePanel,
   busy,
+  canClearHistory,
+  clearHistory,
   hasDraft: computed(
     () =>
       !!composer.value.trim() ||

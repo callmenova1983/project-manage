@@ -13,9 +13,13 @@ import { Repository } from "../../apps/api/src/database";
 import { createSeed } from "../../packages/domain/seed";
 import { backupDatabase } from "../../apps/api/src/backup";
 
-// Downgraded fixtures must remove v18 objects before replaying that migration.
-function removeV18Tables(db: DatabaseSync) {
+// Downgraded fixtures must remove later objects before replaying migrations.
+function removeReplayTables(db: DatabaseSync) {
   for (const table of [
+    "wecom_login_sessions",
+    "wecom_login_states",
+    "wecom_login_events",
+    "wecom_login_config",
     "notification_outbox",
     "notifications",
     "notification_accounts",
@@ -77,9 +81,12 @@ it("upgrades a synthetic v3 database without changing users/projects and restore
         .prepare("SELECT version FROM migrations ORDER BY version")
         .all()
         .map((r) => r.version),
-    ).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    ]);
+    ).toEqual(
+      readdirSync("apps/api/migrations")
+        .filter((name) => /^\d+_.+\.sql$/.test(name))
+        .map((name) => Number(name.split("_")[0]))
+        .sort((a, b) => a - b),
+    );
     expect(upgraded.db.prepare("SELECT * FROM users").get()).toMatchObject({
       ...originalUser,
       username: "syntheticm",
@@ -122,7 +129,7 @@ it("adds the v12 history index without rewriting local v11 business data and res
     const initial = new Repository(path);
     initial.seed("synthetic");
     const before = initial.snapshot("synthetic");
-    removeV18Tables(initial.db);
+    removeReplayTables(initial.db);
     initial.db.exec(
       "DROP INDEX activity_workspace_instant; DELETE FROM migrations WHERE version>=12; ALTER TABLE workspaces DROP COLUMN time_zone; ALTER TABLE workspaces DROP COLUMN settings_version;",
     );
@@ -187,7 +194,7 @@ it("migrates the local v12 schema to UTC without rewriting records, persists IAN
         initial.db.prepare(`SELECT * FROM ${table}`).all(),
       );
     const before = records();
-    removeV18Tables(initial.db);
+    removeReplayTables(initial.db);
     initial.db.exec(
       "ALTER TABLE workspaces DROP COLUMN time_zone; ALTER TABLE workspaces DROP COLUMN settings_version; DELETE FROM migrations WHERE version>=13;",
     );

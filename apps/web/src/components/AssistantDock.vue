@@ -16,8 +16,10 @@ import {
   PhX,
   PhArrowsOutSimple,
   PhArrowsInSimple,
+  PhBroom,
 } from "@phosphor-icons/vue";
 import MeetingsView from "../views/MeetingsView.vue";
+import AiAccess from "./AiAccess.vue";
 import {
   assistantPanel,
   openAssistant,
@@ -134,6 +136,7 @@ function adjust(event: KeyboardEvent) {
   );
 }
 function shortcut(event: KeyboardEvent) {
+  if (document.querySelector("dialog[open]")) return;
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "j") {
     event.preventDefault();
     if (assistantPanel.open) collapseAssistant();
@@ -310,6 +313,20 @@ onBeforeUnmount(() => {
             <PhX :size="12" /></button
         ></span>
       </div>
+      <button
+        type="button"
+        class="icon-button"
+        :aria-label="t('清空聊天记录')"
+        :title="t('清空聊天记录')"
+        :disabled="!body?.canClearHistory"
+        @click="body?.clearHistory()"
+      >
+        <PhBroom :size="18" />
+      </button>
+      <AiAccess
+        v-if="store.mode === 'server' && store.user"
+        :key="`${store.user.workspaceId}:${store.user.id}`"
+      />
       <button
         type="button"
         class="icon-button assistant-expand"
