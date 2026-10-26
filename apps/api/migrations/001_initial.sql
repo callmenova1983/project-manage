@@ -1,0 +1,13 @@
+PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), email TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password_hash TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), csrf TEXT NOT NULL, expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS projects (id TEXT NOT NULL, workspace_id TEXT NOT NULL REFERENCES workspaces(id), version INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(workspace_id,id));
+CREATE TABLE IF NOT EXISTS tasks (id TEXT NOT NULL, workspace_id TEXT NOT NULL, project_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(workspace_id,id), FOREIGN KEY(workspace_id,project_id) REFERENCES projects(workspace_id,id));
+CREATE TABLE IF NOT EXISTS activities (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), created_at TEXT NOT NULL, data TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS activity_workspace_date ON activities(workspace_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS task_project ON tasks(workspace_id,project_id);
+CREATE TABLE IF NOT EXISTS proposals (id TEXT NOT NULL, workspace_id TEXT NOT NULL REFERENCES workspaces(id), data TEXT NOT NULL, PRIMARY KEY(workspace_id,id));
+CREATE TABLE IF NOT EXISTS idempotency (key TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id),request_hash TEXT NOT NULL,response TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(user_id,key));
+INSERT OR IGNORE INTO migrations(version,applied_at) VALUES(1,datetime('now'));
