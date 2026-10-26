@@ -93,6 +93,21 @@ const draft = useIntakeDraft(intakeDraftKey(store.mode, store.user!), {
 const selected = computed(() => candidates.value.filter((c) => c.selected));
 const reviewMode = ref("all");
 const editingRow = ref("");
+let pointerDown = false;
+let rowToHide = "";
+let pointerTimer: ReturnType<typeof setTimeout> | undefined;
+const beginPointer = () => {
+  pointerDown = true;
+};
+function endPointer() {
+  pointerDown = false;
+  clearTimeout(pointerTimer);
+  // Keep the clicked control in place through pointerup and its ensuing click.
+  pointerTimer = setTimeout(() => {
+    if (rowToHide && editingRow.value === rowToHide) editingRow.value = "";
+    rowToHide = "";
+  }, 0);
+}
 const groups = ref<ReturnType<typeof groupIntakeCandidates>>([]);
 watch(candidates, (rows) => {
   groups.value = groupIntakeCandidates(rows);
@@ -122,7 +137,8 @@ watch(reviewGroups, async () => {
   if (
     reviewMode.value === "decisions" &&
     focused instanceof HTMLElement &&
-    !focused.isConnected
+    !focused.isConnected &&
+    document.activeElement === document.body
   )
     document
       .querySelector<HTMLSelectElement>(".review-options select")
@@ -264,7 +280,8 @@ function finishEditingRow(event: FocusEvent) {
       event.relatedTarget as Node | null,
     )
   )
-    editingRow.value = "";
+    if (pointerDown) rowToHide = editingRow.value;
+    else editingRow.value = "";
 }
 async function addTask(c: IntakeCandidate, event: Event) {
   const article = (event.currentTarget as HTMLElement).closest("article");
@@ -394,6 +411,17 @@ function startAgain() {
   draft.flush();
 }
 onMounted(loadHistory);
+onMounted(() => {
+  window.addEventListener("pointerdown", beginPointer, true);
+  window.addEventListener("pointerup", endPointer, true);
+  window.addEventListener("pointercancel", endPointer, true);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("pointerdown", beginPointer, true);
+  window.removeEventListener("pointerup", endPointer, true);
+  window.removeEventListener("pointercancel", endPointer, true);
+  clearTimeout(pointerTimer);
+});
 onBeforeUnmount(() => controller?.abort());
 </script>
 <template>
