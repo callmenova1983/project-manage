@@ -1,4 +1,7 @@
 export const intakeZh: Record<string, string> = {
+  "This row targets an existing project but has no task. Add a task or exclude this row; existing project details stay unchanged.":
+    "此行已匹配现有项目，但没有任务。可补充任务或取消选择此行；现有项目资料保持不变。",
+  "Add a task to this row": "为此行补充任务",
   "The source references several projects. Review your selected target.":
     "原文提及多个项目，请核对所选目标。",
   "The source has a partial name match. Review your selected target.":

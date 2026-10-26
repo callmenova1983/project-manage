@@ -12,6 +12,7 @@ import MappingTemplates from "../components/MappingTemplates.vue";
 import {
   groupIntakeCandidates,
   needsIntakeDecision,
+  resolveIntakeFieldWarnings,
 } from "../composables/intake-review";
 import {
   PhUploadSimple,
@@ -91,10 +92,12 @@ const draft = useIntakeDraft(intakeDraftKey(store.mode, store.user!), {
 });
 const selected = computed(() => candidates.value.filter((c) => c.selected));
 const reviewMode = ref("all");
+const editingRow = ref("");
 const groups = ref<ReturnType<typeof groupIntakeCandidates>>([]);
 watch(candidates, (rows) => {
   groups.value = groupIntakeCandidates(rows);
   reviewMode.value = "all";
+  editingRow.value = "";
 });
 const reviewGroups = computed(() =>
   groups.value
@@ -102,7 +105,9 @@ const reviewGroups = computed(() =>
       ...group,
       rows: group.rows.filter(
         (c) =>
-          reviewMode.value === "all" || needsIntakeDecision(c, duplicate(c)),
+          reviewMode.value === "all" ||
+          needsIntakeDecision(c, duplicate(c)) ||
+          (c.selected && editingRow.value === c.id),
       ),
     }))
     .filter((group) => group.rows.length),
@@ -231,10 +236,53 @@ function preview() {
 }
 function targetChanged(c: IntakeCandidate) {
   const p = store.data.projects.find((p) => p.id === c.targetProjectId);
-  if (p) c.project = projectInput.strip().parse(p);
+  if (p) {
+    c.project = projectInput.strip().parse(p);
+    resolveIntakeFieldWarnings(c, "stage");
+  }
   c.targetProjectVersion = p?.version ?? null;
   confirmed.value = false;
   c.matchConfirmed = false;
+}
+function fieldReviewed(
+  c: IntakeCandidate,
+  field: "dueDate" | "status" | "stage",
+) {
+  resolveIntakeFieldWarnings(c, field);
+  confirmed.value = false;
+}
+function keepEditingRow(c: IntakeCandidate, event: FocusEvent) {
+  if (
+    event.target instanceof HTMLInputElement &&
+    event.target.type !== "checkbox"
+  )
+    editingRow.value = c.id;
+}
+function finishEditingRow(event: FocusEvent) {
+  if (
+    !(event.currentTarget as HTMLElement).contains(
+      event.relatedTarget as Node | null,
+    )
+  )
+    editingRow.value = "";
+}
+async function addTask(c: IntakeCandidate, event: Event) {
+  const article = (event.currentTarget as HTMLElement).closest("article");
+  c.task = {
+    title: "",
+    description: "",
+    parentId: null,
+    status: "todo",
+    assignee: "Unassigned",
+    dueDate: null,
+    workDates: [],
+    workWeek: null,
+  };
+  confirmed.value = false;
+  await nextTick();
+  const details = article?.querySelector("details");
+  if (details) details.open = true;
+  article?.querySelector<HTMLInputElement>(".intake-task-title")?.focus();
 }
 function reviewWarnings(c: IntakeCandidate) {
   const assigned = !!c.targetProjectId && !c.project.intakeInbox;
@@ -647,6 +695,8 @@ onBeforeUnmount(() => controller?.abort());
           :key="c.id"
           class="panel intake-candidate"
           :class="{ excluded: !c.selected }"
+          @focusin="keepEditingRow(c, $event)"
+          @focusout="finishEditingRow($event)"
         >
           <div class="section-heading">
             <label class="checkbox"
@@ -660,7 +710,13 @@ onBeforeUnmount(() => controller?.abort());
               c.task ? t("Project + task") : t("Project only")
             }}</span>
           </div>
-          <details :open="index === 0 || c.warnings.length > 0">
+          <details
+            :open="
+              index === 0 ||
+              c.warnings.length > 0 ||
+              (!!c.targetProjectId && !c.task)
+            "
+          >
             <summary>{{ t("Review details") }}</summary>
             <div v-if="c.matchEvidence?.length" class="intake-matches">
               <p class="muted">{{ t("Suggested project matches") }}</p>
@@ -748,6 +804,7 @@ onBeforeUnmount(() => controller?.abort());
                 }}<select
                   v-model="c.project.stage"
                   :disabled="!c.selected || !!c.targetProjectId"
+                  @change="fieldReviewed(c, 'stage')"
                 >
                   <option value="unclassified">
                     {{ stageLabels.unclassified }}
@@ -773,6 +830,7 @@ onBeforeUnmount(() => controller?.abort());
                   >{{ t("Task title")
                   }}<input
                     v-model="c.task.title"
+                    class="intake-task-title"
                     :disabled="!c.selected"
                     required
                     maxlength="240" /></label
@@ -788,13 +846,18 @@ onBeforeUnmount(() => controller?.abort());
                     :value="c.task.dueDate ?? ''"
                     type="date"
                     :disabled="!c.selected"
+                    @change="fieldReviewed(c, 'dueDate')"
                     @input="
                       c.task.dueDate =
                         ($event.target as HTMLInputElement).value || null
                     " /></label
                 ><label
                   >{{ t("Task status")
-                  }}<select v-model="c.task.status" :disabled="!c.selected">
+                  }}<select
+                    v-model="c.task.status"
+                    :disabled="!c.selected"
+                    @change="fieldReviewed(c, 'status')"
+                  >
                     <option
                       v-for="status in statuses"
                       :key="status"
@@ -805,6 +868,26 @@ onBeforeUnmount(() => controller?.abort());
                   </select></label
                 ></template
               >
+            </div>
+            <div
+              v-if="c.targetProjectId && !c.task"
+              class="intake-missing-task"
+            >
+              <p>
+                {{
+                  t(
+                    "This row targets an existing project but has no task. Add a task or exclude this row; existing project details stay unchanged.",
+                  )
+                }}
+              </p>
+              <button
+                type="button"
+                class="button"
+                :disabled="!c.selected"
+                @click="addTask(c, $event)"
+              >
+                {{ t("Add a task to this row") }}
+              </button>
             </div>
             <p v-if="c.task" class="muted">
               {{
@@ -896,6 +979,7 @@ onBeforeUnmount(() => controller?.abort());
               !confirmed ||
               !selected.length ||
               store.busy ||
+              selected.some((c) => c.targetProjectId && !c.task) ||
               selected.some(
                 (c) =>
                   c.matches.length > 1 &&
