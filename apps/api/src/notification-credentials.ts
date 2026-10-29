@@ -7,15 +7,21 @@ export class NotificationCredentialStore {
   private memoryKey = randomBytes(32);
   constructor(
     private repo: Repository,
-    private databasePath: string,
+    private credentialKeyPath: string,
   ) {}
-  private key() {
-    return workspaceCredentialKey(this.repo, this.databasePath, this.memoryKey);
+  private async key() {
+    return await workspaceCredentialKey(
+      this.repo,
+      this.credentialKeyPath,
+      this.memoryKey,
+    );
   }
-  read(
+  async read(
     workspaceId: string,
-  ): { version: number; config: NotificationDeliveryConfig } | undefined {
-    const row = this.repo.db
+  ): Promise<
+    { version: number; config: NotificationDeliveryConfig } | undefined
+  > {
+    const row = await this.repo.db
       .prepare(
         "SELECT version,encrypted_config FROM notification_wecom_config WHERE workspace_id=?",
       )
@@ -24,7 +30,7 @@ export class NotificationCredentialStore {
     const [iv, tag, data] = String(row.encrypted_config).split(".");
     const decoder = createDecipheriv(
       "aes-256-gcm",
-      this.key(),
+      await this.key(),
       Buffer.from(iv!, "base64"),
     );
     decoder.setAAD(Buffer.from(`notifications:${workspaceId}`));
@@ -39,13 +45,13 @@ export class NotificationCredentialStore {
       ),
     };
   }
-  save(
+  async save(
     workspaceId: string,
     version: number,
     config: NotificationDeliveryConfig,
   ) {
     const iv = randomBytes(12),
-      encoder = createCipheriv("aes-256-gcm", this.key(), iv);
+      encoder = createCipheriv("aes-256-gcm", await this.key(), iv);
     encoder.setAAD(Buffer.from(`notifications:${workspaceId}`));
     const data = Buffer.concat([
       encoder.update(JSON.stringify(config)),
@@ -54,7 +60,7 @@ export class NotificationCredentialStore {
     const encrypted = [iv, encoder.getAuthTag(), data]
       .map((b) => b.toString("base64"))
       .join(".");
-    this.repo.db
+    await this.repo.db
       .prepare(
         "INSERT INTO notification_wecom_config(workspace_id,version,encrypted_config) VALUES(?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET version=excluded.version,encrypted_config=excluded.encrypted_config",
       )

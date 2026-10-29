@@ -41,13 +41,13 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
   async function setup(qwen?: QwenConfig) {
     fetchMock.mockReset();
     ctx = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin,
       qwen,
       aiRuntime: runtime,
       aiFetch: fetchMock,
     });
-    ctx.repo.seed("capture");
+    await ctx.repo.seed("capture");
     const password = randomBytes(24).toString("hex");
     await createUser(ctx.repo, {
       workspaceId: "capture",
@@ -63,14 +63,14 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     cookie = `pm_session=${login.cookies[0]!.value}`;
     csrf = login.json().csrf;
   }
-  beforeEach(() => setup(config));
+  beforeEach(async () => await setup(config));
   afterEach(() => ctx.app.close());
   it("still categorizes filenames without spending an exhausted allowance, and does not guess generic photos", async () => {
-    const user = ctx.repo.db
+    const user = (await ctx.repo.db
       .prepare("SELECT id FROM users WHERE email=?")
-      .get("capture@example.test")!;
+      .get("capture@example.test"))!;
     for (let i = 0; i < config.maxRequests; i++)
-      ctx.repo.db
+      await ctx.repo.db
         .prepare(
           "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
         )
@@ -93,11 +93,12 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     expect(result.json().code).toBe("AI_BUDGET_EXHAUSTED");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
-      ctx.repo.db.prepare("SELECT count(*) AS total FROM ai_attempts").get()!
-        .total,
+      (await ctx.repo.db
+        .prepare("SELECT count(*) AS total FROM ai_attempts")
+        .get())!.total,
     ).toBe(config.maxRequests);
-    ctx.repo.seed("foreign");
-    ctx.repo.db
+    await ctx.repo.seed("foreign");
+    await ctx.repo.db
       .prepare("UPDATE progress_materials SET workspace_id=? WHERE id=?")
       .run("foreign", ids[0]);
     expect(
@@ -111,7 +112,7 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     ).toBe(404);
   });
   it("classifies reference titles without parsing or sending quotation contents, then archives without tasks", async () => {
-    const before = ctx.repo.snapshot("capture"),
+    const before = await ctx.repo.snapshot("capture"),
       project = before.projects[0]!;
     const secretBody = "PRIVATE_QUOTE_DETAIL_".repeat(1500);
     const doc = zipSync({
@@ -184,15 +185,18 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
       (await request("GET", `/api/projects/${project.id}/materials/${id}`))
         .rawPayload,
     ).toEqual(Buffer.from(doc));
-    expect(ctx.repo.snapshot("capture").tasks).toEqual(before.tasks);
-    expect(ctx.repo.snapshot("capture").projects).toEqual(before.projects);
+    expect((await ctx.repo.snapshot("capture")).tasks).toEqual(before.tasks);
+    expect((await ctx.repo.snapshot("capture")).projects).toEqual(
+      before.projects,
+    );
     expect(
-      ctx.repo.db.prepare("SELECT count(*) AS total FROM proposals").get()!
-        .total,
+      (await ctx.repo.db
+        .prepare("SELECT count(*) AS total FROM proposals")
+        .get())!.total,
     ).toBe(0);
   });
   it("archives site photos and task evidence without inferring completion, and validates all task links atomically", async () => {
-    const before = ctx.repo.snapshot("capture"),
+    const before = await ctx.repo.snapshot("capture"),
       task = before.tasks[0]!,
       project = before.projects.find((p) => p.id === task.projectId)!;
     const uploads = [];
@@ -231,11 +235,11 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
       taskId: task.id,
       category: "task-evidence",
     });
-    expect(ctx.repo.snapshot("capture").tasks).toEqual(before.tasks);
+    expect((await ctx.repo.snapshot("capture")).tasks).toEqual(before.tasks);
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("reads an explicitly selected temporary screenshot and atomically preserves text while discarding raw bytes", async () => {
-    const before = ctx.repo.snapshot("capture");
+    const before = await ctx.repo.snapshot("capture");
     const uploaded = await request("POST", "/api/capture/materials", {
       name: "会议截图.png",
       data: png,
@@ -328,7 +332,7 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     expect(
       (await request("GET", `/api/capture/materials/${id}`)).statusCode,
     ).toBe(404);
-    expect(ctx.repo.snapshot("capture").tasks).toEqual(before.tasks);
+    expect((await ctx.repo.snapshot("capture")).tasks).toEqual(before.tasks);
   });
   it("never discards an already-retained source or another user's temporary file", async () => {
     const upload = await request("POST", "/api/capture/materials", {
@@ -416,7 +420,7 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("reads a pasted screenshot before a project exists and sends image bytes with notes to the configured model", async () => {
-    const before = ctx.repo.snapshot("capture");
+    const before = await ctx.repo.snapshot("capture");
     const upload = await request("POST", "/api/capture/materials", {
       name: "clipboard.png",
       data: png,
@@ -424,9 +428,9 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     expect(upload.statusCode).toBe(200);
     const id = upload.json().id;
     expect(
-      ctx.repo.db
+      (await ctx.repo.db
         .prepare("SELECT project_id FROM progress_materials WHERE id=?")
-        .get(id)!.project_id,
+        .get(id))!.project_id,
     ).toBe(CAPTURE_SCOPE);
     fetchMock.mockResolvedValue(
       Response.json({
@@ -479,8 +483,10 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
       ).statusCode,
     ).toBe(409);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(ctx.repo.snapshot("capture").projects).toEqual(before.projects);
-    expect(ctx.repo.snapshot("capture").tasks).toEqual(before.tasks);
+    expect((await ctx.repo.snapshot("capture")).projects).toEqual(
+      before.projects,
+    );
+    expect((await ctx.repo.snapshot("capture")).tasks).toEqual(before.tasks);
     fetchMock.mockResolvedValue(
       Response.json({
         model: QWEN_MODEL,
@@ -561,7 +567,7 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     const bytes = readFileSync(
       new URL("../fixtures/file-preview/report.pdf", import.meta.url),
     );
-    const before = ctx.repo.snapshot("capture");
+    const before = await ctx.repo.snapshot("capture");
     const upload = await request("POST", "/api/capture/materials", {
       name: "report.pdf",
       data: bytes.toString("base64"),
@@ -575,7 +581,9 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     );
     expect(download.statusCode).toBe(200);
     expect(download.rawPayload).toEqual(bytes);
-    expect(ctx.repo.snapshot("capture").projects).toEqual(before.projects);
+    expect((await ctx.repo.snapshot("capture")).projects).toEqual(
+      before.projects,
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("defaults to local text extraction without credentials or model calls and replays it safely", async () => {
@@ -631,12 +639,14 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     ).toBe(409);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
-      ctx.repo.db.prepare("SELECT count(*) AS total FROM ai_attempts").get()!
-        .total,
+      (await ctx.repo.db
+        .prepare("SELECT count(*) AS total FROM ai_attempts")
+        .get())!.total,
     ).toBe(0);
     expect(
-      ctx.repo.db.prepare("SELECT count(*) AS total FROM model_logs").get()!
-        .total,
+      (await ctx.repo.db
+        .prepare("SELECT count(*) AS total FROM model_logs")
+        .get())!.total,
     ).toBe(0);
     const original = await request(
       "GET",
@@ -646,12 +656,12 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
   });
   it("local text extraction works with exhausted or disabled AI without consuming attempts", async () => {
     const userId = String(
-      ctx.repo.db
+      (await ctx.repo.db
         .prepare("SELECT id FROM users WHERE email=?")
-        .get("capture@example.test")!.id,
+        .get("capture@example.test"))!.id,
     );
     for (let i = 0; i < config.maxRequests; i++)
-      ctx.repo.db
+      await ctx.repo.db
         .prepare(
           "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
         )
@@ -664,8 +674,8 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     const exhausted = await request("POST", "/api/capture/analyze", body);
     expect(exhausted.statusCode).toBe(200);
     expect(exhausted.json().model).toBe("local-text");
-    const settings = readModelSettings(ctx.repo, "capture", config);
-    ctx.repo.db
+    const settings = await readModelSettings(ctx.repo, "capture", config);
+    await ctx.repo.db
       .prepare("INSERT INTO model_settings(workspace_id,data) VALUES(?,?)")
       .run("capture", JSON.stringify({ ...settings, enabled: false }));
     const disabled = await request("POST", "/api/capture/analyze", body);
@@ -673,8 +683,9 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     expect(disabled.json().text).toBe(body.text);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
-      ctx.repo.db.prepare("SELECT count(*) AS total FROM ai_attempts").get()!
-        .total,
+      (await ctx.repo.db
+        .prepare("SELECT count(*) AS total FROM ai_attempts")
+        .get())!.total,
     ).toBe(config.maxRequests);
   });
   it("asks for image recognition explicitly when a pure image has no extractable text", async () => {
@@ -692,8 +703,9 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     expect(result.json().message).toContain("切换");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
-      ctx.repo.db.prepare("SELECT count(*) AS total FROM ai_attempts").get()!
-        .total,
+      (await ctx.repo.db
+        .prepare("SELECT count(*) AS total FROM ai_attempts")
+        .get())!.total,
     ).toBe(0);
     expect(
       (await request("GET", `/api/capture/materials/${upload.json().id}`))
@@ -746,7 +758,7 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
     expect(deep.messages[1].content[1].type).toBe("image_url");
   });
   it("protects project and workspace scopes, consent and malformed uploads", async () => {
-    const project = ctx.repo.snapshot("capture").projects[0]!;
+    const project = (await ctx.repo.snapshot("capture")).projects[0]!;
     const own = await request("POST", `/api/projects/${project.id}/materials`, {
       name: "project.png",
       data: png,
@@ -774,8 +786,8 @@ describe.each(["legacy", "sdk"] as const)("capture runtime %s", (runtime) => {
         })
       ).statusCode,
     ).toBe(400);
-    ctx.repo.seed("foreign");
-    ctx.repo.db
+    await ctx.repo.seed("foreign");
+    await ctx.repo.db
       .prepare("UPDATE progress_materials SET workspace_id=? WHERE id=?")
       .run("foreign", upload.json().id);
     expect(

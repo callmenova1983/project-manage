@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:net";
@@ -14,6 +15,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { chromium } from "@playwright/test";
 import { Repository } from "../dist/server/apps/api/src/database.js";
+import { readDatabaseConfig } from "../dist/server/apps/api/src/database-config.js";
 import { createUser } from "../dist/server/apps/api/src/auth.js";
 import { projectInput } from "../dist/server/packages/domain/types.js";
 import { backupDatabase } from "../dist/server/apps/api/src/backup.js";
@@ -24,10 +26,18 @@ probe.listen(0, "127.0.0.1");
 await once(probe, "listening");
 const port = probe.address().port;
 await new Promise((resolve) => probe.close(resolve));
-const origin = `http://127.0.0.1:${port}`,
-  path = join(dir, "test.sqlite");
-const repo = new Repository(path);
-repo.seed("smoke");
+const origin = `http://127.0.0.1:${port}`;
+const config = readDatabaseConfig();
+const repo = await Repository.open(config, { isolated: true });
+if (!/^pm_test_[a-f0-9]{32}$/.test(repo.db.schema))
+  throw new Error("Refusing test writes outside an isolated PostgreSQL schema");
+
+const database = {
+  ...config,
+  schema: repo.db.schema,
+  credentialKeyPath: join(dir, "credentials.key"),
+};
+await repo.seed("smoke");
 const password = randomBytes(24).toString("hex");
 await createUser(repo, {
   email: "smoke@example.test",
@@ -41,10 +51,9 @@ await createUser(repo, {
   password,
   workspaceId: "smoke",
 });
-repo.close();
 let child;
 let browser;
-async function start(databaseFile = path) {
+async function start() {
   child = spawn(process.execPath, ["dist/server/apps/api/src/index.js"], {
     env: {
       ...process.env,
@@ -52,7 +61,8 @@ async function start(databaseFile = path) {
       HOST: "127.0.0.1",
       PORT: String(port),
       APP_ORIGIN: origin,
-      DATABASE_PATH: databaseFile,
+      DB_SCHEMA: database.schema,
+      CREDENTIAL_KEY_PATH: database.credentialKeyPath,
       AI_PROVIDER: "disabled",
       AI_CALLS_ENABLED: "false",
     },
@@ -321,8 +331,9 @@ try {
     serverBeforeDemo,
   );
   await demoContext.close();
-  const backupPath = join(dir, "verified-backup.sqlite");
-  await backupDatabase(path, backupPath);
+  const backupPath = join(dir, "verified-backup.dump");
+  const backup = await backupDatabase(database, backupPath);
+  assert.equal(backup.verification, "archive-readable");
   const beforeLateWrite = await (
     await page.request.get(origin + "/api/projects/project-1")
   ).json();
@@ -341,14 +352,8 @@ try {
     await page.request.get(origin + "/api/projects/project-1")
   ).json();
   assert.equal(restarted.notes, "Later write in the original database");
-  await stop();
-  await start(backupPath);
-  const restored = await (
-    await page.request.get(origin + "/api/projects/project-1")
-  ).json();
-  assert.equal(restored.notes, "Persisted across actual process restart");
   assert.equal(
-    restored.latestUpdate,
+    restarted.latestUpdate,
     "Saved from a second independent member session",
   );
   assert.equal(
@@ -364,7 +369,8 @@ try {
     browserDemoIsolationAndPersistence: "passed",
     processRestartPersistence: "passed",
     independentMemberSessions: "passed",
-    consistentBackupAndIndependentRestore: "passed",
+    consistentPostgresBackupArchive: "passed",
+    independentRestore: "not-run; use a separate restore database",
     documentAndBundleResponses: "passed",
     environment:
       "local compiled HTTP server; no live deployment or real device",
@@ -379,5 +385,6 @@ try {
 } finally {
   if (browser) await browser.close();
   await stop();
+  await repo.close();
   rmSync(dir, { recursive: true, force: true });
 }

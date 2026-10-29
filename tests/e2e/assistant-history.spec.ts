@@ -150,7 +150,7 @@ for (const mobile of [false, true]) {
       await pane.evaluate((node) => node.scrollWidth <= node.clientWidth),
     ).toBe(true);
     await page.screenshot({ path: testInfo.outputPath("clear-entry.png") });
-    page.once("dialog", (dialog) => dialog.dismiss());
+    page.once("dialog", async (dialog) => (await dialog.dismiss()));
     await clear.click();
     await expect(pane).toContainText(marker);
     expect(
@@ -195,7 +195,7 @@ test("keeps the conversation on failure and requires recovery before clearing a 
   const clear = pane.getByRole("button", { name: "清空聊天记录", exact: true });
   await expect(clear).toBeEnabled();
   rejectClear = true;
-  page.once("dialog", (dialog) => dialog.accept());
+  page.once("dialog", async (dialog) => (await dialog.accept()));
   await clear.click();
   await expect(pane).toContainText("未能清空聊天记录，原对话仍保留");
   await expect(pane).toContainText(marker);
@@ -215,7 +215,7 @@ test("keeps the conversation on failure and requires recovery before clearing a 
       })
     ).status,
   ).toBe(200);
-  page.once("dialog", (dialog) => dialog.accept());
+  page.once("dialog", async (dialog) => (await dialog.accept()));
   await clear.click();
   await expect(pane).toContainText("请先恢复云端对话，再清空聊天记录");
   await expect(pane).toContainText(marker);
@@ -224,7 +224,7 @@ test("keeps the conversation on failure and requires recovery before clearing a 
   await pane.getByRole("button", { name: "恢复云端对话", exact: true }).click();
   await expect(pane).toContainText("another-device-newer-history");
   await expect(clear).toBeEnabled();
-  page.once("dialog", (dialog) => dialog.accept());
+  page.once("dialog", async (dialog) => (await dialog.accept()));
   await clear.click();
   await expect(pane.getByText("把事情交给我", { exact: true })).toBeVisible();
   expect((await (await api("/assistant/session")).json()).state).toEqual({});

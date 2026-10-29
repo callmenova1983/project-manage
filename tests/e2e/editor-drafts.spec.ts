@@ -22,7 +22,7 @@ test.beforeEach(({ page }) => {
 });
 test.afterEach(() => expect(errors).toEqual([]));
 async function reloadDirty(page: Page) {
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.reload();
 }
 const projectForm = (page: Page) =>
@@ -160,7 +160,7 @@ test("task and new subtask drafts stay separate by project and parent; cancellat
   await expect(form.getByLabel("Task title", { exact: true })).toHaveValue(
     "Synthetic task edit draft",
   );
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await form.getByRole("button", { name: "Cancel", exact: true }).click();
   await page
     .getByRole("button", { name: `Edit ${title}`, exact: true })
@@ -220,7 +220,7 @@ test("inline notes keep exact table text across route return and continue drafti
   });
   const text = "  Synthetic note  \nItem\tValue\nSource\tKept exactly";
   await notes.fill(text);
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("link", { name: "Tasks", exact: true }).click();
   await page.getByRole("link", { name: "Projects", exact: true }).click();
   await page
@@ -241,7 +241,7 @@ test("inline notes keep exact table text across route return and continue drafti
     .getByRole("button", { name: "Check and restore draft", exact: true })
     .click();
   await expect(notes).toHaveValue(text + "\nSecond unsaved pass");
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Cancel notes", exact: true }).click();
   await expect(notes).toHaveCount(0);
   await expect(page.locator(".notes-reading")).toContainText("Synthetic note");
@@ -313,12 +313,12 @@ test("expired-session editor drafts do not leak across accounts and explicit log
     .getByLabel("Description", { exact: true })
     .fill("Private synthetic owner draft");
   expectedErrors.add("/api/workspace");
-  await page.route("**/api/workspace", (route) =>
-    route.fulfill({
+  await page.route("**/api/workspace", async (route) =>
+    (await route.fulfill({
       status: 401,
       contentType: "application/json",
       body: JSON.stringify({ message: "Synthetic expired session" }),
-    }),
+    })),
   );
   await page.evaluate(() =>
     document.dispatchEvent(new Event("visibilitychange")),
@@ -334,36 +334,36 @@ test("expired-session editor drafts do not leak across accounts and explicit log
   await projectForm(page)
     .getByLabel("Description", { exact: true })
     .fill("Administrator temporary draft");
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await projectForm(page)
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
   await page
     .getByRole("button", { name: "Toggle sidebar", exact: true })
     .click();
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
   await expect
-    .poll(() =>
-      page.evaluate(
+    .poll(async () =>
+      (await page.evaluate(
         () =>
           Object.keys(sessionStorage).filter((k) =>
             k.startsWith("project-manage-editor-drafts-v1:"),
           ).length,
-      ),
+      )),
     )
     .toBe(1);
   await scenarioLogin(page, "data/e2e-login.json");
   await page.goto("/projects/project-1");
   await page.getByRole("button", { name: "Edit project", exact: true }).click();
   expectedErrors.add("/api/workspace");
-  await page.route("**/api/workspace", (route) =>
-    route.fulfill({
+  await page.route("**/api/workspace", async (route) =>
+    (await route.fulfill({
       status: 503,
       contentType: "application/json",
       body: JSON.stringify({ message: "Synthetic unavailable" }),
-    }),
+    })),
   );
   await projectForm(page)
     .getByRole("button", { name: "Check and restore draft", exact: true })
@@ -390,12 +390,12 @@ test("expired-session editor drafts do not leak across accounts and explicit log
     await route.fulfill({ response });
   });
   try {
-    const checking = page.waitForRequest("**/api/workspace");
+    const checking = (await page.waitForRequest("**/api/workspace"));
     await projectForm(page)
       .getByRole("button", { name: "Check and restore draft", exact: true })
       .click();
     await checking;
-    const newer = page.waitForResponse("**/api/workspace");
+    const newer = (await page.waitForResponse("**/api/workspace"));
     await page.evaluate(() =>
       document.dispatchEvent(new Event("visibilitychange")),
     );
@@ -414,24 +414,24 @@ test("expired-session editor drafts do not leak across accounts and explicit log
   await expect(
     projectForm(page).getByLabel("Description", { exact: true }),
   ).toHaveValue("Private synthetic owner draft");
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await projectForm(page)
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
   await page
     .getByRole("button", { name: "Toggle sidebar", exact: true })
     .click();
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
   await expect
-    .poll(() =>
-      page.evaluate(
+    .poll(async () =>
+      (await page.evaluate(
         () =>
           Object.keys(sessionStorage).filter((k) =>
             k.startsWith("project-manage-editor-drafts-v1:"),
           ).length,
-      ),
+      )),
     )
     .toBe(0);
 });
@@ -451,7 +451,7 @@ for (const responseMode of ["aborted response", "unreadable 400"] as const)
     let writes = 0;
     expectedErrors.add("/api/projects");
     await page.route("**/api/projects", async (route) => {
-      if (route.request().method() !== "POST") return route.continue();
+      if (route.request().method() !== "POST") return (await route.continue());
       writes++;
       await route.fetch();
       if (responseMode === "aborted response") await route.abort("failed");
@@ -524,7 +524,7 @@ test("failed local cleanup is reported after a successful sign-out without expos
   await page
     .getByRole("button", { name: "Toggle sidebar", exact: true })
     .click();
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
   await expect(page.getByRole("alert")).toContainText(

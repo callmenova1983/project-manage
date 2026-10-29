@@ -8,8 +8,8 @@ import { emptyDirectory } from "../../packages/domain/directory";
 let context: Awaited<ReturnType<typeof buildApp>>, cookie: string, csrf: string;
 const origin = "http://localhost:4173";
 beforeEach(async () => {
-  context = await buildApp({ databasePath: ":memory:", origin });
-  context.repo.seed("a");
+  context = await buildApp({ isolatedDatabase: true, origin });
+  await context.repo.seed("a");
   const password = randomBytes(24).toString("hex");
   await createUser(context.repo, {
     name: "Member",
@@ -159,7 +159,13 @@ it("merges full task trees and original audit facts atomically, with idempotent 
   );
   expect(restored.statusCode).toBe(200);
   expect(restored.json().projectId).toBe(target.id);
-  expect(context.repo.db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  expect(
+    await context.repo.db
+      .prepare(
+        "SELECT t.id FROM tasks t LEFT JOIN projects p ON p.workspace_id=t.workspace_id AND p.id=t.project_id WHERE p.id IS NULL",
+      )
+      .all(),
+  ).toEqual([]);
 });
 
 it("rejects stale or oversized merges without partial writes", async () => {
@@ -182,11 +188,11 @@ it("rejects stale or oversized merges without partial writes", async () => {
     409,
   );
   expect(await snapshot()).toEqual(current);
-  context.repo.putProject("a", {
+  await context.repo.putProject("a", {
     ...current.projects.find((p) => p.id === target.id)!,
     notes: "a".repeat(15000),
   });
-  context.repo.putProject("a", { ...source, notes: "b".repeat(15000) });
+  await context.repo.putProject("a", { ...source, notes: "b".repeat(15000) });
   const large = await snapshot();
   expect(
     (
@@ -223,7 +229,7 @@ it("auto joins task editors but keeps directory writes restricted to administrat
   expect((await request("PUT", "/api/directory", company)).statusCode).toBe(
     403,
   );
-  context.repo.db.prepare("UPDATE users SET role='admin'").run();
+  await context.repo.db.prepare("UPDATE users SET role='admin'").run();
   expect((await request("PUT", "/api/directory", company)).statusCode).toBe(
     200,
   );
@@ -245,12 +251,12 @@ it("auto joins task editors but keeps directory writes restricted to administrat
 });
 
 it("does not let foreign project IDs cross workspace boundaries", async () => {
-  context.repo.seed("b");
+  await context.repo.seed("b");
   const before = await snapshot(),
     source = before.projects[0]!,
     target = before.projects[1]!;
   const foreign = { ...source, id: "foreign", name: "Other company" };
-  context.repo.putProject("b", foreign);
+  await context.repo.putProject("b", foreign);
   expect(
     (
       await request("POST", "/api/projects/merge", {
@@ -263,7 +269,7 @@ it("does not let foreign project IDs cross workspace boundaries", async () => {
     ).statusCode,
   ).toBe(400);
   expect(await snapshot()).toEqual(before);
-  expect(context.repo.get("projects", "b", foreign.id)).toEqual(foreign);
+  expect(await context.repo.get("projects", "b", foreign.id)).toEqual(foreign);
 });
 it("persists a complete manual order and rejects stale or incomplete orders", async () => {
   const s = await snapshot(),
@@ -357,7 +363,7 @@ it("supports generated login names and email while preserving disabled and pendi
     workspaceId: "a",
     password,
   });
-  const rows = context.repo.db
+  const rows = await context.repo.db
     .prepare("SELECT id,email,username FROM users WHERE name=? ORDER BY rowid")
     .all("郑元杰");
   expect(rows.map((r) => r.username)).toEqual(["zhengyj", "zhengyj2"]);
@@ -370,11 +376,11 @@ it("supports generated login names and email while preserving disabled and pendi
     });
   expect((await login("ZHENGYJ")).statusCode).toBe(200);
   expect((await login("zheng1@example.test")).statusCode).toBe(200);
-  context.repo.db
+  await context.repo.db
     .prepare("UPDATE users SET status='disabled' WHERE id=?")
     .run(String(rows[0]!.id));
   expect((await login("zhengyj")).statusCode).toBe(401);
-  context.repo.db
+  await context.repo.db
     .prepare(
       "UPDATE users SET status='pending',requires_activation=1 WHERE id=?",
     )
@@ -387,11 +393,11 @@ it("uses the configured default only for explicitly provisioned new accounts", a
   const configuredPassword = "Fixture@26!";
   await context.app.close();
   context = await buildApp({
-    databasePath: ":memory:",
+    isolatedDatabase: true,
     origin,
     starterPassword: configuredPassword,
   });
-  context.repo.workspace("a");
+  await context.repo.workspace("a");
   const adminPassword = randomBytes(24).toString("hex");
   await createUser(context.repo, {
     name: "Admin",
@@ -399,7 +405,7 @@ it("uses the configured default only for explicitly provisioned new accounts", a
     workspaceId: "a",
     password: adminPassword,
   });
-  context.repo.db.prepare("UPDATE users SET role='admin'").run();
+  await context.repo.db.prepare("UPDATE users SET role='admin'").run();
   const session = await context.app.inject({
     method: "POST",
     url: "/api/auth/login",
@@ -408,9 +414,9 @@ it("uses the configured default only for explicitly provisioned new accounts", a
   });
   cookie = `pm_session=${session.cookies[0]!.value}`;
   csrf = session.json().csrf;
-  const originalHash = context.repo.db
+  const originalHash = (await context.repo.db
     .prepare("SELECT password_hash FROM users WHERE email=?")
-    .get("admin@example.test")!.password_hash;
+    .get("admin@example.test"))!.password_hash;
   expect((await request("GET", "/api/admin/account-defaults")).json()).toEqual({
     starterPasswordConfigured: true,
   });
@@ -435,8 +441,8 @@ it("uses the configured default only for explicitly provisioned new accounts", a
   });
   expect(signedIn.statusCode).toBe(200);
   expect(
-    context.repo.db
+    (await context.repo.db
       .prepare("SELECT password_hash FROM users WHERE email=?")
-      .get("admin@example.test")!.password_hash,
+      .get("admin@example.test"))!.password_hash,
   ).toBe(originalHash);
 });

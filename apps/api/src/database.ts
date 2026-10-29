@@ -1,10 +1,13 @@
 import { retainTaskSchedule } from "../../../packages/domain/task-schedule.js";
 import { assertProjectWritable } from "../../../packages/domain/project-lifecycle.js";
-import { nextTaskSortOrder } from "../../../packages/domain/task-move.js";
+import {
+  normalizeTaskOrder,
+  nextTaskSortOrder,
+} from "../../../packages/domain/task-move.js";
 import { assignLoginName } from "./login-name.js";
-import { DatabaseSync } from "node:sqlite";
-import { readFileSync, mkdirSync, readdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { PostgresDatabase } from "./postgres.js";
+import { readDatabaseConfig, type DatabaseConfig } from "./database-config.js";
+
 import { randomUUID } from "node:crypto";
 import {
   weekBounds,
@@ -50,188 +53,233 @@ export class HttpError extends Error {
   }
 }
 export class Repository {
-  readonly db: DatabaseSync;
-  constructor(path: string) {
-    if (path !== ":memory:")
-      mkdirSync(dirname(resolve(path)), { recursive: true });
-    this.db = new DatabaseSync(path);
-    this.db.exec(
-      "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
-    );
-    this.db.exec(
-      "CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
-    );
-    for (const file of readdirSync(resolve("apps/api/migrations"))
-      .filter((name) => /^\d+_.+\.sql$/.test(name))
-      .sort()) {
-      const version = Number(file.split("_")[0]);
-      if (
-        this.db.prepare("SELECT 1 FROM migrations WHERE version=?").get(version)
-      )
-        continue;
-      this.transaction(() => {
-        if (version === 13) {
-          // The remote branch previously used version 7 for these columns.
-          // Preserve both upgrade paths without applying ALTER twice.
-          const columns = new Set(
-            this.db
-              .prepare("PRAGMA table_info(workspaces)")
-              .all()
-              .map((row) => String(row.name)),
-          );
-          if (!columns.has("time_zone"))
-            this.db.exec(
-              "ALTER TABLE workspaces ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'UTC'",
-            );
-          if (!columns.has("settings_version"))
-            this.db.exec(
-              "ALTER TABLE workspaces ADD COLUMN settings_version INTEGER NOT NULL DEFAULT 1",
-            );
-        } else
-          this.db.exec(
-            readFileSync(resolve("apps/api/migrations", file), "utf8"),
-          );
-        this.db
-          .prepare(
-            "INSERT OR IGNORE INTO migrations(version,applied_at) VALUES(?,?)",
-          )
-          .run(version, new Date().toISOString());
-      });
-    }
-    const missingNames = this.db
-      .prepare(
-        "SELECT id,name FROM users WHERE username IS NULL ORDER BY rowid",
-      )
-      .all();
-    if (missingNames.length)
-      this.transaction(() => {
-        for (const user of missingNames)
-          this.db
-            .prepare(
-              "UPDATE users SET username=? WHERE id=? AND username IS NULL",
-            )
-            .run(assignLoginName(this.db, String(user.name)), String(user.id));
-      });
-  }
-  close() {
-    this.db.close();
-  }
-  transaction<T>(fn: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE");
+  private constructor(
+    readonly db: PostgresDatabase,
+    private readonly isolated = false,
+  ) {}
+  static async open(
+    config: DatabaseConfig = readDatabaseConfig(),
+    options: { isolated?: boolean } = {},
+  ) {
+    const resolved = options.isolated
+      ? { ...config, schema: `pm_test_${randomUUID().replaceAll("-", "")}` }
+      : config;
+    const db = new PostgresDatabase(resolved);
     try {
-      const result = fn();
-      this.db.exec("COMMIT");
-      return result;
-    } catch (e) {
-      this.db.exec("ROLLBACK");
-      throw e;
+      await db.initialize();
+      const repo = new Repository(db, !!options.isolated);
+      const missing = await db
+        .prepare(
+          "SELECT id,name FROM users WHERE username IS NULL ORDER BY rowid",
+        )
+        .all();
+      if (missing.length)
+        await repo.transaction(async () => {
+          for (const user of missing)
+            await db
+              .prepare(
+                "UPDATE users SET username=? WHERE id=? AND username IS NULL",
+              )
+              .run(
+                await assignLoginName(db, String(user.name)),
+                String(user.id),
+              );
+        });
+      return repo;
+    } catch (error) {
+      await db.close();
+      throw error;
     }
   }
-  workspace(id: string, name = "Team workspace") {
-    this.db
-      .prepare("INSERT OR IGNORE INTO workspaces(id,name) VALUES(?,?)")
+  async close() {
+    try {
+      if (this.isolated)
+        await this.db.exec(`DROP SCHEMA "${this.db.schema}" CASCADE`);
+    } finally {
+      await this.db.close();
+    }
+  }
+  async transaction<T>(fn: () => T | Promise<T>): Promise<T> {
+    return await this.db.transaction(fn);
+  }
+  async workspace(id: string, name = "Team workspace") {
+    await this.db
+      .prepare(
+        "INSERT INTO workspaces(id,name) VALUES(?,?) ON CONFLICT DO NOTHING",
+      )
       .run(id, name);
   }
-  seed(workspaceId: string) {
-    this.workspace(workspaceId);
+  async seed(workspaceId: string) {
+    await this.workspace(workspaceId);
     if (
-      this.db
+      await this.db
         .prepare("SELECT 1 FROM projects WHERE workspace_id=?")
         .get(workspaceId)
     )
       throw new HttpError(409, "Workspace already contains projects");
     const seed = createSeed();
-    this.transaction(() => {
-      for (const p of seed.projects) this.putProject(workspaceId, p);
-      for (const t of seed.tasks) this.putTask(workspaceId, t);
-      for (const a of seed.activities)
-        this.audit(workspaceId, { ...a, id: randomUUID() });
+    await this.transaction(async () => {
+      if (
+        await this.db
+          .prepare("SELECT 1 FROM projects WHERE workspace_id=?")
+          .get(workspaceId)
+      )
+        throw new HttpError(409, "Workspace already contains projects");
+      const members = await this.members(workspaceId);
+      const projects = seed.projects.map((p) => projectMembers(p, members));
+      const tasks = normalizeTaskOrder(seed.tasks).map((t) => ({
+        ...taskMember(t, members),
+        ...retainTaskSchedule(t),
+      }));
+      validateGraph(projects, tasks);
+      // Seed is a known complete graph: insert each table in one batch instead of
+      // issuing hundreds of network round trips for per-row lookups.
+      const insert = async (
+        table: string,
+        columns: string[],
+        rows: unknown[][],
+      ) => {
+        if (!rows.length) return;
+        const values = rows.flat();
+        const tuples = rows
+          .map(
+            (row, i) =>
+              `(${row.map((_, j) => `$${i * columns.length + j + 1}`).join(",")})`,
+          )
+          .join(",");
+        await this.db.query(
+          `INSERT INTO ${table} (${columns.join(",")}) VALUES ${tuples}`,
+          values,
+        );
+      };
+      await insert(
+        "projects",
+        ["id", "workspace_id", "version", "data"],
+        projects.map((p) => [p.id, workspaceId, p.version, JSON.stringify(p)]),
+      );
+      await insert(
+        "tasks",
+        ["id", "workspace_id", "project_id", "version", "data"],
+        tasks.map((t) => [
+          t.id,
+          workspaceId,
+          t.projectId,
+          t.version,
+          JSON.stringify(t),
+        ]),
+      );
+      await insert(
+        "activities",
+        ["id", "workspace_id", "created_at", "data"],
+        seed.activities.map((a) => {
+          const event = { ...a, id: randomUUID() };
+          return [
+            event.id,
+            workspaceId,
+            event.createdAt,
+            JSON.stringify(event),
+          ];
+        }),
+      );
     });
   }
-  snapshot(workspaceId: string, includeSources = false): Snapshot {
-    const row = this.db
+
+  async snapshot(
+    workspaceId: string,
+    includeSources = false,
+  ): Promise<Snapshot> {
+    return this.db.readSnapshot(() =>
+      this.snapshotData(workspaceId, includeSources),
+    );
+  }
+  private async snapshotData(
+    workspaceId: string,
+    includeSources: boolean,
+  ): Promise<Snapshot> {
+    const row = await this.db
       .prepare("SELECT revision FROM workspaces WHERE id=?")
       .get(workspaceId);
     if (!row) throw new HttpError(404, "Workspace not found");
     return {
       schemaVersion: 3,
-      catalogs: this.catalogs(workspaceId),
-      settings: this.settings(workspaceId),
-      members: this.members(workspaceId),
+      catalogs: await this.catalogs(workspaceId),
+      settings: await this.settings(workspaceId),
+      members: await this.members(workspaceId),
       revision: Number(row.revision),
-      projects: this.read<Project>("projects", workspaceId),
-      tasks: this.read<Task>("tasks", workspaceId),
-      activities: this.read<Activity>("activities", workspaceId).map((a) =>
-        includeSources ? a : { ...a, progressSource: undefined },
+      projects: await this.read<Project>("projects", workspaceId),
+      tasks: await this.read<Task>("tasks", workspaceId),
+      activities: (await this.read<Activity>("activities", workspaceId)).map(
+        (a) => (includeSources ? a : { ...a, progressSource: undefined }),
       ),
-      directory: this.directory(workspaceId),
-      projectMembers: this.projectMembers(workspaceId),
-      projectOrder: this.projectOrder(workspaceId),
+      directory: await this.directory(workspaceId),
+      projectMembers: await this.projectMembers(workspaceId),
+      projectOrder: await this.projectOrder(workspaceId),
     };
   }
-  catalogs(workspaceId: string): Catalogs {
-    const row = this.db
+  async catalogs(workspaceId: string): Promise<Catalogs> {
+    const row = await this.db
       .prepare("SELECT data FROM workspace_catalogs WHERE workspace_id=?")
       .get(workspaceId);
     return row
       ? catalogsInput.parse(JSON.parse(String(row.data)))
       : structuredClone(defaultCatalogs);
   }
-  directory(workspaceId: string): CompanyDirectory {
-    const row = this.db
+  async directory(workspaceId: string): Promise<CompanyDirectory> {
+    const row = await this.db
       .prepare("SELECT data FROM workspace_directory WHERE workspace_id=?")
       .get(workspaceId);
     return row
       ? directorySchema.parse(JSON.parse(String(row.data)))
       : emptyDirectory();
   }
-  projectOrder(ws: string) {
-    const row = this.db
+  async projectOrder(ws: string) {
+    const row = await this.db
       .prepare("SELECT data FROM workspace_project_order WHERE workspace_id=?")
       .get(ws);
     return orderedProjectIds(
-      this.read<Project>("projects", ws),
+      await this.read<Project>("projects", ws),
       row ? JSON.parse(String(row.data)) : [],
     );
   }
-  projectMembers(workspaceId: string): ProjectMember[] {
-    const directory = this.directory(workspaceId);
-    return this.db
-      .prepare(
-        "SELECT project_id,user_id,users.name,joined_at,last_edited_at FROM project_members JOIN users ON users.id=project_members.user_id WHERE project_members.workspace_id=? ORDER BY joined_at,user_id",
-      )
-      .all(workspaceId)
-      .map((row) => {
-        const employee = directory.employees.find(
-          (e) => e.userId === row.user_id,
-        );
-        return {
-          projectId: String(row.project_id),
-          userId: String(row.user_id),
-          name: employee?.name ?? String(row.name),
-          department:
-            employee?.departmentIds
-              .map(
-                (id) =>
-                  directory.departments.find((d) => d.id === id)?.name ?? "",
-              )
-              .filter(Boolean)
-              .join(" / ") ?? "",
-          position: employee?.position ?? "",
-          joinedAt: String(row.joined_at),
-          lastEditedAt: String(row.last_edited_at),
-        };
-      });
+  async projectMembers(workspaceId: string): Promise<ProjectMember[]> {
+    const directory = await this.directory(workspaceId);
+    return (
+      await this.db
+        .prepare(
+          "SELECT project_id,user_id,users.name,joined_at,last_edited_at FROM project_members JOIN users ON users.id=project_members.user_id WHERE project_members.workspace_id=? ORDER BY joined_at,user_id",
+        )
+        .all(workspaceId)
+    ).map((row) => {
+      const employee = directory.employees.find(
+        (e) => e.userId === row.user_id,
+      );
+      return {
+        projectId: String(row.project_id),
+        userId: String(row.user_id),
+        name: employee?.name ?? String(row.name),
+        department:
+          employee?.departmentIds
+            .map(
+              (id) =>
+                directory.departments.find((d) => d.id === id)?.name ?? "",
+            )
+            .filter(Boolean)
+            .join(" / ") ?? "",
+        position: employee?.position ?? "",
+        joinedAt: String(row.joined_at),
+        lastEditedAt: String(row.last_edited_at),
+      };
+    });
   }
-  members(workspaceId: string): Member[] {
-    return this.db
+  async members(workspaceId: string): Promise<Member[]> {
+    return (await this.db
       .prepare(
         "SELECT id,name,email,status FROM users WHERE workspace_id=? ORDER BY name,id",
       )
-      .all(workspaceId) as unknown as Member[];
+      .all(workspaceId)) as unknown as Member[];
   }
-  settings(workspaceId: string): WorkspaceSettings {
-    const row = this.db
+  async settings(workspaceId: string): Promise<WorkspaceSettings> {
+    const row = await this.db
       .prepare("SELECT time_zone,settings_version FROM workspaces WHERE id=?")
       .get(workspaceId);
     if (!row) throw new HttpError(404, "Workspace not found");
@@ -240,8 +288,21 @@ export class Repository {
       version: Number(row.settings_version),
     };
   }
-  activityPage(workspaceId: string, query: ActivityQuery, exportAll = false) {
-    const timeZone = this.settings(workspaceId).timeZone;
+  async activityPage(
+    workspaceId: string,
+    query: ActivityQuery,
+    exportAll = false,
+  ) {
+    return this.db.readSnapshot(() =>
+      this.activityPageData(workspaceId, query, exportAll),
+    );
+  }
+  private async activityPageData(
+    workspaceId: string,
+    query: ActivityQuery,
+    exportAll: boolean,
+  ) {
+    const timeZone = (await this.settings(workspaceId)).timeZone;
     if (query.timeZone && query.timeZone !== timeZone)
       throw new HttpError(
         409,
@@ -252,11 +313,11 @@ export class Repository {
       query.cursor?.through ??
       query.checkpoint?.through ??
       Number(
-        this.db
+        (await this.db
           .prepare(
             "SELECT COALESCE(MAX(rowid),0) AS n FROM activities WHERE workspace_id=?",
           )
-          .get(workspaceId)!.n,
+          .get(workspaceId))!.n,
       );
     const asOf =
       query.cursor?.asOf ?? query.checkpoint?.asOf ?? new Date().toISOString();
@@ -265,33 +326,41 @@ export class Repository {
       : null;
     const start = bounds?.start ?? "0001-01-01T00:00:00Z";
     const end = bounds?.end ?? "9999-12-31T23:59:59.999Z";
-    const rows = this.db
+    const rows = await this.db
       .prepare(
-        "SELECT data FROM activities WHERE workspace_id=? AND rowid<=? AND julianday(created_at)>=julianday(?) AND julianday(created_at)<julianday(?) AND julianday(created_at)<=julianday(?) ORDER BY julianday(created_at) DESC,id ASC",
+        "SELECT data FROM activities WHERE workspace_id=? AND rowid<=? AND created_at::timestamptz>=?::timestamptz AND created_at::timestamptz<?::timestamptz AND created_at::timestamptz<=?::timestamptz ORDER BY created_at::timestamptz DESC,id ASC",
       )
-      .iterate(workspaceId, through, start, end, asOf);
+      .all(workspaceId, through, start, end, asOf);
     function* events() {
       for (const row of rows) yield JSON.parse(String(row.data)) as Activity;
     }
     return queryActivities(events(), query, through, new Date(), exportAll);
   }
-  activity(workspaceId: string, id: string): Activity {
-    const row = this.db
+  async activity(workspaceId: string, id: string): Promise<Activity> {
+    const row = await this.db
       .prepare("SELECT data FROM activities WHERE workspace_id=? AND id=?")
       .get(workspaceId, id);
     if (!row) throw new HttpError(404, "History record not found");
     return JSON.parse(String(row.data));
   }
-  read<T>(table: "projects" | "tasks" | "activities", ws: string): T[] {
-    return this.db
-      .prepare(
-        `SELECT data FROM ${table} WHERE workspace_id=?${table === "activities" ? " ORDER BY created_at DESC LIMIT 500" : ""}`,
-      )
-      .all(ws)
-      .map((row) => JSON.parse(String(row.data)) as T);
+  async read<T>(
+    table: "projects" | "tasks" | "activities",
+    ws: string,
+  ): Promise<T[]> {
+    return (
+      await this.db
+        .prepare(
+          `SELECT data FROM ${table} WHERE workspace_id=?${table === "activities" ? " ORDER BY created_at DESC,rowid DESC LIMIT 500" : " ORDER BY rowid"}`,
+        )
+        .all(ws)
+    ).map((row) => JSON.parse(String(row.data)) as T);
   }
-  get<T>(table: "projects" | "tasks", ws: string, id: string): T {
-    const row = this.db
+  async get<T>(
+    table: "projects" | "tasks",
+    ws: string,
+    id: string,
+  ): Promise<T> {
+    const row = await this.db
       .prepare(`SELECT data FROM ${table} WHERE workspace_id=? AND id=?`)
       .get(ws, id);
     if (!row) throw new HttpError(404, "Record not found");
@@ -305,18 +374,18 @@ export class Repository {
         current,
       );
   }
-  assertProjectWritable(ws: string, id: string) {
-    const project = this.get<Project>("projects", ws, id);
+  async assertProjectWritable(ws: string, id: string) {
+    const project = await this.get<Project>("projects", ws, id);
     assertProjectWritable(project);
     return project;
   }
-  putProject(
+  async putProject(
     ws: string,
     p: Project,
     retained?: Project,
     lifecycleChange = false,
   ) {
-    const previous = this.db
+    const previous = await this.db
       .prepare("SELECT data FROM projects WHERE workspace_id=? AND id=?")
       .get(ws, p.id);
     const old: Project | undefined = previous
@@ -332,39 +401,39 @@ export class Repository {
       p,
       projectMembers(
         p,
-        this.members(ws),
+        await this.members(ws),
         retained ?? (previous ? JSON.parse(String(previous.data)) : undefined),
       ),
     );
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO projects(id,workspace_id,version,data) VALUES(?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET version=excluded.version,data=excluded.data",
       )
       .run(p.id, ws, p.version, JSON.stringify(p));
   }
-  putTask(
+  async putTask(
     ws: string,
     t: Task,
     retained?: Task,
     options: { preserveAssignment?: boolean; importArchived?: boolean } = {},
   ) {
-    const previous = this.db
+    const previous = await this.db
       .prepare("SELECT data FROM tasks WHERE workspace_id=? AND id=?")
       .get(ws, t.id);
     const old: Task | undefined = previous
       ? JSON.parse(String(previous.data))
       : undefined;
     if (!options.importArchived) {
-      this.assertProjectWritable(ws, t.projectId);
+      await this.assertProjectWritable(ws, t.projectId);
       if (old && old.projectId !== t.projectId)
-        this.assertProjectWritable(ws, old.projectId);
+        await this.assertProjectWritable(ws, old.projectId);
     }
     t.sortOrder ??=
       old?.projectId === t.projectId && old.parentId === t.parentId
         ? old.sortOrder
         : undefined;
     t.sortOrder ??= nextTaskSortOrder(
-      this.read<Task>("tasks", ws),
+      await this.read<Task>("tasks", ws),
       t.projectId,
       t.parentId,
     );
@@ -380,25 +449,25 @@ export class Repository {
         t,
         taskMember(
           t,
-          this.members(ws),
+          await this.members(ws),
           retained ??
             (previous ? JSON.parse(String(previous.data)) : undefined),
         ),
       );
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO tasks(id,workspace_id,project_id,version,data) VALUES(?,?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET version=excluded.version,data=excluded.data,project_id=excluded.project_id",
       )
       .run(t.id, ws, t.projectId, t.version, JSON.stringify(t));
   }
-  audit(ws: string, a: Activity) {
-    this.db
+  async audit(ws: string, a: Activity) {
+    await this.db
       .prepare(
         "INSERT INTO activities(id,workspace_id,created_at,data) VALUES(?,?,?,?)",
       )
       .run(a.id, ws, a.createdAt, JSON.stringify(a));
   }
-  record(
+  async record(
     actor: Actor,
     kind: Activity["kind"],
     action: string,
@@ -407,7 +476,7 @@ export class Repository {
     source = "Manual edit",
     progressSource?: Activity["progressSource"],
   ) {
-    this.audit(actor.workspaceId, {
+    await this.audit(actor.workspaceId, {
       id: randomUUID(),
       projectId:
         kind === "task"
@@ -434,23 +503,23 @@ export class Repository {
           : undefined;
     if (
       projectId &&
-      this.db
+      (await this.db
         .prepare("SELECT 1 FROM users WHERE id=? AND workspace_id=?")
-        .get(actor.id, actor.workspaceId)
+        .get(actor.id, actor.workspaceId))
     ) {
       const time = new Date().toISOString();
-      this.db
+      await this.db
         .prepare(
           "INSERT INTO project_members(workspace_id,project_id,user_id,joined_at,last_edited_at) VALUES(?,?,?,?,?) ON CONFLICT(workspace_id,project_id,user_id) DO UPDATE SET last_edited_at=excluded.last_edited_at",
         )
         .run(actor.workspaceId, projectId, actor.id, time, time);
     }
-    this.db
+    await this.db
       .prepare("UPDATE workspaces SET revision=revision+1 WHERE id=?")
       .run(actor.workspaceId);
   }
-  validate(ws: string) {
-    const s = this.snapshot(ws);
+  async validate(ws: string) {
+    const s = await this.snapshot(ws);
     validateGraph(s.projects, s.tasks);
   }
 }

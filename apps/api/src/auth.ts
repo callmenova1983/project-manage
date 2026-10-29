@@ -38,46 +38,52 @@ export async function createUser(
 ) {
   if (input.password.length < 14)
     throw new Error("Password must contain at least 14 characters");
-  repo.workspace(input.workspaceId);
   const hash = await passwordHash(input.password);
-  repo.db
-    .prepare(
-      "INSERT INTO users(id,workspace_id,email,name,password_hash,username) VALUES(?,?,?,?,?,?)",
+  await repo.transaction(async () => {
+    await repo.workspace(input.workspaceId);
+    if (
+      await repo.db
+        .prepare("SELECT 1 FROM users WHERE email=?")
+        .get(input.email.toLowerCase())
     )
-    .run(
-      randomUUID(),
-      input.workspaceId,
-      input.email.toLowerCase(),
-      input.name,
-      hash,
-      assignLoginName(repo.db, input.name, input.username),
-    );
+      throw new HttpError(409, "This email cannot be used for a new account");
+    await repo.db
+      .prepare(
+        "INSERT INTO users(id,workspace_id,email,name,password_hash,username) VALUES(?,?,?,?,?,?)",
+      )
+      .run(
+        randomUUID(),
+        input.workspaceId,
+        input.email.toLowerCase(),
+        input.name,
+        hash,
+        await assignLoginName(repo.db, input.name, input.username),
+      );
+  });
 }
-export function sessionActor(
+export async function sessionActor(
   repo: Repository,
   token: string | undefined,
-): { actor: Actor; csrf: string } {
+): Promise<{ actor: Actor; csrf: string }> {
   if (!token) throw new HttpError(401, "Sign in to continue");
-  const row = repo.db
+  const row = await repo.db
     .prepare(
       "SELECT users.id,users.workspace_id,users.email,users.name,users.role,sessions.csrf FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires_at>? AND users.status='active' AND users.requires_activation=0",
     )
     .get(hashToken(token), Date.now());
   if (!row) throw new HttpError(401, "Your session expired. Sign in again.");
-  const enterprise = repo.db
+  const enterprise = await repo.db
     .prepare("SELECT * FROM wecom_login_sessions WHERE token_hash=?")
     .get(hashToken(token));
   if (
     enterprise &&
-    !repo
-      .directory(String(enterprise.workspace_id))
-      .employees.some(
-        (e) =>
-          e.active &&
-          e.userId === row.id &&
-          e.wecomCorpId === enterprise.corp_id &&
-          e.wecomUserId === enterprise.wecom_user_id,
-      )
+    !(await repo.directory(String(enterprise.workspace_id))).employees.some(
+      (e) =>
+        e.active &&
+        e.userId === row.id &&
+        e.wecomCorpId === enterprise.corp_id &&
+        e.wecomUserId === enterprise.wecom_user_id,
+    )
   )
     throw new HttpError(401, "Enterprise membership is no longer active");
   return {

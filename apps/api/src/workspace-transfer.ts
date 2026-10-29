@@ -26,31 +26,37 @@ export function registerWorkspaceTransfer(
   actor: (req: FastifyRequest) => Actor,
   mutate: Mutate,
 ) {
-  app.get("/api/workspace-data", (req, reply) => {
+  app.get("/api/workspace-data", async (req, reply) => {
     const ws = actor(req).workspaceId;
     reply.header(
       "Content-Disposition",
       'attachment; filename="project-data.json"',
     );
-    const activities = repo.db
-      .prepare(
-        "SELECT data FROM activities WHERE workspace_id=? ORDER BY created_at",
-      )
-      .all(ws)
-      .map((row) => JSON.parse(String(row.data)) as Activity);
-    const dailyLogs = repo.db
-      .prepare(
-        "SELECT data FROM daily_logs WHERE workspace_id=? ORDER BY created_at",
-      )
-      .all(ws)
-      .map((row) => JSON.parse(String(row.data)) as DailyLogBatch);
-    return createWorkspaceDataArchive(repo.snapshot(ws), activities, dailyLogs);
+    const activities = (
+      await repo.db
+        .prepare(
+          "SELECT data FROM activities WHERE workspace_id=? ORDER BY created_at",
+        )
+        .all(ws)
+    ).map((row) => JSON.parse(String(row.data)) as Activity);
+    const dailyLogs = (
+      await repo.db
+        .prepare(
+          "SELECT data FROM daily_logs WHERE workspace_id=? ORDER BY created_at",
+        )
+        .all(ws)
+    ).map((row) => JSON.parse(String(row.data)) as DailyLogBatch);
+    return createWorkspaceDataArchive(
+      await repo.snapshot(ws),
+      activities,
+      dailyLogs,
+    );
   });
   app.post(
     "/api/workspace-data",
     { bodyLimit: WORKSPACE_IMPORT_LIMIT },
-    (req) =>
-      mutate(req, (a) => {
+    async (req) =>
+      await mutate(req, async (a) => {
         const request = z
           .object({
             archive: workspaceDataArchive,
@@ -59,7 +65,7 @@ export function registerWorkspaceTransfer(
           })
           .strict()
           .parse(req.body);
-        const current = repo.snapshot(a.workspaceId);
+        const current = await repo.snapshot(a.workspaceId);
         if (current.revision !== request.revision)
           throw new HttpError(
             409,
@@ -75,19 +81,19 @@ export function registerWorkspaceTransfer(
         } catch (e) {
           throw new HttpError(400, (e as Error).message);
         }
-        repo.db
+        await repo.db
           .prepare(
             "INSERT INTO workspace_catalogs(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
           )
           .run(a.workspaceId, JSON.stringify(plan.catalogs));
         for (const project of plan.projects.changes)
-          repo.putProject(
+          await repo.putProject(
             a.workspaceId,
             project,
             current.projects.find((p) => p.id === project.id),
           );
         for (const task of plan.tasks.changes)
-          repo.putTask(
+          await repo.putTask(
             a.workspaceId,
             task,
             current.tasks.find((t) => t.id === task.id),
@@ -97,7 +103,7 @@ export function registerWorkspaceTransfer(
               ),
             },
           );
-        repo.db
+        await repo.db
           .prepare(
             "INSERT INTO workspace_project_order(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
           )
@@ -110,20 +116,20 @@ export function registerWorkspaceTransfer(
           unlinkedAssignments: plan.unlinkedAssignments,
         };
         const members = new Set(
-          repo.members(a.workspaceId).map((member) => member.id),
+          (await repo.members(a.workspaceId)).map((member) => member.id),
         );
         for (const activity of plan.input.activities) {
           const originId = activity.importedFromId ?? activity.id;
           const id = importedId(a.workspaceId, originId);
           if (
-            repo.db
+            await repo.db
               .prepare(
                 "SELECT 1 FROM activities WHERE workspace_id=? AND id IN (?,?)",
               )
               .get(a.workspaceId, originId, id)
           )
             continue;
-          repo.audit(a.workspaceId, {
+          await repo.audit(a.workspaceId, {
             ...activity,
             id,
             importedFromId: originId,
@@ -140,7 +146,7 @@ export function registerWorkspaceTransfer(
               JSON.stringify([batch.source, batch.workDate, batch.reporter]),
             )
             .digest("hex");
-          const existing = repo.db
+          const existing = await repo.db
             .prepare(
               "SELECT id,data FROM daily_logs WHERE workspace_id=? AND fingerprint=?",
             )
@@ -155,7 +161,7 @@ export function registerWorkspaceTransfer(
               JSON.stringify(next)
           )
             continue;
-          repo.db
+          await repo.db
             .prepare(
               "INSERT INTO daily_logs(id,workspace_id,fingerprint,created_at,data) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
             )
@@ -168,7 +174,7 @@ export function registerWorkspaceTransfer(
             );
           receipt.dailyLogsImported++;
         }
-        repo.record(
+        await repo.record(
           a,
           "import",
           "Imported project data",
@@ -176,7 +182,7 @@ export function registerWorkspaceTransfer(
           null,
           `Projects +${receipt.projects.added}, updated ${receipt.projects.updated}; tasks +${receipt.tasks.added}, updated ${receipt.tasks.updated}; history +${receipt.activitiesAdded}; no attachments`,
         );
-        return { snapshot: repo.snapshot(a.workspaceId), receipt };
+        return { snapshot: await repo.snapshot(a.workspaceId), receipt };
       }),
   );
 }

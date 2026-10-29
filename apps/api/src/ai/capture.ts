@@ -1,4 +1,4 @@
-import { captureInstruction } from './instructions.js';
+import { captureInstruction } from "./instructions.js";
 import {
   assembleCaptureText,
   captureAnalysisOutput,
@@ -61,8 +61,7 @@ export function makeCaptureRequest(
     messages: [
       {
         role: "system",
-        content:
-          captureInstruction(recognitionDepth),
+        content: captureInstruction(recognitionDepth),
       },
       {
         role: "user",

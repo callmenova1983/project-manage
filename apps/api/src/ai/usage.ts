@@ -39,22 +39,27 @@ export function recordModelCallUsage(
 }
 
 /** Only provider-reported real usage; never estimate unknown or simulated usage. */
-export function readModelUsage(
+export async function readModelUsage(
   repo: Repository,
   workspaceId: string,
-): ModelUsage {
-  const cte = `WITH usage AS (
-    SELECT created_at, id, json_extract(data,'$.status') AS status,
-      json_extract(data,'$.model') AS model,
-      coalesce(json_extract(data,'$.attempts'),1) AS attempts,
-      json_extract(data,'$.meteredAttempts') AS metered_attempts,
-      CASE WHEN json_type(data,'$.inputTokens')='integer' AND json_extract(data,'$.inputTokens')>=0
-        THEN json_extract(data,'$.inputTokens') END AS input_tokens,
-      CASE WHEN json_type(data,'$.outputTokens')='integer' AND json_extract(data,'$.outputTokens')>=0
-        THEN json_extract(data,'$.outputTokens') END AS output_tokens
-    FROM model_logs WHERE workspace_id=? AND json_extract(data,'$.mode')='real'
+): Promise<ModelUsage> {
+  const cte = `WITH logs AS (
+    SELECT created_at, id, data::jsonb AS payload
+    FROM model_logs WHERE workspace_id=? AND data::jsonb->>'mode'='real'
+  ), usage AS (
+    SELECT created_at, id, payload->>'status' AS status,
+      payload->>'model' AS model,
+      CASE WHEN jsonb_typeof(payload->'attempts')='number'
+        THEN (payload->>'attempts')::numeric ELSE 1 END AS attempts,
+      CASE WHEN jsonb_typeof(payload->'meteredAttempts')='number'
+        THEN (payload->>'meteredAttempts')::numeric END AS metered_attempts,
+      CASE WHEN jsonb_typeof(payload->'inputTokens')='number' AND payload->>'inputTokens' ~ '^[0-9]+$'
+        THEN (payload->>'inputTokens')::numeric END AS input_tokens,
+      CASE WHEN jsonb_typeof(payload->'outputTokens')='number' AND payload->>'outputTokens' ~ '^[0-9]+$'
+        THEN (payload->>'outputTokens')::numeric END AS output_tokens
+    FROM logs
   )`;
-  const row = repo.db
+  const row = (await repo.db
     .prepare(
       `${cte} SELECT
     coalesce(sum(CASE WHEN status!='started' THEN input_tokens END),0) AS input,
@@ -63,19 +68,24 @@ export function readModelUsage(
     count(CASE WHEN status!='started' AND (input_tokens IS NULL OR output_tokens IS NULL OR (attempts>1 AND coalesce(metered_attempts,0)!=attempts)) THEN 1 END) AS unknown,
     count(CASE WHEN status='started' THEN 1 END) AS pending FROM usage`,
     )
-    .get(workspaceId)!;
-  const last = repo.db
+    .get(workspaceId))!;
+  const last = await repo.db
     .prepare(
       `${cte} SELECT * FROM usage WHERE status!='started' ORDER BY created_at DESC,id DESC LIMIT 1`,
     )
     .get(workspaceId);
   const inputTokens = Number(row.input),
     outputTokens = Number(row.output);
-  const speech = repo.db
+  const speech = (await repo.db
     .prepare(
-      "SELECT count(*) AS requests, coalesce(sum(CASE WHEN json_type(data,'$.audioSeconds') IN ('integer','real') THEN json_extract(data,'$.audioSeconds') ELSE 0 END),0) AS seconds, sum(CASE WHEN json_type(data,'$.audioSeconds') NOT IN ('integer','real') OR json_type(data,'$.audioSeconds') IS NULL THEN 1 ELSE 0 END) AS unknown FROM model_logs WHERE workspace_id=? AND json_extract(data,'$.mode')='real' AND json_extract(data,'$.purpose')='speech-transcription' AND json_extract(data,'$.status')!='started'",
+      `SELECT count(*) AS requests,
+        coalesce(sum(CASE WHEN jsonb_typeof(data::jsonb->'audioSeconds')='number'
+          THEN (data::jsonb->>'audioSeconds')::numeric ELSE 0 END),0) AS seconds,
+        count(*) FILTER (WHERE jsonb_typeof(data::jsonb->'audioSeconds') IS DISTINCT FROM 'number') AS unknown
+       FROM model_logs WHERE workspace_id=? AND data::jsonb->>'mode'='real'
+         AND data::jsonb->>'purpose'='speech-transcription' AND data::jsonb->>'status'!='started'`,
     )
-    .get(workspaceId)!;
+    .get(workspaceId))!;
   return {
     ...(Number(speech.requests)
       ? {

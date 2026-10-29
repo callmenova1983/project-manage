@@ -112,7 +112,7 @@ test("following is isolated when switching accounts and workspace data stays sha
   await page
     .getByRole("button", { name: "Toggle sidebar", exact: true })
     .click();
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await scenarioLogin(page, "data/e2e-admin-login.json");
   await page.goto("/projects");
@@ -126,7 +126,7 @@ test("following is isolated when switching accounts and workspace data stays sha
   await page
     .getByRole("button", { name: "Toggle sidebar", exact: true })
     .click();
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await scenarioLogin(page, "data/e2e-login.json");
   await page.goto("/projects");

@@ -22,10 +22,10 @@ for (const language of ["en", "zh"] as const)
           await expect
             .poll(
               async () =>
-                page.evaluate(() => ({
+                (await page.evaluate(() => ({
                   width: document.documentElement.clientWidth,
                   scroll: document.documentElement.scrollWidth,
-                })),
+                }))),
               {
                 message: `${name} must use the exact CSS viewport without page overflow`,
               },

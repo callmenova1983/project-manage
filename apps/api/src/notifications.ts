@@ -57,7 +57,7 @@ export class NotificationService {
     private options: {
       fetcher?: typeof fetch;
       clock?: () => Date;
-      directoryCorpId?: (ws: string) => string;
+      directoryCorpId?: (ws: string) => string | Promise<string>;
       intervalMs?: number;
     } = {},
   ) {
@@ -66,8 +66,8 @@ export class NotificationService {
   now() {
     return this.options.clock?.() ?? new Date();
   }
-  private account(ws: string, userId: string) {
-    const row = this.repo.db
+  private async account(ws: string, userId: string) {
+    const row = await this.repo.db
       .prepare(
         "SELECT preferences,following FROM notification_accounts WHERE workspace_id=? AND user_id=?",
       )
@@ -81,26 +81,26 @@ export class NotificationService {
       following: row ? (JSON.parse(String(row.following)) as string[]) : [],
     };
   }
-  private saveAccount(
+  private async saveAccount(
     ws: string,
     userId: string,
     preferences: NotificationPreferences,
     following: string[],
   ) {
-    this.repo.db
+    await this.repo.db
       .prepare(
         "INSERT INTO notification_accounts(workspace_id,user_id,preferences,following) VALUES(?,?,?,?) ON CONFLICT(workspace_id,user_id) DO UPDATE SET preferences=excluded.preferences,following=excluded.following",
       )
       .run(ws, userId, JSON.stringify(preferences), JSON.stringify(following));
   }
-  private rows(ws: string, userId?: string): StoredMessage[] {
+  private async rows(ws: string, userId?: string): Promise<StoredMessage[]> {
     const rows = userId
-      ? this.repo.db
+      ? await this.repo.db
           .prepare(
             "SELECT generation,signature,data FROM notifications WHERE workspace_id=? AND user_id=?",
           )
           .all(ws, userId)
-      : this.repo.db
+      : await this.repo.db
           .prepare(
             "SELECT generation,signature,data FROM notifications WHERE workspace_id=?",
           )
@@ -111,25 +111,25 @@ export class NotificationService {
       signature: String(row.signature),
     }));
   }
-  private write(item: NotificationItem) {
-    this.repo.db
+  private async write(item: NotificationItem) {
+    await this.repo.db
       .prepare("UPDATE notifications SET data=? WHERE id=?")
       .run(JSON.stringify(item), item.id);
   }
-  private cancel(id: string, reason: string) {
-    this.repo.db
+  private async cancel(id: string, reason: string) {
+    await this.repo.db
       .prepare(
         "UPDATE notification_outbox SET state='cancelled',error=?,updated_at=? WHERE notification_id=? AND state IN ('pending','blocked','failed')",
       )
       .run(reason, iso(this.now()), id);
   }
-  private upsert(
+  private async upsert(
     ws: string,
     userId: string,
     candidate: NotificationCandidate,
     emit: boolean,
   ) {
-    const row = this.repo.db
+    const row = await this.repo.db
       .prepare(
         "SELECT id,generation,signature,data FROM notifications WHERE workspace_id=? AND user_id=? AND logical_key=?",
       )
@@ -156,7 +156,7 @@ export class NotificationService {
       resolvedAt: null,
       snoozedUntil: previous?.snoozedUntil ?? null,
     };
-    this.repo.db
+    await this.repo.db
       .prepare(
         "INSERT INTO notifications(id,workspace_id,user_id,logical_key,generation,signature,data) VALUES(?,?,?,?,?,?,?) ON CONFLICT(workspace_id,user_id,logical_key) DO UPDATE SET generation=excluded.generation,signature=excluded.signature,data=excluded.data",
       )
@@ -169,57 +169,59 @@ export class NotificationService {
         signature,
         JSON.stringify(item),
       );
-    if (changed) this.cancel(item.id, "事项提醒条件已变化，旧投递已关闭。");
+    if (changed)
+      await this.cancel(item.id, "事项提醒条件已变化，旧投递已关闭。");
     if (changed && emit && candidate.kind !== "project_metadata")
-      this.enqueue(ws, userId, item, generation);
+      await this.enqueue(ws, userId, item, generation);
     return item;
   }
-  private enqueue(
+  private async enqueue(
     ws: string,
     userId: string,
     item: NotificationItem,
     generation: number,
   ) {
     if (item.kind === "project_metadata") return;
-    const prefs = this.account(ws, userId).preferences;
+    const prefs = (await this.account(ws, userId)).preferences;
     if (
       ["in_app", "muted"].includes(prefs.delivery) ||
       (prefs.delivery === "important" && !externalKinds.has(item.kind))
     )
       return;
     const now = iso(this.now());
-    this.repo.db
+    await this.repo.db
       .prepare(
-        "INSERT OR IGNORE INTO notification_outbox(id,workspace_id,user_id,notification_id,generation,state,next_at,created_at,updated_at) VALUES(?,?,?,?,?,'pending',?,?,?)",
+        "INSERT INTO notification_outbox(id,workspace_id,user_id,notification_id,generation,state,next_at,created_at,updated_at) VALUES(?,?,?,?,?,'pending',?,?,?) ON CONFLICT DO NOTHING",
       )
       .run(randomUUID(), ws, userId, item.id, generation, now, now, now);
   }
   /** Called inside the same transaction as a business change, or from a timer transaction. */
-  reconcileWorkspace(ws: string, options: ReconcileOptions = {}) {
-    const snapshot = this.repo.snapshot(ws),
+  async reconcileWorkspace(ws: string, options: ReconcileOptions = {}) {
+    const snapshot = await this.repo.snapshot(ws),
       now = this.now();
-    const cursor = this.repo.db
+    const cursor = await this.repo.db
       .prepare(
         "SELECT activity_row FROM notification_cursors WHERE workspace_id=?",
       )
       .get(ws);
     const through = Number(
-      this.repo.db
+      (await this.repo.db
         .prepare(
           "SELECT COALESCE(MAX(rowid),0) AS n FROM activities WHERE workspace_id=?",
         )
-        .get(ws)!.n,
+        .get(ws))!.n,
     );
     const events = cursor
-      ? this.repo.db
-          .prepare(
-            "SELECT rowid,data FROM activities WHERE workspace_id=? AND rowid>? AND rowid<=? ORDER BY rowid",
-          )
-          .all(ws, Number(cursor.activity_row), through)
-          .map((row) => ({
-            row: Number(row.rowid),
-            event: JSON.parse(String(row.data)) as Activity,
-          }))
+      ? (
+          await this.repo.db
+            .prepare(
+              "SELECT rowid,data FROM activities WHERE workspace_id=? AND rowid>? AND rowid<=? ORDER BY rowid",
+            )
+            .all(ws, Number(cursor.activity_row), through)
+        ).map((row) => ({
+          row: Number(row.rowid),
+          event: JSON.parse(String(row.data)) as Activity,
+        }))
       : [];
     const suppress =
       options.suppress ||
@@ -231,13 +233,13 @@ export class NotificationService {
           ),
       );
     if (events.some(({ event }) => event.kind === "import")) {
-      for (const { item } of this.rows(ws)) {
+      for (const { item } of await this.rows(ws)) {
         item.resolvedAt = iso(now);
-        this.write(item);
-        this.cancel(item.id, "工作区数据已替换，旧通知停止投递。");
+        await this.write(item);
+        await this.cancel(item.id, "工作区数据已替换，旧通知停止投递。");
       }
     }
-    const activeUsers = this.repo.db
+    const activeUsers = await this.repo.db
       .prepare(
         "SELECT id,name,role FROM users WHERE workspace_id=? AND status='active' AND requires_activation=0",
       )
@@ -247,18 +249,22 @@ export class NotificationService {
         candidates = deriveNotifications(snapshot, id, now, {
           isAdmin: user.role === "admin",
         });
-      const account = this.account(ws, id),
+      const account = await this.account(ws, id),
         following = [
           ...new Set(
-            account.following
-              .map((value) => this.resolveProject(ws, value))
-              .filter((value) =>
-                snapshot.projects.some((project) => project.id === value),
-              ),
+            (
+              await Promise.all(
+                account.following.map(
+                  async (value) => await this.resolveProject(ws, value),
+                ),
+              )
+            ).filter((value) =>
+              snapshot.projects.some((project) => project.id === value),
+            ),
           ),
         ];
       if (JSON.stringify(following) !== JSON.stringify(account.following))
-        this.saveAccount(ws, id, account.preferences, following);
+        await this.saveAccount(ws, id, account.preferences, following);
       if (user.role === "admin") {
         const parents = new Set(
           snapshot.tasks.map((task) => task.parentId).filter(Boolean),
@@ -332,38 +338,41 @@ export class NotificationService {
       }
       const keys = new Set(candidates.map((candidate) => candidate.key));
       for (const candidate of candidates)
-        this.upsert(ws, id, candidate, !!cursor && !suppress);
-      for (const { item } of this.rows(ws, id)) {
+        await this.upsert(ws, id, candidate, !!cursor && !suppress);
+      for (const { item } of await this.rows(ws, id)) {
         const derived = [
           "task_risk",
           "project_metadata",
           "delivery_issue",
         ].includes(item.kind);
-        const closedEvent = !this.eventRelevant(ws, id, item);
+        const closedEvent = !(await this.eventRelevant(ws, id, item));
         if (
           !item.resolvedAt &&
           ((derived && !keys.has(item.key)) || closedEvent)
         ) {
           item.resolvedAt = iso(now);
           item.updatedAt = iso(now);
-          this.write(item);
-          this.cancel(item.id, "事项已完成、作废、移交或不再符合提醒条件。");
+          await this.write(item);
+          await this.cancel(
+            item.id,
+            "事项已完成、作废、移交或不再符合提醒条件。",
+          );
         }
       }
     }
-    this.repo.db
+    await this.repo.db
       .prepare(
         "UPDATE notification_outbox SET state='cancelled',error='接收账号已停用或不存在',updated_at=? WHERE workspace_id=? AND state IN ('pending','blocked','failed') AND user_id NOT IN (SELECT id FROM users WHERE workspace_id=? AND status='active' AND requires_activation=0)",
       )
       .run(iso(now), ws, ws);
-    if (cursor && !suppress) this.processEvents(ws, snapshot, events);
-    this.repo.db
+    if (cursor && !suppress) await this.processEvents(ws, snapshot, events);
+    await this.repo.db
       .prepare(
         "INSERT INTO notification_cursors(workspace_id,activity_row,initialized_at) VALUES(?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET activity_row=excluded.activity_row",
       )
       .run(ws, through, iso(now));
   }
-  private processEvents(
+  private async processEvents(
     ws: string,
     snapshot: Snapshot,
     events: { row: number; event: Activity }[],
@@ -491,7 +500,7 @@ export class NotificationService {
               .filter((m) => m.projectId === after.id)
               .map((m) => m.userId),
           ]);
-          for (const row of this.repo.db
+          for (const row of await this.repo.db
             .prepare(
               "SELECT user_id,following FROM notification_accounts WHERE workspace_id=?",
             )
@@ -533,20 +542,20 @@ export class NotificationService {
           .filter((e) => e.kind === "task")
           .map((e) => e.entityId);
       }
-      this.upsert(ws, recipient, candidate, true);
+      await this.upsert(ws, recipient, candidate, true);
     }
   }
-  private binding(ws: string, userId: string) {
-    const stored = this.credentials.read(ws),
+  private async binding(ws: string, userId: string) {
+    const stored = await this.credentials.read(ws),
       config = stored?.config;
-    const directory = this.repo.directory(ws),
+    const directory = await this.repo.directory(ws),
       employee = directory.employees.find((value) => value.userId === userId);
-    const user = this.repo.db
+    const user = await this.repo.db
       .prepare(
         "SELECT status,requires_activation FROM users WHERE workspace_id=? AND id=?",
       )
       .get(ws, userId);
-    const scope = this.repo.db
+    const scope = await this.repo.db
       .prepare(
         "SELECT corp_id,synced_at FROM notification_directory_scope WHERE workspace_id=?",
       )
@@ -555,8 +564,9 @@ export class NotificationService {
       !!config?.corpId &&
       !!scope &&
       scope.corp_id === config.corpId &&
-      (this.options.directoryCorpId?.(ws) ?? config.corpId) === config.corpId;
-    let binding = this.repo.db
+      ((await this.options.directoryCorpId?.(ws)) ?? config.corpId) ===
+        config.corpId;
+    let binding = await this.repo.db
       .prepare(
         "SELECT * FROM notification_bindings WHERE workspace_id=? AND user_id=?",
       )
@@ -591,7 +601,7 @@ export class NotificationService {
         binding.wecom_user_id !== employee.wecomUserId ||
         binding.fingerprint !== fingerprint)
     ) {
-      this.repo.db
+      await this.repo.db
         .prepare(
           "INSERT INTO notification_bindings(workspace_id,user_id,employee_id,corp_id,wecom_user_id,fingerprint,version,confirmed_at) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(workspace_id,user_id) DO UPDATE SET employee_id=excluded.employee_id,corp_id=excluded.corp_id,wecom_user_id=excluded.wecom_user_id,fingerprint=excluded.fingerprint,version=notification_bindings.version+1,confirmed_at=excluded.confirmed_at",
         )
@@ -604,7 +614,7 @@ export class NotificationService {
           fingerprint,
           iso(this.now()),
         );
-      binding = this.repo.db
+      binding = await this.repo.db
         .prepare(
           "SELECT * FROM notification_bindings WHERE workspace_id=? AND user_id=?",
         )
@@ -621,9 +631,9 @@ export class NotificationService {
       valid: !reason,
     };
   }
-  state(a: Actor): NotificationResponse {
+  async state(a: Actor): Promise<NotificationResponse> {
     const now = this.now(),
-      all = this.rows(a.workspaceId, a.id).map((row) => row.item);
+      all = (await this.rows(a.workspaceId, a.id)).map((row) => row.item);
     const pendingCount = all.filter(
       (item) => item.actionable && !item.resolvedAt,
     ).length;
@@ -633,8 +643,8 @@ export class NotificationService {
         !item.readAt &&
         (!item.snoozedUntil || Date.parse(item.snoozedUntil) <= now.getTime()),
     ).length;
-    const account = this.account(a.workspaceId, a.id),
-      binding = this.binding(a.workspaceId, a.id);
+    const account = await this.account(a.workspaceId, a.id),
+      binding = await this.binding(a.workspaceId, a.id);
     return {
       items: all
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -643,7 +653,7 @@ export class NotificationService {
       pendingCount,
       followingIds: account.following,
       preferences: account.preferences,
-      timeZone: this.repo.settings(a.workspaceId).timeZone,
+      timeZone: (await this.repo.settings(a.workspaceId)).timeZone,
       asOf: iso(now),
       deliveryStatus: {
         configured: !!binding.config?.enabled,
@@ -652,10 +662,10 @@ export class NotificationService {
       },
     };
   }
-  action(a: Actor, raw: unknown) {
+  async action(a: Actor, raw: unknown) {
     const input = notificationActionInput.parse(raw),
       now = iso(this.now());
-    const rows = this.rows(a.workspaceId, a.id),
+    const rows = await this.rows(a.workspaceId, a.id),
       items = input.ids.map(
         (id) => rows.find((row) => row.item.id === id)?.item,
       );
@@ -684,8 +694,8 @@ export class NotificationService {
         item.readAt = null;
         // A personal reschedule is a fresh occurrence, even if its previous
         // channel delivery was accepted. The task's business dates stay intact.
-        this.cancel(item.id, "个人稍后提醒时间已更新。");
-        this.repo.db
+        await this.cancel(item.id, "个人稍后提醒时间已更新。");
+        await this.repo.db
           .prepare(
             "UPDATE notifications SET generation=generation+1 WHERE id=?",
           )
@@ -693,74 +703,81 @@ export class NotificationService {
       }
       if (input.action === "unsnooze") {
         item.snoozedUntil = null;
-        this.cancel(item.id, "已取消个人稍后提醒，事项仍保留在当前待办。");
+        await this.cancel(
+          item.id,
+          "已取消个人稍后提醒，事项仍保留在当前待办。",
+        );
       }
       item.updatedAt = now;
-      this.write(item);
+      await this.write(item);
       if (input.action === "snooze") {
         const generation = Number(
-          this.repo.db
+          (await this.repo.db
             .prepare("SELECT generation FROM notifications WHERE id=?")
-            .get(item.id)!.generation,
+            .get(item.id))!.generation,
         );
-        this.enqueue(a.workspaceId, a.id, item, generation);
+        await this.enqueue(a.workspaceId, a.id, item, generation);
       }
-      if (item.resolvedAt) this.cancel(item.id, "动态已阅读，不再外推。");
+      if (item.resolvedAt) await this.cancel(item.id, "动态已阅读，不再外推。");
     }
-    return this.state(a);
+    return await this.state(a);
   }
-  preferences(a: Actor, raw: unknown) {
+  async preferences(a: Actor, raw: unknown) {
     const input = notificationPreferencesInput.parse(raw),
-      current = this.account(a.workspaceId, a.id);
+      current = await this.account(a.workspaceId, a.id);
     if (input.version !== current.preferences.version)
       throw new HttpError(409, "提醒设置已在其他设备更新，请刷新后重试。");
-    this.saveAccount(
+    await this.saveAccount(
       a.workspaceId,
       a.id,
       { ...input, version: input.version + 1 },
       current.following,
     );
     if (["muted", "in_app"].includes(input.delivery))
-      this.repo.db
+      await this.repo.db
         .prepare(
           "UPDATE notification_outbox SET state='cancelled',error='接收人已关闭站外通知',updated_at=? WHERE workspace_id=? AND user_id=? AND state IN ('pending','blocked','failed')",
         )
         .run(iso(this.now()), a.workspaceId, a.id);
-    return this.state(a);
+    return await this.state(a);
   }
-  following(a: Actor, raw: unknown) {
+  async following(a: Actor, raw: unknown) {
     const input = notificationFollowingInput.parse(raw),
-      current = this.account(a.workspaceId, a.id);
+      current = await this.account(a.workspaceId, a.id);
     const projectIds = [
       ...new Set(
-        input.projectIds.map((id) => this.resolveProject(a.workspaceId, id)),
+        await Promise.all(
+          input.projectIds.map(
+            async (id) => await this.resolveProject(a.workspaceId, id),
+          ),
+        ),
       ),
     ];
     for (const id of projectIds)
       if (
-        !this.repo.db
+        !(await this.repo.db
           .prepare("SELECT 1 FROM projects WHERE workspace_id=? AND id=?")
-          .get(a.workspaceId, id)
+          .get(a.workspaceId, id))
       )
         throw new HttpError(400, "关注项目不存在，请刷新列表。");
     const ids =
       input.mode === "merge"
         ? [...new Set([...current.following, ...projectIds])]
         : projectIds;
-    this.saveAccount(a.workspaceId, a.id, current.preferences, ids);
-    return this.state(a);
+    await this.saveAccount(a.workspaceId, a.id, current.preferences, ids);
+    return await this.state(a);
   }
-  resolveProject(ws: string, id: string) {
+  async resolveProject(ws: string, id: string) {
     const seen = new Set<string>();
     while (!seen.has(id) && seen.size < 50) {
       seen.add(id);
       if (
-        this.repo.db
+        await this.repo.db
           .prepare("SELECT 1 FROM projects WHERE workspace_id=? AND id=?")
           .get(ws, id)
       )
         return id;
-      const row = this.repo.db
+      const row = await this.repo.db
         .prepare(
           "SELECT target_id FROM project_redirects WHERE workspace_id=? AND source_id=?",
         )
@@ -770,8 +787,8 @@ export class NotificationService {
     }
     throw new HttpError(409, "项目合并关联需要核对。");
   }
-  open(a: Actor, id: string) {
-    const row = this.repo.db
+  async open(a: Actor, id: string) {
+    const row = await this.repo.db
       .prepare(
         "SELECT data FROM notifications WHERE id=? AND workspace_id=? AND user_id=?",
       )
@@ -779,7 +796,7 @@ export class NotificationService {
     if (!row) throw new HttpError(404, "消息不存在或不属于当前账号。");
     const item = JSON.parse(String(row.data)) as NotificationItem;
     if (item.taskId) {
-      const task = this.repo.db
+      const task = await this.repo.db
         .prepare("SELECT project_id FROM tasks WHERE workspace_id=? AND id=?")
         .get(a.workspaceId, item.taskId);
       if (task)
@@ -788,31 +805,31 @@ export class NotificationService {
         };
     }
     const projectId = item.projectId
-      ? this.resolveProject(a.workspaceId, item.projectId)
+      ? await this.resolveProject(a.workspaceId, item.projectId)
       : null;
     if (
       projectId &&
-      this.repo.db
+      (await this.repo.db
         .prepare("SELECT 1 FROM projects WHERE workspace_id=? AND id=?")
-        .get(a.workspaceId, projectId)
+        .get(a.workspaceId, projectId))
     )
       return {
         path: `/projects/${encodeURIComponent(projectId)}${item.kind === "project_update" ? "#progress-history" : ""}`,
       };
     return { path: "/projects" };
   }
-  adminState(a: Actor): NotificationAdminState {
-    adminActor(this.repo, a);
-    const stored = this.credentials.read(a.workspaceId),
+  async adminState(a: Actor): Promise<NotificationAdminState> {
+    await adminActor(this.repo, a);
+    const stored = await this.credentials.read(a.workspaceId),
       config = stored?.config;
-    const directory = this.repo.directory(a.workspaceId),
-      scope = this.repo.db
+    const directory = await this.repo.directory(a.workspaceId),
+      scope = await this.repo.db
         .prepare(
           "SELECT corp_id FROM notification_directory_scope WHERE workspace_id=?",
         )
         .get(a.workspaceId);
     const directoryCorpId =
-      this.options.directoryCorpId?.(a.workspaceId) ??
+      (await this.options.directoryCorpId?.(a.workspaceId)) ??
       String(scope?.corp_id ?? "");
     return {
       config: {
@@ -828,48 +845,54 @@ export class NotificationService {
         !!scope &&
         scope.corp_id === config?.corpId &&
         directoryCorpId === config?.corpId,
-      bindings: directory.employees.map((employee) => {
-        const binding = this.binding(a.workspaceId, employee.userId ?? "");
-        const associated =
-          !!employee.userId &&
-          !!employee.wecomUserId &&
-          !!this.repo.db
-            .prepare("SELECT 1 FROM users WHERE workspace_id=? AND id=?")
-            .get(a.workspaceId, employee.userId);
-        return {
-          employeeId: employee.id,
-          userId: employee.userId ?? "",
-          name: employee.name,
-          wecomUserId: employee.wecomUserId,
-          active: binding.valid,
-          confirmed: associated,
-          reason: employee.userId
-            ? binding.reason
-            : "请先在团队通讯录中关联登录账号。",
-        };
-      }),
-      deliveries: this.repo.db
-        .prepare(
-          "SELECT o.*,u.name,n.data FROM notification_outbox o JOIN users u ON u.id=o.user_id JOIN notifications n ON n.id=o.notification_id WHERE o.workspace_id=? ORDER BY o.created_at DESC LIMIT 100",
-        )
-        .all(a.workspaceId)
-        .map((row) => ({
-          id: String(row.id),
-          recipient: String(row.name),
-          title: (JSON.parse(String(row.data)) as NotificationItem).title,
-          state: String(row.state),
-          attempts: Number(row.attempts),
-          error: String(row.error),
-          createdAt: String(row.created_at),
-          updatedAt: String(row.updated_at),
-          externalId: row.external_id ? String(row.external_id) : null,
-        })),
+      bindings: await Promise.all(
+        directory.employees.map(async (employee) => {
+          const binding = await this.binding(
+            a.workspaceId,
+            employee.userId ?? "",
+          );
+          const associated =
+            !!employee.userId &&
+            !!employee.wecomUserId &&
+            !!(await this.repo.db
+              .prepare("SELECT 1 FROM users WHERE workspace_id=? AND id=?")
+              .get(a.workspaceId, employee.userId));
+          return {
+            employeeId: employee.id,
+            userId: employee.userId ?? "",
+            name: employee.name,
+            wecomUserId: employee.wecomUserId,
+            active: binding.valid,
+            confirmed: associated,
+            reason: employee.userId
+              ? binding.reason
+              : "请先在团队通讯录中关联登录账号。",
+          };
+        }),
+      ),
+      deliveries: (
+        await this.repo.db
+          .prepare(
+            "SELECT o.*,u.name,n.data FROM notification_outbox o JOIN users u ON u.id=o.user_id JOIN notifications n ON n.id=o.notification_id WHERE o.workspace_id=? ORDER BY o.created_at DESC LIMIT 100",
+          )
+          .all(a.workspaceId)
+      ).map((row) => ({
+        id: String(row.id),
+        recipient: String(row.name),
+        title: (JSON.parse(String(row.data)) as NotificationItem).title,
+        state: String(row.state),
+        attempts: Number(row.attempts),
+        error: String(row.error),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+        externalId: row.external_id ? String(row.external_id) : null,
+      })),
     };
   }
-  saveConfig(a: Actor, raw: unknown) {
-    adminActor(this.repo, a);
+  async saveConfig(a: Actor, raw: unknown) {
+    await adminActor(this.repo, a);
     const input = notificationConfigInput.parse(raw),
-      old = this.credentials.read(a.workspaceId);
+      old = await this.credentials.read(a.workspaceId);
     if (input.version !== (old?.version ?? 0))
       throw new HttpError(409, "通知应用配置已更新，请重新打开后保存。");
     const secret =
@@ -880,28 +903,28 @@ export class NotificationService {
         : "");
     if (input.enabled && !secret)
       throw new HttpError(400, "请填写通知应用的 Secret。");
-    this.credentials.save(a.workspaceId, input.version + 1, {
+    await this.credentials.save(a.workspaceId, input.version + 1, {
       enabled: input.enabled,
       corpId: input.corpId,
       agentId: input.agentId,
       baseUrl: input.baseUrl,
       secret,
     });
-    this.repo.db
+    await this.repo.db
       .prepare(
         "UPDATE notification_outbox SET state='cancelled',error='通知应用配置已变更，旧投递停止',updated_at=? WHERE workspace_id=? AND state IN ('pending','blocked','failed')",
       )
       .run(iso(this.now()), a.workspaceId);
-    adminAudit(
+    await adminAudit(
       this.repo,
       a,
       "Updated notification application configuration",
       a.workspaceId,
     );
-    return this.adminState(a);
+    return await this.adminState(a);
   }
-  confirmBindings(a: Actor, raw: unknown) {
-    adminActor(this.repo, a);
+  async confirmBindings(a: Actor, raw: unknown) {
+    await adminActor(this.repo, a);
     const input = z
       .object({
         employeeIds: z.array(z.string().min(1)).min(1).max(500),
@@ -909,11 +932,11 @@ export class NotificationService {
       })
       .strict()
       .parse(raw);
-    const current = this.credentials.read(a.workspaceId);
+    const current = await this.credentials.read(a.workspaceId);
     if (!current?.config.enabled || current.version !== input.configVersion)
       throw new HttpError(409, "请先保存并启用当前企业的通知应用配置。");
-    const directory = this.repo.directory(a.workspaceId),
-      scope = this.repo.db
+    const directory = await this.repo.directory(a.workspaceId),
+      scope = await this.repo.db
         .prepare(
           "SELECT corp_id,synced_at FROM notification_directory_scope WHERE workspace_id=?",
         )
@@ -921,7 +944,8 @@ export class NotificationService {
     if (
       !scope ||
       scope.corp_id !== current.config.corpId ||
-      this.options.directoryCorpId?.(a.workspaceId) !== current.config.corpId
+      (await this.options.directoryCorpId?.(a.workspaceId)) !==
+        current.config.corpId
     )
       throw new HttpError(400, "请先使用同一企业配置同步通讯录，再确认绑定。");
     for (const id of input.employeeIds) {
@@ -934,17 +958,17 @@ export class NotificationService {
         /[|\s]/.test(employee.wecomUserId) ||
         employee.wecomCorpId !== current.config.corpId ||
         employee.wecomSeenAt !== scope.synced_at ||
-        !this.repo.db
+        !(await this.repo.db
           .prepare(
             "SELECT 1 FROM users WHERE workspace_id=? AND id=? AND status='active' AND requires_activation=0",
           )
-          .get(a.workspaceId, employee.userId)
+          .get(a.workspaceId, employee.userId))
       )
         throw new HttpError(
           400,
           "所选成员尚未完成本地账号关联，或不在本次企业通讯录同步结果中。",
         );
-      this.repo.db
+      await this.repo.db
         .prepare(
           "INSERT INTO notification_bindings(workspace_id,user_id,employee_id,corp_id,wecom_user_id,fingerprint,version,confirmed_at) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(workspace_id,user_id) DO UPDATE SET employee_id=excluded.employee_id,corp_id=excluded.corp_id,wecom_user_id=excluded.wecom_user_id,fingerprint=excluded.fingerprint,version=notification_bindings.version+1,confirmed_at=excluded.confirmed_at",
         )
@@ -957,7 +981,7 @@ export class NotificationService {
           hash([employee.id, employee.userId, employee.wecomUserId]),
           iso(this.now()),
         );
-      this.repo.db
+      await this.repo.db
         .prepare(
           "UPDATE notification_outbox SET state=CASE WHEN created_at>=? THEN 'pending' ELSE 'cancelled' END,next_at=?,updated_at=?,error=CASE WHEN created_at>=? THEN '' ELSE '过旧提醒保留在站内，请查看当前待办' END WHERE workspace_id=? AND user_id=? AND state='blocked'",
         )
@@ -970,21 +994,21 @@ export class NotificationService {
           employee.userId,
         );
     }
-    adminAudit(
+    await adminAudit(
       this.repo,
       a,
       "Confirmed notification recipient bindings",
       a.workspaceId,
     );
-    return this.adminState(a);
+    return await this.adminState(a);
   }
-  retry(a: Actor, raw: unknown) {
-    adminActor(this.repo, a);
+  async retry(a: Actor, raw: unknown) {
+    await adminActor(this.repo, a);
     const input = z
       .object({ id: z.string(), confirmUnknown: z.boolean().optional() })
       .strict()
       .parse(raw);
-    const row = this.repo.db
+    const row = await this.repo.db
       .prepare(
         "SELECT state FROM notification_outbox WHERE id=? AND workspace_id=?",
       )
@@ -997,13 +1021,13 @@ export class NotificationService {
       );
     if (!["failed", "blocked", "unknown"].includes(String(row.state)))
       throw new HttpError(400, "仅失败、待核验或结果不明的投递可重试。");
-    this.repo.db
+    await this.repo.db
       .prepare(
         "UPDATE notification_outbox SET state='pending',attempts=0,next_at=?,updated_at=?,error='' WHERE id=?",
       )
       .run(iso(this.now()), iso(this.now()), input.id);
-    adminAudit(this.repo, a, "Retried notification delivery", input.id);
-    return this.adminState(a);
+    await adminAudit(this.repo, a, "Retried notification delivery", input.id);
+    return await this.adminState(a);
   }
   private nextClock(now: Date, time: string, timeZone: string) {
     const zoned = Temporal.Instant.from(now.toISOString()).toZonedDateTimeISO(
@@ -1020,52 +1044,61 @@ export class NotificationService {
         .toZonedDateTime({ timeZone, plainTime: clock });
     return target.toInstant().toString();
   }
-  private eventRelevant(ws: string, userId: string, item: NotificationItem) {
+  private async eventRelevant(
+    ws: string,
+    userId: string,
+    item: NotificationItem,
+  ) {
     if (!["assignment", "task_change"].includes(item.kind)) return true;
     const ids = item.taskIds?.length
       ? item.taskIds
       : item.taskId
         ? [item.taskId]
         : [];
-    if (ids.length)
-      return ids.some((id) => {
-        const row = this.repo.db
+    if (ids.length) {
+      for (const id of ids) {
+        const row = await this.repo.db
           .prepare("SELECT data FROM tasks WHERE workspace_id=? AND id=?")
           .get(ws, id);
-        if (!row) return false;
+        if (!row) continue;
         const task = JSON.parse(String(row.data)) as Task;
-        if (task.status === "done" || task.voided) return false;
+        if (task.status === "done" || task.voided) continue;
         if (task.assigneeId === userId) return true;
         if (
           item.kind === "task_change" &&
           task.status === "blocked" &&
           item.reasons.includes("需要协调")
         ) {
-          const project = this.repo.db
+          const project = await this.repo.db
             .prepare("SELECT data FROM projects WHERE workspace_id=? AND id=?")
             .get(ws, task.projectId);
-          return (
+          if (
             project &&
             (JSON.parse(String(project.data)) as Project).ownerId === userId
-          );
+          )
+            return true;
         }
-        return false;
-      });
+      }
+      return false;
+    }
     if (item.kind === "assignment" && item.projectId) {
-      const row = this.repo.db
+      const row = await this.repo.db
         .prepare("SELECT data FROM projects WHERE workspace_id=? AND id=?")
-        .get(ws, this.resolveProject(ws, item.projectId));
+        .get(ws, await this.resolveProject(ws, item.projectId));
       return (
         !!row && (JSON.parse(String(row.data)) as Project).ownerId === userId
       );
     }
     return true;
   }
-  private validDelivery(row: Record<string, unknown>, processing = false) {
+  private async validDelivery(
+    row: Record<string, unknown>,
+    processing = false,
+  ) {
     const ws = String(row.workspace_id),
       userId = String(row.user_id),
       now = iso(this.now());
-    const message = this.repo.db
+    const message = await this.repo.db
       .prepare(
         "SELECT generation,data FROM notifications WHERE id=? AND workspace_id=? AND user_id=?",
       )
@@ -1075,7 +1108,7 @@ export class NotificationService {
     const item = JSON.parse(String(message.data)) as NotificationItem;
     if (item.resolvedAt)
       return { valid: false, reason: "事项已处理或提醒条件已解除。" };
-    if (!this.eventRelevant(ws, userId, item))
+    if (!(await this.eventRelevant(ws, userId, item)))
       return { valid: false, reason: "事项已完成或责任已转移。" };
     if (item.snoozedUntil && item.snoozedUntil > now)
       return {
@@ -1083,9 +1116,9 @@ export class NotificationService {
         reason: "接收人选择稍后提醒。",
         until: item.snoozedUntil,
       };
-    const prefs = this.account(ws, userId).preferences;
+    const prefs = (await this.account(ws, userId)).preferences;
     if (processing) {
-      const timeZone = this.repo.settings(ws).timeZone;
+      const timeZone = (await this.repo.settings(ws)).timeZone;
       if (isNotificationQuietTime(this.now(), timeZone, prefs))
         return {
           valid: false,
@@ -1107,7 +1140,7 @@ export class NotificationService {
       (prefs.delivery === "important" && !externalKinds.has(item.kind))
     )
       return { valid: false, reason: "接收人已关闭此类站外通知。" };
-    const binding = this.binding(ws, userId);
+    const binding = await this.binding(ws, userId);
     if (!binding.valid)
       return { valid: false, reason: binding.reason, blocked: true };
     if (
@@ -1123,17 +1156,17 @@ export class NotificationService {
       stamp = iso(now);
     // Directory account bindings are authoritative; recover blocked deliveries
     // after a member is linked without requiring another confirmation step.
-    const blocked = this.repo.db
+    const blocked = await this.repo.db
       .prepare(
         "SELECT * FROM notification_outbox WHERE state='blocked' ORDER BY updated_at LIMIT 200",
       )
       .all();
     for (const row of blocked) {
-      const check = this.validDelivery(row);
+      const check = await this.validDelivery(row);
       if (!check.valid && check.blocked) continue;
       const recent =
         Date.parse(String(row.created_at)) >= now.getTime() - 86400000;
-      this.repo.db
+      await this.repo.db
         .prepare(
           "UPDATE notification_outbox SET state=?,next_at=?,updated_at=?,error=? WHERE id=? AND state='blocked'",
         )
@@ -1149,7 +1182,7 @@ export class NotificationService {
           String(row.id),
         );
     }
-    const rows = this.repo.db
+    const rows = await this.repo.db
       .prepare(
         "SELECT * FROM notification_outbox WHERE state='pending' AND next_at<=? ORDER BY created_at LIMIT 200",
       )
@@ -1158,9 +1191,9 @@ export class NotificationService {
     for (const row of rows) {
       const ws = String(row.workspace_id),
         userId = String(row.user_id),
-        check = this.validDelivery(row);
+        check = await this.validDelivery(row);
       if (!check.valid) {
-        this.repo.db
+        await this.repo.db
           .prepare(
             "UPDATE notification_outbox SET state=?,next_at=?,error=?,updated_at=? WHERE id=? AND state='pending'",
           )
@@ -1174,7 +1207,7 @@ export class NotificationService {
         continue;
       }
       const prefs = check.prefs!,
-        timeZone = this.repo.settings(ws).timeZone;
+        timeZone = (await this.repo.settings(ws)).timeZone;
       let defer: string | undefined;
       if (prefs.delivery === "digest") {
         const next = this.nextClock(
@@ -1186,11 +1219,13 @@ export class NotificationService {
       }
       if (isNotificationQuietTime(now, timeZone, prefs))
         defer = this.nextClock(now, prefs.quietEnd, timeZone);
-      const last = this.repo.db
-        .prepare(
-          "SELECT MAX(updated_at) AS last FROM notification_outbox WHERE workspace_id=? AND user_id=? AND state='accepted'",
-        )
-        .get(ws, userId)?.last;
+      const last = (
+        await this.repo.db
+          .prepare(
+            "SELECT MAX(updated_at) AS last FROM notification_outbox WHERE workspace_id=? AND user_id=? AND state='accepted'",
+          )
+          .get(ws, userId)
+      )?.last;
       if (last && Date.parse(String(last)) + 120000 > now.getTime()) {
         const cooldown = new Date(
           Date.parse(String(last)) + 120000,
@@ -1199,7 +1234,7 @@ export class NotificationService {
           defer = cooldown;
       }
       if (defer) {
-        this.repo.db
+        await this.repo.db
           .prepare(
             "UPDATE notification_outbox SET next_at=?,error='等待摘要时间、安静时段结束或合并投递',updated_at=? WHERE id=? AND state='pending'",
           )
@@ -1216,14 +1251,14 @@ export class NotificationService {
       const first = group[0]!,
         ws = String(first.workspace_id),
         userId = String(first.user_id);
-      const binding = this.binding(ws, userId);
+      const binding = await this.binding(ws, userId);
       if (!binding.valid || !binding.config) continue;
       const selected: typeof group = [];
-      this.repo.transaction(() => {
+      await this.repo.transaction(async () => {
         for (const row of group) {
-          const check = this.validDelivery(row);
+          const check = await this.validDelivery(row);
           if (!check.valid) continue;
-          const result = this.repo.db
+          const result = await this.repo.db
             .prepare(
               "UPDATE notification_outbox SET state='processing',attempts=attempts+1,config_version=?,binding_version=?,updated_at=? WHERE id=? AND state='pending'",
             )
@@ -1243,16 +1278,20 @@ export class NotificationService {
       });
       if (!selected.length) continue;
       const composed = composeNotificationText(
-        selected
-          .map((row) => this.validDelivery(row, true).item)
-          .filter((item): item is NotificationItem => !!item),
+        (
+          await Promise.all(
+            selected.map(
+              async (row) => (await this.validDelivery(row, true)).item,
+            ),
+          )
+        ).filter((item): item is NotificationItem => !!item),
         binding.config.baseUrl,
       );
       for (let index = selected.length - 1; index >= 0; index--) {
         const row = selected[index]!;
         if (composed.ids.includes(String(row.notification_id))) continue;
         selected.splice(index, 1);
-        this.repo.db
+        await this.repo.db
           .prepare(
             "UPDATE notification_outbox SET state='pending',attempts=attempts-1,next_at=? WHERE id=?",
           )
@@ -1264,22 +1303,26 @@ export class NotificationService {
         binding.version,
         binding.employee!.wecomUserId,
         composed.text,
-        () =>
-          !this.closed &&
-          selected.every((row) => this.validDelivery(row, true).valid),
+        async () => {
+          for (const row of selected) {
+            if (this.closed || !(await this.validDelivery(row, true)).valid)
+              return false;
+          }
+          return !this.closed;
+        },
       );
-      this.repo.transaction(() => {
+      await this.repo.transaction(async () => {
         for (const row of selected) {
           const attempts = Number(row.attempts) + 1;
           const latest =
             result.state === "cancelled"
-              ? this.validDelivery(row, true)
+              ? await this.validDelivery(row, true)
               : undefined;
           if (
             result.state === "cancelled" &&
             (this.closed || latest?.until || latest?.blocked)
           ) {
-            this.repo.db
+            await this.repo.db
               .prepare(
                 "UPDATE notification_outbox SET state=?,next_at=?,error=?,updated_at=? WHERE id=? AND state='processing'",
               )
@@ -1294,7 +1337,7 @@ export class NotificationService {
           }
           const retry =
             result.state === "failed" && result.retryable && attempts < 4;
-          this.repo.db
+          await this.repo.db
             .prepare(
               "UPDATE notification_outbox SET state=?,error=?,external_id=?,next_at=?,updated_at=? WHERE id=? AND state='processing'",
             )
@@ -1314,28 +1357,32 @@ export class NotificationService {
       });
     }
   }
-  reconcileAll() {
-    for (const row of this.repo.db.prepare("SELECT id FROM workspaces").all())
-      this.repo.transaction(() => this.reconcileWorkspace(String(row.id)));
+  async reconcileAll() {
+    for (const row of await this.repo.db
+      .prepare("SELECT id FROM workspaces")
+      .all())
+      await this.repo.transaction(
+        async () => await this.reconcileWorkspace(String(row.id)),
+      );
   }
-  tick(): Promise<void> {
-    if (this.closed) return Promise.resolve();
+  async tick(): Promise<void> {
+    if (this.closed) return await Promise.resolve();
     if (this.running) return this.running;
     this.running = (async () => {
-      this.reconcileAll();
+      await this.reconcileAll();
       await this.drain();
     })().finally(() => {
       this.running = undefined;
     });
     return this.running;
   }
-  start() {
-    this.repo.db
+  async start() {
+    await this.repo.db
       .prepare(
         "UPDATE notification_outbox SET state='unknown',error='上次服务退出时投递尚未确认，停止自动重发',updated_at=? WHERE state='processing'",
       )
       .run(iso(this.now()));
-    this.reconcileAll();
+    await this.reconcileAll();
     const interval = this.options.intervalMs ?? 15000;
     if (interval > 0) {
       this.timer = setInterval(() => {
@@ -1360,36 +1407,58 @@ export function registerNotificationRoutes(
   mutate: Mutate,
   service: NotificationService,
 ) {
-  app.get("/api/notifications", (req) =>
-    repo.transaction(() => {
-      const a = actor(req);
-      service.reconcileWorkspace(a.workspaceId);
-      return service.state(a);
-    }),
+  app.get(
+    "/api/notifications",
+    async (req) =>
+      await repo.transaction(async () => {
+        const a = actor(req);
+        await service.reconcileWorkspace(a.workspaceId);
+        return await service.state(a);
+      }),
   );
-  app.post("/api/notifications/action", (req) =>
-    mutate(req, (a) => service.action(a, req.body)),
+  app.post(
+    "/api/notifications/action",
+    async (req) =>
+      await mutate(req, async (a) => await service.action(a, req.body)),
   );
-  app.put("/api/notifications/preferences", (req) =>
-    mutate(req, (a) => service.preferences(a, req.body)),
+  app.put(
+    "/api/notifications/preferences",
+    async (req) =>
+      await mutate(req, async (a) => await service.preferences(a, req.body)),
   );
-  app.put("/api/notifications/following", (req) =>
-    mutate(req, (a) => service.following(a, req.body)),
+  app.put(
+    "/api/notifications/following",
+    async (req) =>
+      await mutate(req, async (a) => await service.following(a, req.body)),
   );
-  app.get("/api/notifications/:id/open", (req) =>
-    service.open(
-      actor(req),
-      z.object({ id: z.string().max(200) }).parse(req.params).id,
-    ),
+  app.get(
+    "/api/notifications/:id/open",
+    async (req) =>
+      await service.open(
+        actor(req),
+        z.object({ id: z.string().max(200) }).parse(req.params).id,
+      ),
   );
-  app.get("/api/admin/notifications", (req) => service.adminState(actor(req)));
-  app.put("/api/admin/notifications/config", (req) =>
-    mutate(req, (a) => service.saveConfig(a, req.body)),
+  app.get(
+    "/api/admin/notifications",
+    async (req) => await service.adminState(actor(req)),
   );
-  app.post("/api/admin/notifications/bindings", (req) =>
-    mutate(req, (a) => service.confirmBindings(a, req.body)),
+  app.put(
+    "/api/admin/notifications/config",
+    async (req) =>
+      await mutate(req, async (a) => await service.saveConfig(a, req.body)),
   );
-  app.post("/api/admin/notifications/retry", (req) =>
-    mutate(req, (a) => service.retry(a, req.body)),
+  app.post(
+    "/api/admin/notifications/bindings",
+    async (req) =>
+      await mutate(
+        req,
+        async (a) => await service.confirmBindings(a, req.body),
+      ),
+  );
+  app.post(
+    "/api/admin/notifications/retry",
+    async (req) =>
+      await mutate(req, async (a) => await service.retry(a, req.body)),
   );
 }

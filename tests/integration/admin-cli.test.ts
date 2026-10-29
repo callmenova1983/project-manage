@@ -1,3 +1,4 @@
+import { testDatabaseConfig } from "../pg-helpers.js";
 import { it, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +10,7 @@ import { createUser } from "../../apps/api/src/auth";
 it("bootstrap explicitly scopes an existing active account, grants access and revokes sessions", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pm-admin-cli-")),
     path = join(dir, "db.sqlite"),
-    repo = new Repository(path);
+    repo = await Repository.open(testDatabaseConfig(path));
   try {
     await createUser(repo, {
       email: "operator-target@example.test",
@@ -17,8 +18,8 @@ it("bootstrap explicitly scopes an existing active account, grants access and re
       workspaceId: "selected",
       password: randomBytes(24).toString("hex"),
     });
-    const user = repo.db.prepare("SELECT id FROM users").get()!;
-    repo.db
+    const user = (await repo.db.prepare("SELECT id FROM users").get())!;
+    await repo.db
       .prepare(
         "INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)",
       )
@@ -30,7 +31,8 @@ it("bootstrap explicitly scopes an existing active account, grants access and re
       );
     const env = {
       ...process.env,
-      DATABASE_PATH: path,
+      DB_SCHEMA: testDatabaseConfig(path).schema,
+      CREDENTIAL_KEY_PATH: testDatabaseConfig(path).credentialKeyPath,
       PM_USER_EMAIL: "operator-target@example.test",
       PM_WORKSPACE_ID: "other",
     };
@@ -41,7 +43,7 @@ it("bootstrap explicitly scopes an existing active account, grants access and re
         { env, stdio: "pipe" },
       ),
     ).toThrow();
-    expect(repo.db.prepare("SELECT role FROM users").get()!.role).toBe(
+    expect((await repo.db.prepare("SELECT role FROM users").get())!.role).toBe(
       "member",
     );
     const output = execFileSync(
@@ -54,15 +56,17 @@ it("bootstrap explicitly scopes an existing active account, grants access and re
       },
     );
     expect(output).toContain("Administrator access granted");
-    expect(repo.db.prepare("SELECT role FROM users").get()!.role).toBe("admin");
-    expect(repo.db.prepare("SELECT count(*) AS n FROM sessions").get()!.n).toBe(
-      0,
+    expect((await repo.db.prepare("SELECT role FROM users").get())!.role).toBe(
+      "admin",
     );
     expect(
-      repo.db.prepare("SELECT count(*) AS n FROM admin_audit").get()!.n,
+      (await repo.db.prepare("SELECT count(*) AS n FROM sessions").get())!.n,
+    ).toBe(0);
+    expect(
+      (await repo.db.prepare("SELECT count(*) AS n FROM admin_audit").get())!.n,
     ).toBe(1);
   } finally {
-    repo.close();
+    await repo.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { PostgresDatabase } from "./postgres.js";
 import { passwordHash } from "./auth.js";
 
 export class PasswordResetError extends Error {}
@@ -8,11 +8,11 @@ export interface ResetAccount {
   // Optimistic guard only. Never print this value or request the old password.
   previousHash: string;
 }
-export function findResetAccount(
-  db: DatabaseSync,
+export async function findResetAccount(
+  db: PostgresDatabase,
   email: string,
-): ResetAccount {
-  const row = db
+): Promise<ResetAccount> {
+  const row = await db
     .prepare("SELECT id,email,password_hash FROM users WHERE email=?")
     .get(email.toLowerCase());
   if (!row)
@@ -32,15 +32,14 @@ export function validateNewPassword(password: string): void {
     );
 }
 export async function resetAccountPassword(
-  db: DatabaseSync,
+  db: PostgresDatabase,
   account: ResetAccount,
   password: string,
 ): Promise<number> {
   validateNewPassword(password);
   const hash = await passwordHash(password);
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const changed = db
+  return db.transaction(async () => {
+    const changed = await db
       .prepare(
         "UPDATE users SET password_hash=? WHERE id=? AND email=? AND password_hash=?",
       )
@@ -49,13 +48,9 @@ export async function resetAccountPassword(
       throw new PasswordResetError(
         "The account changed while you were entering the password. Cancelled; run the command again.",
       );
-    const revoked = db
+    const revoked = await db
       .prepare("DELETE FROM sessions WHERE user_id=?")
       .run(account.id);
-    db.exec("COMMIT");
     return Number(revoked.changes);
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }

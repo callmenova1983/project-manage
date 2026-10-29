@@ -11,14 +11,14 @@ import type {
 } from "../../../packages/domain/ai-access.js";
 import { aiAccessDocumentation, type ApiRoute } from "./ai-access-docs.js";
 
-export function personalTokenActor(
+export async function personalTokenActor(
   repo: Repository,
   authorization: string,
-): Actor {
+): Promise<Actor> {
   const match = /^Bearer (pm_ai_[A-Za-z0-9_-]{43})$/i.exec(authorization);
   if (!match) throw new HttpError(401, "Invalid personal access token");
   const hash = hashToken(match[1]!);
-  const row = repo.db
+  const row = await repo.db
     .prepare(
       `SELECT users.id,users.workspace_id,users.email,users.name,users.role
      FROM personal_access_tokens JOIN users ON users.id=personal_access_tokens.user_id
@@ -27,7 +27,7 @@ export function personalTokenActor(
     .get(hash);
   if (!row)
     throw new HttpError(401, "Personal access token is invalid or revoked");
-  repo.db
+  await repo.db
     .prepare(
       "UPDATE personal_access_tokens SET last_used_at=? WHERE token_hash=?",
     )
@@ -55,9 +55,9 @@ export function registerAiAccess(
       );
     return actor(req);
   };
-  app.get("/api/ai-access/token", (req): AiAccessState => {
+  app.get("/api/ai-access/token", async (req): Promise<AiAccessState> => {
     const a = browserActor(req);
-    const row = repo.db
+    const row = await repo.db
       .prepare(
         "SELECT prefix,created_at,last_used_at FROM personal_access_tokens WHERE user_id=?",
       )
@@ -78,7 +78,7 @@ export function registerAiAccess(
     {
       config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
     },
-    (req): AiAccessGrant => {
+    async (req): Promise<AiAccessGrant> => {
       const a = browserActor(req);
       z.object({}).strict().parse(req.body);
       const token = `pm_ai_${randomBytes(32).toString("base64url")}`;
@@ -87,7 +87,7 @@ export function registerAiAccess(
         createdAt: new Date().toISOString(),
         lastUsedAt: null,
       };
-      repo.db
+      await repo.db
         .prepare(
           `INSERT INTO personal_access_tokens(user_id,token_hash,prefix,created_at,last_used_at)
        VALUES(?,?,?,?,NULL) ON CONFLICT(user_id) DO UPDATE SET
@@ -97,16 +97,16 @@ export function registerAiAccess(
       return { token, info };
     },
   );
-  app.delete("/api/ai-access/token", (req) => {
+  app.delete("/api/ai-access/token", async (req) => {
     const a = browserActor(req);
-    repo.db
+    await repo.db
       .prepare("DELETE FROM personal_access_tokens WHERE user_id=?")
       .run(a.id);
     return { token: null } satisfies AiAccessState;
   });
-  app.get("/api/ai-access/context", (req) => {
+  app.get("/api/ai-access/context", async (req) => {
     const a = actor(req);
-    const snapshot = repo.snapshot(a.workspaceId);
+    const snapshot = await repo.snapshot(a.workspaceId);
     return {
       actor: a,
       access: {

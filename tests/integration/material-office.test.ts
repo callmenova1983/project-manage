@@ -107,9 +107,9 @@ it("still enforces the embedded image size limit after the first six pictures", 
 
 it("retains the exact original Office attachment after accepting unsupported embedded pictures", async () => {
   const origin = "http://localhost:4173";
-  const ctx = await buildApp({ databasePath: ":memory:", origin });
+  const ctx = await buildApp({ isolatedDatabase: true, origin });
   try {
-    ctx.repo.seed("office");
+    await ctx.repo.seed("office");
     const password = randomBytes(24).toString("hex");
     await createUser(ctx.repo, {
       workspaceId: "office",

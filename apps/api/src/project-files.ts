@@ -20,75 +20,98 @@ export function registerProjectFiles(
   actor: (req: FastifyRequest) => Actor,
   mutate: Mutate,
 ) {
-  app.post("/api/capture/archive", (req) =>
-    mutate(req, (a) => {
-      const input = referenceArchiveInput.parse(req.body);
-      const current = repo.get<Project>(
-        "projects",
-        a.workspaceId,
-        input.projectId,
-      );
-      repo.checkVersion(current, input.version);
-      repo.assertProjectWritable(a.workspaceId, current.id);
-      // Validate every source before moving any file. mutate provides rollback and idempotency.
-      const sources = input.files.map((file) => {
-        if (file.taskId) {
-          const task = repo.get<Task>("tasks", a.workspaceId, file.taskId);
-          if (task.projectId !== current.id || task.voided)
-            throw new HttpError(400, "关联任务不属于这个项目，或任务已作废。");
-        }
-        return {
-          file,
-          source: readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, file.id),
-        };
-      });
-      return sources.map(({ file, source }) => {
-        const saved: ProjectFile = {
-          ...source.metadata,
-          category: file.category,
-          ...(file.taskId ? { taskId: file.taskId } : {}),
-          createdAt: new Date().toISOString(),
-          uploadedBy: a.name,
-        };
-        repo.db
-          .prepare(
-            "UPDATE progress_materials SET project_id=?,metadata=? WHERE id=? AND workspace_id=? AND project_id=?",
-          )
-          .run(
-            current.id,
-            JSON.stringify(saved),
-            file.id,
-            a.workspaceId,
-            CAPTURE_SCOPE,
-          );
-        repo.record(
-          a,
-          "project",
-          "Archived project reference",
-          current,
-          current,
-          `${saved.name} · ${file.category}`,
+  app.post(
+    "/api/capture/archive",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = referenceArchiveInput.parse(req.body);
+        const current = await repo.get<Project>(
+          "projects",
+          a.workspaceId,
+          input.projectId,
         );
-        return saved;
-      });
-    }),
+        repo.checkVersion(current, input.version);
+        await repo.assertProjectWritable(a.workspaceId, current.id);
+        // Validate every source before moving any file. mutate provides rollback and idempotency.
+        const sources = await Promise.all(
+          input.files.map(async (file) => {
+            if (file.taskId) {
+              const task = await repo.get<Task>(
+                "tasks",
+                a.workspaceId,
+                file.taskId,
+              );
+              if (task.projectId !== current.id || task.voided)
+                throw new HttpError(
+                  400,
+                  "关联任务不属于这个项目，或任务已作废。",
+                );
+            }
+            return {
+              file,
+              source: await readMaterial(
+                repo,
+                a.workspaceId,
+                CAPTURE_SCOPE,
+                file.id,
+              ),
+            };
+          }),
+        );
+        return await Promise.all(
+          sources.map(async ({ file, source }) => {
+            const saved: ProjectFile = {
+              ...source.metadata,
+              category: file.category,
+              ...(file.taskId ? { taskId: file.taskId } : {}),
+              createdAt: new Date().toISOString(),
+              uploadedBy: a.name,
+            };
+            await repo.db
+              .prepare(
+                "UPDATE progress_materials SET project_id=?,metadata=? WHERE id=? AND workspace_id=? AND project_id=?",
+              )
+              .run(
+                current.id,
+                JSON.stringify(saved),
+                file.id,
+                a.workspaceId,
+                CAPTURE_SCOPE,
+              );
+            await repo.record(
+              a,
+              "project",
+              "Archived project reference",
+              current,
+              current,
+              `${saved.name} · ${file.category}`,
+            );
+            return saved;
+          }),
+        );
+      }),
   );
-  const project = (req: FastifyRequest) => {
+  const project = async (req: FastifyRequest) => {
     const a = actor(req);
     const id = (req.params as { id: string }).id;
-    return { a, id, current: repo.get<Project>("projects", a.workspaceId, id) };
+    return {
+      a,
+      id,
+      current: await repo.get<Project>("projects", a.workspaceId, id),
+    };
   };
-  app.get("/api/projects/:id/files", (req): ProjectFile[] => {
-    const { a, id } = project(req);
-    return repo.db
-      .prepare(
-        "SELECT metadata,created_at FROM progress_materials WHERE workspace_id=? AND project_id=? ORDER BY created_at DESC,id DESC",
-      )
-      .all(a.workspaceId, id)
-      .map((row) => ({
-        ...(JSON.parse(String(row.metadata)) as ProgressMaterial),
-        createdAt: String(row.created_at),
-      }));
+  app.get("/api/projects/:id/files", async (req): Promise<ProjectFile[]> => {
+    const { a, id } = await project(req);
+    return (
+      await repo.db
+        .prepare(
+          "SELECT metadata,created_at FROM progress_materials WHERE workspace_id=? AND project_id=? ORDER BY created_at DESC,id DESC",
+        )
+        .all(a.workspaceId, id)
+    ).map((row) => ({
+      ...(JSON.parse(String(row.metadata)) as ProgressMaterial),
+      createdAt: String(row.created_at),
+    }));
   });
   app.post(
     "/api/projects/:id/files",
@@ -96,10 +119,10 @@ export function registerProjectFiles(
       bodyLimit: Math.ceil(PROJECT_FILE_LIMIT / 3) * 4 + 64 * 1024,
       config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
     },
-    (req) =>
-      mutate(req, (a) => {
-        const { id, current } = project(req);
-        repo.assertProjectWritable(a.workspaceId, id);
+    async (req) =>
+      await mutate(req, async (a) => {
+        const { id, current } = await project(req);
+        await repo.assertProjectWritable(a.workspaceId, id);
         const input = projectFileInput.parse(req.body);
         const bytes = Buffer.from(input.data, "base64");
         if (
@@ -112,11 +135,11 @@ export function registerProjectFiles(
             "文件内容无效或超过 50 MB。请分割文件后上传。",
           );
         const total = Number(
-          repo.db
+          (await repo.db
             .prepare(
               "SELECT coalesce(sum(length(bytes)),0) AS total FROM progress_materials WHERE workspace_id=?",
             )
-            .get(a.workspaceId)!.total,
+            .get(a.workspaceId))!.total,
         );
         if (total + bytes.length > 256 * 1024 * 1024)
           throw new HttpError(
@@ -134,7 +157,7 @@ export function registerProjectFiles(
           createdAt: new Date().toISOString(),
           uploadedBy: a.name,
         };
-        repo.db
+        await repo.db
           .prepare(
             "INSERT INTO progress_materials(id,workspace_id,project_id,created_at,metadata,bytes,images) VALUES(?,?,?,?,?,?,?)",
           )
@@ -147,7 +170,7 @@ export function registerProjectFiles(
             bytes,
             "[]",
           );
-        repo.record(
+        await repo.record(
           a,
           "project",
           "Uploaded project file",

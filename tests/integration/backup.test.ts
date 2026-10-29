@@ -9,78 +9,135 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { Repository } from "../../apps/api/src/database";
-import { backupDatabase } from "../../apps/api/src/backup";
-it("backs up committed WAL data privately, restores independently and never overwrites", async () => {
+import { execFileSync } from "node:child_process";
+import { Repository } from "../../apps/api/src/database.js";
+import { backupDatabase } from "../../apps/api/src/backup.js";
+import { readDatabaseConfig } from "../../apps/api/src/database-config.js";
+
+function comparable(snapshot: Awaited<ReturnType<Repository["snapshot"]>>) {
+  const byId = <T extends { id: string }>(rows: T[]) =>
+    [...rows].sort((left, right) => left.id.localeCompare(right.id));
+  return {
+    ...snapshot,
+    projects: byId(snapshot.projects),
+    tasks: byId(snapshot.tasks),
+    activities: byId(snapshot.activities),
+  };
+}
+
+it("backs up PostgreSQL privately, restores committed data and never overwrites existing files", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pm-backup-test-"));
-  const source = join(dir, "source.sqlite"),
-    dest = join(dir, "saved.sqlite");
-  const repo = new Repository(source);
+  const repo = await Repository.open(readDatabaseConfig(), { isolated: true });
+  const config = {
+    ...readDatabaseConfig(),
+    schema: repo.db.schema,
+    credentialKeyPath: join(dir, "unused.key"),
+  };
+  const dest = join(dir, "saved.dump");
   try {
-    repo.seed("synthetic");
-    const before = repo.snapshot("synthetic");
-    const publicDestination = resolve("dist/web/forbidden-backup-test.sqlite");
-    await expect(backupDatabase(source, publicDestination)).rejects.toThrow(
+    await repo.seed("synthetic");
+    const before = await repo.snapshot("synthetic");
+    const publicDestination = resolve("dist/web/forbidden-backup-test.dump");
+    await expect(backupDatabase(config, publicDestination)).rejects.toThrow(
       "public web directory",
     );
     expect(existsSync(publicDestination)).toBe(false);
-    const dottedDirectory = resolve("dist/web/..private/snapshot.sqlite");
-    await expect(backupDatabase(source, dottedDirectory)).rejects.toThrow(
+    const dottedDirectory = resolve("dist/web/..private/snapshot.dump");
+    await expect(backupDatabase(config, dottedDirectory)).rejects.toThrow(
       "public web directory",
     );
     expect(existsSync(dottedDirectory)).toBe(false);
-    expect(existsSync(source + "-wal")).toBe(true);
-    await expect(backupDatabase(source, dest)).resolves.toEqual({
+    await expect(backupDatabase(config, dest)).resolves.toMatchObject({
       path: dest,
-      integrity: "ok",
+      format: "postgres-custom",
+      verification: "archive-readable",
     });
     expect(statSync(dest).mode & 0o777).toBe(0o600);
     const bytes = readFileSync(dest);
-    await expect(backupDatabase(source, dest)).rejects.toThrow(
+    await expect(backupDatabase(config, dest)).rejects.toThrow(
       "already exists",
     );
     expect(readFileSync(dest)).toEqual(bytes);
-    await expect(backupDatabase(source, source)).rejects.toThrow(
+    const alias = join(dir, "alias.dump");
+    symlinkSync(dest, alias);
+    await expect(backupDatabase(config, alias)).rejects.toThrow(
       "already exists",
     );
-    const alias = join(dir, "alias.sqlite");
-    symlinkSync(source, alias);
-    await expect(backupDatabase(source, alias)).rejects.toThrow(
-      "already exists",
-    );
-    repo.transaction(() =>
+    const project = before.projects[0]!;
+    await repo.transaction(() =>
       repo.putProject("synthetic", {
-        ...before.projects[0]!,
+        ...project,
         name: "Post-backup edit",
         version: 2,
       }),
     );
-    const restored = new Repository(dest);
-    try {
-      expect(restored.snapshot("synthetic")).toEqual(before);
-      expect(
-        restored.db.prepare("PRAGMA integrity_check").get()?.integrity_check,
-      ).toBe("ok");
-    } finally {
-      restored.close();
-    }
-    expect(repo.snapshot("synthetic").projects[0]!.name).toBe(
-      "Post-backup edit",
+    expect(
+      (await repo.snapshot("synthetic")).projects.find(
+        (row) => row.id === project.id,
+      )!.name,
+    ).toBe("Post-backup edit");
+    // The archive contains only this disposable schema, never public or user data.
+    expect(config.schema).toMatch(/^pm_test_/);
+    execFileSync(
+      "pg_restore",
+      [
+        "--no-password",
+        "--clean",
+        "--if-exists",
+        "--no-owner",
+        "--no-privileges",
+        "--exit-on-error",
+        "--dbname",
+        config.database,
+        dest,
+      ],
+      {
+        timeout: 15000,
+        stdio: "pipe",
+        env: {
+          PATH: process.env.PATH,
+          PGHOST: config.host,
+          PGPORT: String(config.port),
+          PGUSER: config.user,
+          PGPASSWORD: config.password,
+          PGSSLMODE: config.ssl ? "verify-full" : "disable",
+        },
+      },
+    );
+    expect(comparable(await repo.snapshot("synthetic"))).toEqual(
+      comparable(before),
     );
   } finally {
-    repo.close();
+    await repo.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });
-it("refuses missing sources without initializing an empty database", async () => {
+
+it("refuses an uninitialized PostgreSQL schema without creating application tables or a backup", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pm-backup-missing-"));
+  const repo = await Repository.open(readDatabaseConfig(), { isolated: true });
   try {
+    const missingSchema = `${repo.db.schema}_missing`;
     await expect(
-      backupDatabase(join(dir, "missing.sqlite"), join(dir, "out.sqlite")),
-    ).rejects.toThrow("existing");
-    expect(existsSync(join(dir, "missing.sqlite"))).toBe(false);
-    expect(existsSync(join(dir, "out.sqlite"))).toBe(false);
+      backupDatabase(
+        {
+          ...readDatabaseConfig(),
+          schema: missingSchema,
+          credentialKeyPath: join(dir, "none.key"),
+        },
+        join(dir, "out.dump"),
+      ),
+    ).rejects.toThrow();
+    expect(existsSync(join(dir, "out.dump"))).toBe(false);
+    expect(
+      (
+        await repo.db.query("SELECT 1 FROM pg_namespace WHERE nspname=$1", [
+          missingSchema,
+        ])
+      ).rows,
+    ).toEqual([]);
   } finally {
+    await repo.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -1,6 +1,6 @@
 import "dotenv/config";
-import { realpathSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { PostgresDatabase } from "./postgres.js";
+import { readDatabaseConfig } from "./database-config.js";
 import { z } from "zod";
 import {
   assertPrivateTerminal,
@@ -24,28 +24,15 @@ async function main() {
       "Usage: npm run user:reset-password -- demo@example.test (no password arguments)",
     );
   assertPrivateTerminal();
-  let path: string;
-  try {
-    path = realpathSync(
-      process.env.DATABASE_PATH ?? "./data/project-manage.sqlite",
-    );
-  } catch {
-    throw new PasswordResetError(
-      "The database must already exist. Set DATABASE_PATH to the running application's database.",
-    );
-  }
-  const lookup = new DatabaseSync(path, { readOnly: true });
-  let account;
-  try {
-    account = findResetAccount(lookup, process.argv[2]!);
-  } finally {
-    lookup.close();
-  }
-  console.log(
-    `Local password reset for ${account.email}\nDatabase: ${path}\nOnly continue in your own private Codespace terminal.\nNo password is shown or written to a credential file. Ctrl+C cancels before submission.`,
-  );
+  const config = readDatabaseConfig();
+  // No migrations or account creation from a password reset command.
+  const db = new PostgresDatabase(config);
   const entered = { first: "", second: "" };
   try {
+    const account = await findResetAccount(db, process.argv[2]!);
+    console.log(
+      `Password reset for ${account.email}\nDatabase: ${config.host}:${config.port}/${config.database} (schema ${config.schema})\nOnly continue in your own private terminal.\nNo password is shown or written to a credential file. Ctrl+C cancels before submission.`,
+    );
     entered.first = await hiddenInput(
       "New password / 新密码 (14–500 characters, hidden): ",
     );
@@ -67,20 +54,15 @@ async function main() {
       console.log("Cancelled. No changes were made.");
       return;
     }
-    const db = new DatabaseSync(path);
-    try {
-      db.exec("PRAGMA busy_timeout=5000");
-      const revoked = await resetAccountPassword(db, account, entered.first);
-      console.log(
-        `Password updated. ${revoked} existing session(s) revoked. Sign in with the password you entered; your browser can save it.`,
-      );
-    } finally {
-      db.close();
-    }
+    const revoked = await resetAccountPassword(db, account, entered.first);
+    console.log(
+      `Password updated. ${revoked} existing session(s) revoked. Sign in with the password you entered; your browser can save it.`,
+    );
   } finally {
     // Release references; JavaScript does not guarantee memory zeroization.
     entered.first = "";
     entered.second = "";
+    await db.close();
   }
 }
 try {
@@ -92,7 +74,7 @@ try {
       (error instanceof Error &&
         error.message.startsWith("Use an interactive terminal"))
       ? error.message
-      : "Password reset failed. Check the database path and access. No password or database details are printed.",
+      : "Password reset failed. Check the PostgreSQL configuration and access. No password or database details are printed.",
   );
   process.exitCode = 1;
 }

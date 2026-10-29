@@ -48,8 +48,8 @@ async function request(
     payload: payload as Record<string, unknown>,
   });
 }
-function task(overrides: Partial<Task> = {}) {
-  const p = ctx.repo.snapshot("w").projects[0]!;
+async function task(overrides: Partial<Task> = {}) {
+  const p = (await ctx.repo.snapshot("w")).projects[0]!;
   const value: Task = {
     id: randomUUID(),
     version: 1,
@@ -67,7 +67,7 @@ function task(overrides: Partial<Task> = {}) {
     workWeek: null,
     ...overrides,
   };
-  ctx.repo.putTask("w", value);
+  await ctx.repo.putTask("w", value);
   return value;
 }
 async function enable() {
@@ -100,12 +100,12 @@ async function enable() {
       wecomSeenAt: synced,
     },
   ];
-  ctx.repo.db
+  await ctx.repo.db
     .prepare(
       "INSERT INTO workspace_directory(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
     )
     .run("w", JSON.stringify(directory));
-  ctx.repo.db
+  await ctx.repo.db
     .prepare(
       "INSERT INTO notification_directory_scope(workspace_id,corp_id,directory_version,synced_at) VALUES('w','corp-test',1,?) ON CONFLICT(workspace_id) DO UPDATE SET synced_at=excluded.synced_at",
     )
@@ -134,7 +134,7 @@ beforeEach(async () => {
       : Response.json({ errcode: 0, msgid: "synthetic-message-id" }),
   );
   ctx = await buildApp({
-    databasePath: ":memory:",
+    isolatedDatabase: true,
     origin,
     notificationClock: () => clock,
     notificationIntervalMs: 0,
@@ -145,7 +145,7 @@ beforeEach(async () => {
       workspaceId: "w",
     },
   });
-  ctx.repo.workspace("w");
+  await ctx.repo.workspace("w");
   await createUser(ctx.repo, {
     workspaceId: "w",
     name: "管理员",
@@ -158,13 +158,13 @@ beforeEach(async () => {
     email: "worker@example.test",
     password,
   });
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email='admin@example.test'")
     .run();
   admin = await login("admin@example.test");
   worker = await login("worker@example.test");
   const seed = createSeed();
-  ctx.repo.putProject("w", {
+  await ctx.repo.putProject("w", {
     ...seed.projects[0]!,
     id: "project",
     owner: admin.name,
@@ -176,7 +176,7 @@ beforeEach(async () => {
 afterEach(() => ctx.app.close());
 it("sends a newly due personal reminder without a browser, records acceptance separately and never replays it", async () => {
   await enable();
-  const t = task();
+  const t = await task();
   clock = new Date(clock.getTime() + 120000);
   await ctx.notifications.tick();
   const sends = fetcher.mock.calls.filter(([url]) =>
@@ -209,7 +209,7 @@ it("sends a newly due personal reminder without a browser, records acceptance se
   });
 });
 it("does not send when configuration or verified recipient binding is missing", async () => {
-  const t = task({ reminderAt: clock.toISOString() });
+  const t = await task({ reminderAt: clock.toISOString() });
   await request(worker, "PUT", "/api/notifications/preferences", {
     version: 1,
     delivery: "important",
@@ -231,12 +231,14 @@ it("does not send when configuration or verified recipient binding is missing", 
 });
 it("cancels a reminder changed while obtaining a token before any message is submitted", async () => {
   await enable();
-  const t = task();
+  const t = await task();
   clock = new Date(clock.getTime() + 120000);
   fetcher.mockImplementation(async (url) => {
     if (String(url).includes("gettoken")) {
-      ctx.repo.putTask("w", { ...t, version: 2, status: "done" });
-      ctx.repo.transaction(() => ctx.notifications.reconcileWorkspace("w"));
+      await ctx.repo.putTask("w", { ...t, version: 2, status: "done" });
+      await ctx.repo.transaction(
+        async () => await ctx.notifications.reconcileWorkspace("w"),
+      );
       return Response.json({ access_token: "synthetic-access-token" });
     }
     return Response.json({ errcode: 0 });
@@ -250,7 +252,7 @@ it("cancels a reminder changed while obtaining a token before any message is sub
 });
 it("stops ambiguous send retries and requires explicit administrator confirmation", async () => {
   await enable();
-  task();
+  await task();
   clock = new Date(clock.getTime() + 120000);
   fetcher.mockImplementation(async (url) => {
     if (String(url).includes("gettoken"))
@@ -283,7 +285,7 @@ it("stops ambiguous send retries and requires explicit administrator confirmatio
 });
 it("treats invaliduser as failure even with errcode zero and rejects obsolete member visibility", async () => {
   await enable();
-  task();
+  await task();
   clock = new Date(clock.getTime() + 120000);
   fetcher.mockImplementation(async (url) =>
     String(url).includes("gettoken")
@@ -296,12 +298,12 @@ it("treats invaliduser as failure even with errcode zero and rejects obsolete me
       .deliveries[0],
   ).toMatchObject({ state: "failed" });
   const newScope = new Date(clock.getTime() + 1000).toISOString();
-  ctx.repo.db
+  await ctx.repo.db
     .prepare(
       "UPDATE notification_directory_scope SET synced_at=? WHERE workspace_id='w'",
     )
     .run(newScope);
-  task({ reminderAt: clock.toISOString() });
+  await task({ reminderAt: clock.toISOString() });
   await ctx.notifications.tick();
   expect(
     fetcher.mock.calls.filter(([url]) => String(url).includes("message/send")),
@@ -313,7 +315,7 @@ it("treats invaliduser as failure even with errcode zero and rejects obsolete me
 });
 it("keeps a reminder scheduled when it is snoozed during token retrieval", async () => {
   await enable();
-  const t = task();
+  const t = await task();
   clock = new Date(clock.getTime() + 120000);
   fetcher.mockImplementation(async (url) => {
     if (String(url).includes("gettoken")) {
@@ -360,8 +362,8 @@ it("waits through quiet hours and sends one summary at the configured local dige
     quietEnd: "08:00",
     digestTime: "09:00",
   });
-  task();
-  task();
+  await task();
+  await task();
   clock = new Date(clock.getTime() + 120000);
   await ctx.notifications.tick();
   expect(fetcher).not.toHaveBeenCalled();
@@ -381,7 +383,7 @@ it("waits through quiet hours and sends one summary at the configured local dige
 });
 it("creates one new personal occurrence for snooze after an accepted and read reminder", async () => {
   await enable();
-  const t = task();
+  const t = await task();
   clock = new Date(clock.getTime() + 120000);
   await ctx.notifications.tick();
   let state = (await request(worker, "GET", "/api/notifications")).json();
@@ -392,7 +394,7 @@ it("creates one new personal occurrence for snooze after an accepted and read re
     ids: [item.id],
     action: "read",
   });
-  const before = ctx.repo.snapshot("w");
+  const before = await ctx.repo.snapshot("w");
   state = (
     await request(worker, "POST", "/api/notifications/action", {
       ids: [item.id],
@@ -401,7 +403,7 @@ it("creates one new personal occurrence for snooze after an accepted and read re
     })
   ).json();
   expect(state.unreadCount).toBe(0);
-  expect(ctx.repo.snapshot("w")).toEqual(before);
+  expect(await ctx.repo.snapshot("w")).toEqual(before);
   clock = new Date(clock.getTime() + 3600001);
   await ctx.notifications.tick();
   await ctx.notifications.tick();
@@ -413,12 +415,12 @@ it("creates one new personal occurrence for snooze after an accepted and read re
 });
 it("resumes current blocked deliveries when the directory account is bound", async () => {
   await enable();
-  const directory = ctx.repo.directory("w");
+  const directory = await ctx.repo.directory("w");
   directory.employees[0]!.userId = null;
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE workspace_directory SET data=? WHERE workspace_id='w'")
     .run(JSON.stringify(directory));
-  task();
+  await task();
   clock = new Date(clock.getTime() + 120000);
   await ctx.notifications.tick();
   expect(fetcher).not.toHaveBeenCalled();
@@ -427,7 +429,7 @@ it("resumes current blocked deliveries when the directory account is bound", asy
       .deliveries[0].state,
   ).toBe("blocked");
   directory.employees[0]!.userId = worker.id;
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE workspace_directory SET data=? WHERE workspace_id='w'")
     .run(JSON.stringify(directory));
   await ctx.notifications.tick();
@@ -460,12 +462,12 @@ it.each(["@all", "person|other", "person other"])(
   "rejects invalid directory recipients %s without confirmation",
   async (target) => {
     await enable();
-    const directory = ctx.repo.directory("w");
+    const directory = await ctx.repo.directory("w");
     directory.employees[0]!.wecomUserId = target;
-    ctx.repo.db
+    await ctx.repo.db
       .prepare("UPDATE workspace_directory SET data=? WHERE workspace_id='w'")
       .run(JSON.stringify(directory));
-    task();
+    await task();
     clock = new Date(clock.getTime() + 120000);
     await ctx.notifications.tick();
     expect(fetcher).not.toHaveBeenCalled();

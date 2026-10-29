@@ -1,3 +1,4 @@
+import { testDatabaseConfig } from "../pg-helpers.js";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -63,12 +64,12 @@ function bearer(
   });
 }
 beforeEach(async () => {
-  context = await buildApp({ databasePath: ":memory:", origin });
-  context.repo.seed("a");
-  context.repo.seed("b");
+  context = await buildApp({ isolatedDatabase: true, origin });
+  await context.repo.seed("a");
+  await context.repo.seed("b");
   foreignId = randomUUID();
-  context.repo.putProject("b", {
-    ...context.repo.snapshot("b").projects[0]!,
+  await context.repo.putProject("b", {
+    ...(await context.repo.snapshot("b")).projects[0]!,
     id: foreignId,
   });
   password = randomBytes(24).toString("hex");
@@ -92,7 +93,7 @@ it("returns all accessible projects and accurate leaf-task counts without select
   const result = await bearer(token, "/api/ai-access/context");
   expect(result.statusCode).toBe(200);
   const value = result.json();
-  const snapshot = context.repo.snapshot("a");
+  const snapshot = await context.repo.snapshot("a");
   expect(value.actor).toEqual(member);
   expect(value.projectCount).toBeGreaterThan(1);
   expect(value.projects.map((p: { id: string }) => p.id)).toEqual(
@@ -118,9 +119,9 @@ it("returns all accessible projects and accurate leaf-task counts without select
 
 it("keeps only hashes, exposes metadata only and never caches a raw secret in idempotency", async () => {
   const token = await issue();
-  const stored = context.repo.db
+  const stored = (await context.repo.db
     .prepare("SELECT * FROM personal_access_tokens WHERE user_id=?")
-    .get(member.id)!;
+    .get(member.id))!;
   expect(stored.token_hash).toBe(hashToken(token));
   expect(JSON.stringify(stored)).not.toContain(token);
   expect((await browser("GET")).json().token).toMatchObject({
@@ -129,7 +130,9 @@ it("keeps only hashes, exposes metadata only and never caches a raw secret in id
   });
   expect((await browser("GET")).body).not.toContain(token);
   expect(
-    context.repo.db.prepare("SELECT COUNT(*) AS n FROM idempotency").get()!.n,
+    (await context.repo.db
+      .prepare("SELECT COUNT(*) AS n FROM idempotency")
+      .get())!.n,
   ).toBe(0);
   await bearer(token, "/api/ai-access/context");
   expect((await browser("GET")).json().token.lastUsedAt).toEqual(
@@ -139,7 +142,7 @@ it("keeps only hashes, exposes metadata only and never caches a raw secret in id
 
 it("allows ordinary writes without cookies/CSRF/Origin while preserving audit, idempotency and version conflicts", async () => {
   const token = await issue();
-  const snapshot = context.repo.snapshot("a");
+  const snapshot = await context.repo.snapshot("a");
   const payload = {
     ...taskInput.strip().parse(snapshot.tasks[0]),
     title: "Created via personal AI access",
@@ -174,11 +177,13 @@ it("allows ordinary writes without cookies/CSRF/Origin while preserving audit, i
     (await bearer(token, `/api/tasks/${task.id}`, "PUT", update)).statusCode,
   ).toBe(409);
   expect(
-    context.repo.snapshot("a").activities.find((a) => a.entityId === task.id),
+    (await context.repo.snapshot("a")).activities.find(
+      (a) => a.entityId === task.id,
+    ),
   ).toMatchObject({ actorId: member.id, actor: member.name });
-  const foreign = context.repo
-    .snapshot("b")
-    .projects.find((p) => p.id === foreignId)!;
+  const foreign = (await context.repo.snapshot("b")).projects.find(
+    (p) => p.id === foreignId,
+  )!;
   expect(
     (
       await bearer(token, `/api/projects/${foreign.id}`, "PUT", {
@@ -209,19 +214,19 @@ it("rotates and revokes immediately and never revokes a different member's token
 it("uses live account state and role; disabling or requiring activation invalidates access", async () => {
   const token = await issue();
   expect((await bearer(token, "/api/admin/users")).statusCode).toBe(403);
-  context.repo.db
+  await context.repo.db
     .prepare("UPDATE users SET role='admin' WHERE id=?")
     .run(member.id);
   expect((await bearer(token, "/api/admin/users")).statusCode).toBe(200);
-  context.repo.db
+  await context.repo.db
     .prepare("UPDATE users SET role='member' WHERE id=?")
     .run(member.id);
   expect((await bearer(token, "/api/admin/users")).statusCode).toBe(403);
-  context.repo.db
+  await context.repo.db
     .prepare("UPDATE users SET status='disabled' WHERE id=?")
     .run(member.id);
   expect((await bearer(token, "/api/projects")).statusCode).toBe(401);
-  context.repo.db
+  await context.repo.db
     .prepare(
       "UPDATE users SET status='active',requires_activation=1 WHERE id=?",
     )
@@ -274,7 +279,9 @@ it("requires cookie+CSRF for credential management and keeps browser origin defe
       })
     ).statusCode,
   ).toBe(401);
-  const payload = taskInput.strip().parse(context.repo.snapshot("a").tasks[0]);
+  const payload = taskInput
+    .strip()
+    .parse((await context.repo.snapshot("a")).tasks[0]);
   expect(
     (
       await context.app.inject({
@@ -333,11 +340,14 @@ it("serves machine-readable contracts from current validators and discovers regi
 it("persists credentials across restarts without changing existing workspace records", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pm-ai-access-"));
   const databasePath = join(dir, "test.sqlite");
-  let instance = await buildApp({ databasePath, origin });
+  let instance = await buildApp({
+    database: testDatabaseConfig(databasePath),
+    origin,
+  });
   let closed = false;
   try {
-    instance.repo.seed("existing");
-    const original = instance.repo.snapshot("existing");
+    await instance.repo.seed("existing");
+    const original = await instance.repo.snapshot("existing");
     await createUser(instance.repo, {
       email: "restart@example.test",
       name: "Restart Member",
@@ -364,7 +374,10 @@ it("persists credentials across restarts without changing existing workspace rec
     const token = generated.json().token;
     await instance.app.close();
     closed = true;
-    instance = await buildApp({ databasePath, origin });
+    instance = await buildApp({
+      database: testDatabaseConfig(databasePath),
+      origin,
+    });
     closed = false;
     const loaded = await instance.app.inject({
       url: "/api/ai-access/context",
@@ -372,14 +385,18 @@ it("persists credentials across restarts without changing existing workspace rec
     });
     expect(loaded.statusCode).toBe(200);
     expect(loaded.json().actor.name).toBe("Restart Member");
-    expect(instance.repo.snapshot("existing").projects).toEqual(
+    expect((await instance.repo.snapshot("existing")).projects).toEqual(
       original.projects,
     );
-    expect(instance.repo.snapshot("existing").tasks).toEqual(original.tasks);
+    expect((await instance.repo.snapshot("existing")).tasks).toEqual(
+      original.tasks,
+    );
     expect(
-      instance.repo.db
-        .prepare("SELECT COUNT(*) AS n FROM migrations WHERE version=21")
-        .get()!.n,
+      (await instance.repo.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM pm_schema_migrations WHERE version=1",
+        )
+        .get())!.n,
     ).toBe(1);
   } finally {
     if (!closed) await instance.app.close();

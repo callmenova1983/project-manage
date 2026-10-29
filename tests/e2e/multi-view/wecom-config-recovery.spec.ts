@@ -15,33 +15,33 @@ test("WeCom configuration refreshes a rejected request token once while preservi
   let writes = 0;
   const keys: string[] = [],
     bodies: string[] = [];
-  await page.route("**/api/directory/wecom/config", (route) => {
+  await page.route("**/api/directory/wecom/config", async (route) => {
     const request = route.request();
     if (request.method() === "GET")
-      return route.fulfill({
+      return (await route.fulfill({
         json: {
           version: 0,
           corpId: "synthetic-corp",
           secretConfigured: false,
           source: "none",
         },
-      });
+      }));
     writes++;
     keys.push(request.headers()["idempotency-key"]!);
     bodies.push(request.postData()!);
     return writes === 1
-      ? route.fulfill({
+      ? (await route.fulfill({
           status: 403,
           json: { message: "Invalid request token" },
-        })
-      : route.fulfill({
+        }))
+      : (await route.fulfill({
           json: {
             version: 1,
             corpId: "synthetic-corp",
             secretConfigured: true,
             source: "workspace",
           },
-        });
+        }));
   });
   let syncs = 0;
   page.on("request", (r) => {
@@ -89,21 +89,21 @@ test("a second token rejection keeps configuration inputs available for manual r
     });
   });
   let writes = 0;
-  await page.route("**/api/directory/wecom/config", (route) => {
+  await page.route("**/api/directory/wecom/config", async (route) => {
     if (route.request().method() === "GET")
-      return route.fulfill({
+      return (await route.fulfill({
         json: {
           version: 0,
           corpId: "synthetic-corp",
           secretConfigured: false,
           source: "none",
         },
-      });
+      }));
     writes++;
-    return route.fulfill({
+    return (await route.fulfill({
       status: 403,
       json: { message: "Invalid request token" },
-    });
+    }));
   });
   await page.goto("/directory");
   await page

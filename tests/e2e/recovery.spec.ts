@@ -29,7 +29,7 @@ async function fillReview(page: Page) {
     .fill("合成审阅后修改，尚未提交");
 }
 async function reloadDirty(page: Page) {
-  page.once("dialog", (dialog) => dialog.accept());
+  page.once("dialog", async (dialog) => (await dialog.accept()));
   await page.reload();
 }
 for (const width of [1536, 390])
@@ -93,7 +93,7 @@ test("route return preserves source; explicit cancel and recovery discard remove
 }) => {
   await page.goto("/demo/intake");
   await fillReview(page);
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("link", { name: "Tasks", exact: true }).first().click();
   await page.goBack();
   await page
@@ -102,7 +102,7 @@ test("route return preserves source; explicit cancel and recovery discard remove
   await expect(page.getByLabel("Task title", { exact: true })).toHaveValue(
     "合成审阅后修改，尚未提交",
   );
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page
     .locator(".intake-confirm")
     .getByRole("button", { name: "Cancel", exact: true })
@@ -148,14 +148,14 @@ test("HTML service failure offers retry before sign-in, demo boundary stays clea
   expectedFaults.add("/api/auth/session:503");
   expectedFaults.add("/api/auth/session:401");
   let broken = true;
-  await page.route("**/api/auth/session", (route) =>
+  await page.route("**/api/auth/session", async (route) =>
     broken
-      ? route.fulfill({
+      ? (await route.fulfill({
           status: 503,
           contentType: "text/html",
           body: "<h1>synthetic private proxy diagnostics</h1>",
-        })
-      : route.continue(),
+        }))
+      : (await route.continue()),
   );
   await page.goto("/intake");
   await expect(
@@ -218,14 +218,14 @@ test("a failed formal save preserves edits; retry creates once and logout remove
     .length;
   await fillReview(page);
   let fail = true;
-  await page.route("**/api/intakes", (route) =>
+  await page.route("**/api/intakes", async (route) =>
     route.request().method() === "POST" && fail
-      ? route.fulfill({
+      ? (await route.fulfill({
           status: 503,
           contentType: "application/json",
           body: JSON.stringify({ message: "Synthetic save unavailable" }),
-        })
-      : route.continue(),
+        }))
+      : (await route.continue()),
   );
   await page.getByRole("button", { name: "Create items", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText(
@@ -257,7 +257,7 @@ test("a failed formal save preserves edits; retry creates once and logout remove
     page.getByRole("status").filter({ hasText: "Draft saved" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Toggle sidebar" }).click();
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
   expect(
@@ -278,12 +278,12 @@ test("expired session retains a draft for its owner without offering it to anoth
   await page.request.post("/api/auth/login", { data: member });
   await page.goto("/intake");
   await fillReview(page);
-  await page.route("**/api/workspace", (route) =>
-    route.fulfill({
+  await page.route("**/api/workspace", async (route) =>
+    (await route.fulfill({
       status: 401,
       contentType: "application/json",
       body: JSON.stringify({ message: "Synthetic session expiry" }),
-    }),
+    })),
   );
   await page
     .getByRole("button", { name: "Refresh workspace", exact: true })
@@ -302,7 +302,7 @@ test("expired session retains a draft for its owner without offering it to anoth
     page.getByRole("button", { name: "Restore draft", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Toggle sidebar" }).click();
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page
     .getByLabel("Login name or email", { exact: true })

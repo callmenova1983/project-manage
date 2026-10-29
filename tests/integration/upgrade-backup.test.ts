@@ -1,318 +1,370 @@
 import { it, expect } from "vitest";
-import { DatabaseSync, backup } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
+import { randomBytes } from "node:crypto";
 import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  copyFileSync,
   rmSync,
+  writeFileSync,
+  existsSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Repository } from "../../apps/api/src/database";
-import { createSeed } from "../../packages/domain/seed";
-import { backupDatabase } from "../../apps/api/src/backup";
+import { Repository } from "../../apps/api/src/database.js";
+import { readDatabaseConfig } from "../../apps/api/src/database-config.js";
+import { migrateSqlite } from "../../apps/api/src/migrate-sqlite.js";
+import { createSeed } from "../../packages/domain/seed.js";
 
-// Downgraded fixtures must remove later objects before replaying migrations.
-function removeReplayTables(db: DatabaseSync) {
-  for (const table of [
-    "wecom_login_sessions",
-    "wecom_login_states",
-    "wecom_login_events",
-    "wecom_login_config",
-    "notification_outbox",
-    "notifications",
-    "notification_accounts",
-    "notification_cursors",
-    "notification_wecom_config",
-    "notification_bindings",
-    "notification_directory_scope",
-    "project_redirects",
-  ])
-    db.exec(`DROP TABLE ${table}`);
+function sourceFixture(path: string, maximum = 22) {
+  const source = new DatabaseSync(path);
+  for (const file of readdirSync("apps/api/migrations")
+    .filter(
+      (name) =>
+        /^\d+_.+\.sql$/.test(name) && Number(name.split("_")[0]) <= maximum,
+    )
+    .sort()) {
+    source.exec(readFileSync(join("apps/api/migrations", file), "utf8"));
+    source
+      .prepare(
+        "INSERT OR IGNORE INTO migrations(version,applied_at) VALUES(?,?)",
+      )
+      .run(Number(file.split("_")[0]), "2026-10-01T00:00:00Z");
+  }
+  source
+    .prepare("INSERT INTO workspaces(id,name) VALUES(?,?)")
+    .run("synthetic", "Synthetic migration fixture");
+  source
+    .prepare(
+      "INSERT INTO users(id,workspace_id,email,name,password_hash) VALUES(?,?,?,?,?)",
+    )
+    .run(
+      "user",
+      "synthetic",
+      "migration@example.test",
+      "Synthetic member",
+      "unchanged synthetic password hash",
+    );
+  const project = createSeed().projects[0]!;
+  source
+    .prepare(
+      "INSERT INTO projects(id,workspace_id,version,data) VALUES(?,?,?,?)",
+    )
+    .run(project.id, "synthetic", project.version, JSON.stringify(project));
+  return { source, project };
 }
 
-it("upgrades a synthetic v3 database without changing users/projects and restores a consistent pre-upgrade backup", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "pm-upgrade-")),
-    path = join(dir, "workspace.sqlite"),
-    backupPath = join(dir, "before.sqlite"),
-    restoredPath = join(dir, "restored.sqlite");
+it("imports every SQLite table losslessly, preserving identifiers, blobs, credentials, cursor order and a private recovery copy", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pm-pg-import-"));
+  const repo = await Repository.open(readDatabaseConfig(), { isolated: true });
+  const sourcePath = join(dir, "source.sqlite");
+  const config = {
+    ...readDatabaseConfig(),
+    schema: repo.db.schema,
+    credentialKeyPath: join(dir, "pg.key"),
+  };
+  const { source, project } = sourceFixture(sourcePath);
+  const key = randomBytes(32);
+  const bytes = Buffer.from([0, 255, 35, 12, 200, 0]);
   try {
-    const old = new DatabaseSync(path);
-    old.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
-    for (const file of readdirSync("apps/api/migrations")
-      .filter((f) => /^[0-3]_/.test(f) || /^00[1-3]_/.test(f))
-      .sort()) {
-      old.exec(readFileSync(join("apps/api/migrations", file), "utf8"));
-      old
-        .prepare(
-          "INSERT OR IGNORE INTO migrations(version,applied_at) VALUES(?,?)",
-        )
-        .run(Number(file.split("_")[0]), "2026-10-11T00:00:00Z");
-    }
-    old
-      .prepare("INSERT INTO workspaces(id,name) VALUES(?,?)")
-      .run("synthetic", "Synthetic workspace");
-    old
+    source
+      .prepare("UPDATE users SET username='syntheticm' WHERE id='user'")
+      .run();
+    source
       .prepare(
-        "INSERT INTO users(id,workspace_id,email,name,password_hash) VALUES(?,?,?,?,?)",
+        "UPDATE workspaces SET time_zone='Asia/Shanghai',settings_version=3",
+      )
+      .run();
+    source
+      .prepare(
+        "INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)",
+      )
+      .run("synthetic-token-hash", "user", "csrf", 1900000000000);
+    source
+      .prepare(
+        "INSERT INTO workspace_ai_credentials(workspace_id,encrypted_config) VALUES(?,?)",
+      )
+      .run("synthetic", "opaque synthetic ciphertext");
+    source
+      .prepare(
+        "INSERT INTO progress_materials(id,workspace_id,project_id,created_at,metadata,bytes,images) VALUES(?,?,?,?,?,?,?)",
       )
       .run(
-        "synthetic-user",
+        "material",
         "synthetic",
-        "fixture@example.test",
-        "Synthetic member",
-        "nonfunctional synthetic hash",
+        project.id,
+        "2026-10-01T00:00:00Z",
+        "{}",
+        bytes,
+        "[]",
       );
-    const p = createSeed().projects[0]!;
-    old
+    source
       .prepare(
-        "INSERT INTO projects(id,workspace_id,version,data) VALUES(?,?,?,?)",
+        "INSERT INTO activities(rowid,id,workspace_id,created_at,data) VALUES(?,?,?,?,?)",
       )
-      .run(p.id, "synthetic", p.version, JSON.stringify(p));
-    const originalUser = old.prepare("SELECT * FROM users").get(),
-      originalProject = old.prepare("SELECT * FROM projects").get();
-    // The backup API includes committed WAL content, without copying only the main file.
-    await backup(old, backupPath);
-    old.close();
-    const upgraded = new Repository(path);
+      .run(25, "activity", "synthetic", "2026-10-01T00:00:00Z", "{}");
+    source
+      .prepare(
+        "INSERT INTO notification_cursors(workspace_id,activity_row,initialized_at) VALUES(?,?,?)",
+      )
+      .run("synthetic", 25, "2026-10-01T00:00:00Z");
+    writeFileSync(`${sourcePath}.credentials-key`, key, { mode: 0o600 });
+    const dryRun = await migrateSqlite({ source: sourcePath, config });
+    expect(dryRun.mode).toBe("dry-run");
     expect(
-      upgraded.db
-        .prepare("SELECT version FROM migrations ORDER BY version")
-        .all()
-        .map((r) => r.version),
-    ).toEqual(
-      readdirSync("apps/api/migrations")
-        .filter((name) => /^\d+_.+\.sql$/.test(name))
-        .map((name) => Number(name.split("_")[0]))
-        .sort((a, b) => a - b),
-    );
-    expect(upgraded.db.prepare("SELECT * FROM users").get()).toMatchObject({
-      ...originalUser,
-      username: "syntheticm",
-      role: "member",
-      status: "active",
-      requires_activation: 0,
+      (await repo.db.prepare("SELECT COUNT(*) AS n FROM workspaces").get())!.n,
+    ).toBe(0);
+    expect(existsSync(config.credentialKeyPath)).toBe(false);
+    const result = await migrateSqlite({
+      source: sourcePath,
+      config,
+      apply: true,
+      backupDirectory: join(dir, "backups"),
     });
-    expect(upgraded.db.prepare("SELECT * FROM projects").get()).toEqual(
-      originalProject,
-    );
-    expect(upgraded.db.prepare("PRAGMA integrity_check").get()).toEqual({
-      integrity_check: "ok",
-    });
-    expect(upgraded.db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    upgraded.close();
-    copyFileSync(backupPath, restoredPath);
-    const restored = new DatabaseSync(restoredPath, { readOnly: true });
+    expect(result.mode).toBe("applied");
+    if (result.mode !== "applied" || !("backup" in result))
+      throw new Error("Expected applied migration");
     expect(
-      restored.prepare("SELECT max(version) AS version FROM migrations").get()!
-        .version,
-    ).toBe(3);
-    expect(restored.prepare("SELECT * FROM users").get()).toEqual(originalUser);
-    expect(restored.prepare("SELECT * FROM projects").get()).toEqual(
-      originalProject,
-    );
-    expect(restored.prepare("PRAGMA integrity_check").get()).toEqual({
-      integrity_check: "ok",
+      result.tables.every((table) => "verified" in table && table.verified),
+    ).toBe(true);
+    expect(readFileSync(config.credentialKeyPath)).toEqual(key);
+    expect(readFileSync(`${result.backup}.credentials-key`)).toEqual(key);
+    expect(
+      (await repo.db.prepare("SELECT bytes FROM progress_materials").get())!
+        .bytes,
+    ).toEqual(bytes);
+    expect(
+      (await repo.db.prepare("SELECT password_hash FROM users").get())!
+        .password_hash,
+    ).toBe("unchanged synthetic password hash");
+    expect(
+      (await repo.db.prepare("SELECT expires_at FROM sessions").get())!
+        .expires_at,
+    ).toBe(1900000000000);
+    expect(
+      (await repo.db
+        .prepare("SELECT activity_row FROM notification_cursors")
+        .get())!.activity_row,
+    ).toBe(25);
+    expect(await repo.settings("synthetic")).toEqual({
+      timeZone: "Asia/Shanghai",
+      version: 3,
     });
-    restored.close();
+    const next = (
+      await repo.db.query(
+        "INSERT INTO activities(id,workspace_id,created_at,data) VALUES('next','synthetic','2026-10-02','{}') RETURNING rowid",
+      )
+    ).rows[0]!;
+    expect(Number(next.rowid)).toBeGreaterThan(25);
+    const recovery = new DatabaseSync(result.backup!, { readOnly: true });
+    try {
+      expect(
+        recovery.prepare("SELECT rowid FROM activities").get()!.rowid,
+      ).toBe(25);
+      expect(
+        recovery.prepare("PRAGMA integrity_check").get()!.integrity_check,
+      ).toBe("ok");
+      expect(
+        recovery.prepare("SELECT password_hash FROM users").get()!
+          .password_hash,
+      ).toBe("unchanged synthetic password hash");
+    } finally {
+      recovery.close();
+    }
   } finally {
+    source.close();
+    await repo.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-it("adds the v12 history index without rewriting local v11 business data and restores the pre-upgrade snapshot", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "pm-v6-upgrade-")),
-    path = join(dir, "db.sqlite"),
-    saved = join(dir, "v5.sqlite");
+it("rejects nonempty PostgreSQL targets without changing source or target", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pm-pg-import-existing-"));
+  const repo = await Repository.open(readDatabaseConfig(), { isolated: true });
+  const sourcePath = join(dir, "source.sqlite");
+  const { source } = sourceFixture(sourcePath);
   try {
-    const initial = new Repository(path);
-    initial.seed("synthetic");
-    const before = initial.snapshot("synthetic");
-    removeReplayTables(initial.db);
-    initial.db.exec(
-      "DROP INDEX activity_workspace_instant; DELETE FROM migrations WHERE version>=12; ALTER TABLE workspaces DROP COLUMN time_zone; ALTER TABLE workspaces DROP COLUMN settings_version;",
+    await repo.workspace("existing", "Existing data");
+    const config = {
+      ...readDatabaseConfig(),
+      schema: repo.db.schema,
+      credentialKeyPath: join(dir, "pg.key"),
+    };
+    await expect(
+      migrateSqlite({ source: sourcePath, config, apply: true }),
+    ).rejects.toThrow("not empty");
+    expect(
+      (await repo.db.prepare("SELECT id FROM workspaces").all()).map(
+        (row) => row.id,
+      ),
+    ).toEqual(["existing"]);
+    expect(source.prepare("SELECT COUNT(*) AS n FROM projects").get()!.n).toBe(
+      1,
     );
-    await backupDatabase(path, saved);
-    initial.close();
-    const upgraded = new Repository(path);
-    expect(upgraded.snapshot("synthetic")).toEqual(before);
+  } finally {
+    source.close();
+    await repo.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("refuses to replace another credential key before importing encrypted settings", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pm-pg-import-key-"));
+  const repo = await Repository.open(readDatabaseConfig(), { isolated: true });
+  const sourcePath = join(dir, "source.sqlite");
+  const { source } = sourceFixture(sourcePath);
+  try {
+    const config = {
+      ...readDatabaseConfig(),
+      schema: repo.db.schema,
+      credentialKeyPath: join(dir, "pg.key"),
+    };
+    writeFileSync(`${sourcePath}.credentials-key`, randomBytes(32), {
+      mode: 0o600,
+    });
+    const existingKey = randomBytes(32);
+    writeFileSync(config.credentialKeyPath, existingKey, { mode: 0o600 });
+    await expect(
+      migrateSqlite({ source: sourcePath, config, apply: true }),
+    ).rejects.toThrow("differs");
+    expect(readFileSync(config.credentialKeyPath)).toEqual(existingKey);
     expect(
-      upgraded.db
+      (await repo.db.prepare("SELECT COUNT(*) AS n FROM projects").get())!.n,
+    ).toBe(0);
+  } finally {
+    source.close();
+    await repo.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("refuses incompatible legacy schemas transactionally and preserves the pre-import SQLite backup", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pm-pg-import-v3-"));
+  const repo = await Repository.open(readDatabaseConfig(), { isolated: true });
+  const sourcePath = join(dir, "source.sqlite");
+  const { source } = sourceFixture(sourcePath, 3);
+  try {
+    const original = source.prepare("SELECT * FROM users").all();
+    const config = {
+      ...readDatabaseConfig(),
+      schema: repo.db.schema,
+      credentialKeyPath: join(dir, "pg.key"),
+    };
+    await expect(
+      migrateSqlite({
+        source: sourcePath,
+        config,
+        apply: true,
+        backupDirectory: join(dir, "backups"),
+      }),
+    ).rejects.toThrow("table sets differ");
+    expect(
+      (await repo.db.prepare("SELECT COUNT(*) AS n FROM users").get())!.n,
+    ).toBe(0);
+    expect(source.prepare("SELECT * FROM users").all()).toEqual(original);
+    const backup = readdirSync(join(dir, "backups")).find((name) =>
+      name.endsWith(".sqlite"),
+    )!;
+    const recovery = new DatabaseSync(join(dir, "backups", backup), {
+      readOnly: true,
+    });
+    try {
+      expect(recovery.prepare("SELECT * FROM users").all()).toEqual(original);
+    } finally {
+      recovery.close();
+    }
+  } finally {
+    source.close();
+    await repo.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("accepts only the known migration-022 variant missing enterprise session bindings and leaves that PG table empty", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pm-pg-import-v22-variant-"));
+  const repo = await Repository.open(readDatabaseConfig(), { isolated: true });
+  const sourcePath = join(dir, "source.sqlite");
+  const { source } = sourceFixture(sourcePath);
+  try {
+    source.exec("DROP TABLE wecom_login_sessions");
+    const before = source.prepare("SELECT * FROM users").all();
+    const config = {
+      ...readDatabaseConfig(),
+      schema: repo.db.schema,
+      credentialKeyPath: join(dir, "pg.key"),
+    };
+    const dryRun = await migrateSqlite({ source: sourcePath, config });
+    expect(dryRun.newEmptyTables).toEqual(["wecom_login_sessions"]);
+    const result = await migrateSqlite({
+      source: sourcePath,
+      config,
+      apply: true,
+      backupDirectory: join(dir, "backups"),
+    });
+    expect(result.mode).toBe("applied");
+    expect(result.newEmptyTables).toEqual(["wecom_login_sessions"]);
+    expect(
+      (await repo.db
+        .prepare("SELECT COUNT(*) AS n FROM wecom_login_sessions")
+        .get())!.n,
+    ).toBe(0);
+    expect(
+      (await repo.db.prepare("SELECT COUNT(*) AS n FROM projects").get())!.n,
+    ).toBe(1);
+    expect(source.prepare("SELECT * FROM users").all()).toEqual(before);
+    expect(
+      source
         .prepare(
-          "SELECT 1 FROM sqlite_master WHERE name='activity_workspace_instant'",
-        )
-        .get(),
-    ).toBeTruthy();
-    const plan = upgraded.db
-      .prepare(
-        "EXPLAIN QUERY PLAN SELECT data FROM activities WHERE workspace_id=? AND julianday(created_at)>=julianday(?) ORDER BY julianday(created_at) DESC,id",
-      )
-      .all("synthetic", "2020-01-01");
-    expect(JSON.stringify(plan)).toContain("activity_workspace_instant");
-    upgraded.db.exec(
-      "BEGIN; DROP INDEX activity_workspace_instant; DELETE FROM migrations WHERE version=12; COMMIT;",
-    );
-    expect(upgraded.snapshot("synthetic")).toEqual(before);
-    upgraded.close();
-    const reapplied = new Repository(path);
-    expect(reapplied.snapshot("synthetic")).toEqual(before);
-    reapplied.close();
-    const restored = new DatabaseSync(saved, { readOnly: true });
-    expect(
-      restored.prepare("SELECT MAX(version) AS version FROM migrations").get()!
-        .version,
-    ).toBe(11);
-    expect(
-      restored
-        .prepare(
-          "SELECT 1 FROM sqlite_master WHERE name='activity_workspace_instant'",
+          "SELECT 1 FROM sqlite_master WHERE name='wecom_login_sessions'",
         )
         .get(),
     ).toBeUndefined();
-    expect(
-      restored.prepare("SELECT COUNT(*) AS n FROM projects").get()!.n,
-    ).toBe(before.projects.length);
-    expect(
-      restored.prepare("PRAGMA integrity_check").get()!.integrity_check,
-    ).toBe("ok");
-    restored.close();
   } finally {
+    source.close();
+    await repo.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-it("migrates the local v12 schema to UTC without rewriting records, persists IANA settings and restores the v12 backup", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "pm-v7-upgrade-")),
-    path = join(dir, "db.sqlite"),
-    saved = join(dir, "v6.sqlite");
-  try {
-    const initial = new Repository(path);
-    initial.seed("synthetic");
-    const records = () =>
-      ["projects", "tasks", "activities"].map((table) =>
-        initial.db.prepare(`SELECT * FROM ${table}`).all(),
+it.each(["unknown source table", "another missing table"])(
+  "still rejects the known variant with %s",
+  async (difference) => {
+    const dir = mkdtempSync(join(tmpdir(), "pm-pg-import-unknown-"));
+    const repo = await Repository.open(readDatabaseConfig(), {
+      isolated: true,
+    });
+    const sourcePath = join(dir, "source.sqlite");
+    const { source } = sourceFixture(sourcePath);
+    try {
+      source.exec("DROP TABLE wecom_login_sessions");
+      source.exec(
+        difference === "unknown source table"
+          ? "CREATE TABLE unknown_source_table(id TEXT)"
+          : "DROP TABLE wecom_login_events",
       );
-    const before = records();
-    removeReplayTables(initial.db);
-    initial.db.exec(
-      "ALTER TABLE workspaces DROP COLUMN time_zone; ALTER TABLE workspaces DROP COLUMN settings_version; DELETE FROM migrations WHERE version>=13;",
-    );
-    await backupDatabase(path, saved);
-    initial.close();
-    const upgraded = new Repository(path);
-    expect(upgraded.settings("synthetic")).toEqual({
-      timeZone: "UTC",
-      version: 1,
-    });
-    expect(
-      ["projects", "tasks", "activities"].map((table) =>
-        upgraded.db.prepare(`SELECT * FROM ${table}`).all(),
-      ),
-    ).toEqual(before);
-    upgraded.db
-      .prepare(
-        "UPDATE workspaces SET time_zone='Asia/Shanghai',settings_version=2 WHERE id=?",
-      )
-      .run("synthetic");
-    upgraded.close();
-    const reopened = new Repository(path);
-    expect(reopened.settings("synthetic")).toEqual({
-      timeZone: "Asia/Shanghai",
-      version: 2,
-    });
-    reopened.close();
-    const restored = new DatabaseSync(saved, { readOnly: true });
-    expect(
-      restored.prepare("SELECT MAX(version) AS n FROM migrations").get()!.n,
-    ).toBe(12);
-    expect(
-      ["projects", "tasks", "activities"].map((table) =>
-        restored.prepare(`SELECT * FROM ${table}`).all(),
-      ),
-    ).toEqual(before);
-    expect(
-      restored
-        .prepare("PRAGMA table_info(workspaces)")
-        .all()
-        .some((row) => row.name === "time_zone"),
-    ).toBe(false);
-    expect(
-      restored.prepare("PRAGMA integrity_check").get()!.integrity_check,
-    ).toBe("ok");
-    restored.close();
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-it("upgrades the remote v7 schema with reused migration numbers, preserving timezone and business records", () => {
-  const dir = mkdtempSync(join(tmpdir(), "pm-remote-v7-")),
-    path = join(dir, "workspace.sqlite");
-  try {
-    const old = new DatabaseSync(path);
-    for (const file of readdirSync("apps/api/migrations")
-      .filter((f) => /^00[1-5]_/.test(f))
-      .sort()) {
-      old.exec(readFileSync(join("apps/api/migrations", file), "utf8"));
-      old
-        .prepare(
-          "INSERT OR IGNORE INTO migrations(version,applied_at) VALUES(?,?)",
-        )
-        .run(Number(file.split("_")[0]), "2026-10-12T00:00:00Z");
+      const config = {
+        ...readDatabaseConfig(),
+        schema: repo.db.schema,
+        credentialKeyPath: join(dir, "pg.key"),
+      };
+      await expect(
+        migrateSqlite({
+          source: sourcePath,
+          config,
+          apply: true,
+          backupDirectory: join(dir, "backups"),
+        }),
+      ).rejects.toThrow("table sets differ");
+      expect(
+        (await repo.db.prepare("SELECT COUNT(*) AS n FROM users").get())!.n,
+      ).toBe(0);
+      expect(source.prepare("SELECT COUNT(*) AS n FROM users").get()!.n).toBe(
+        1,
+      );
+    } finally {
+      source.close();
+      await repo.close();
+      rmSync(dir, { recursive: true, force: true });
     }
-    old.exec(
-      readFileSync("apps/api/migrations/012_activity_range.sql", "utf8"),
-    );
-    old.exec(
-      readFileSync("apps/api/migrations/013_workspace_time_zone.sql", "utf8"),
-    );
-    old.exec(
-      "INSERT INTO migrations(version,applied_at) VALUES(6,'2026-10-12'),(7,'2026-10-12'); INSERT INTO workspaces(id,name,time_zone,settings_version) VALUES('remote','Remote fixture','Asia/Shanghai',3)",
-    );
-    old
-      .prepare(
-        "INSERT INTO users(id,workspace_id,email,name,password_hash) VALUES(?,?,?,?,?)",
-      )
-      .run(
-        "remote-user",
-        "remote",
-        "fixture@example.test",
-        "Remote Member",
-        "synthetic hash",
-      );
-    const p = createSeed().projects[0]!;
-    old
-      .prepare(
-        "INSERT INTO projects(id,workspace_id,version,data) VALUES(?,?,?,?)",
-      )
-      .run(p.id, "remote", p.version, JSON.stringify(p));
-    const before = old.prepare("SELECT * FROM projects").all();
-    old.close();
-    const upgraded = new Repository(path);
-    expect(upgraded.settings("remote")).toEqual({
-      timeZone: "Asia/Shanghai",
-      version: 3,
-    });
-    expect(upgraded.db.prepare("SELECT * FROM projects").all()).toEqual(before);
-    expect(
-      upgraded.db.prepare("SELECT password_hash FROM users").get()!
-        .password_hash,
-    ).toBe("synthetic hash");
-    expect(upgraded.snapshot("remote").directory!.employees).toEqual([]);
-    expect(upgraded.snapshot("remote").projectOrder).toEqual([p.id]);
-    expect(upgraded.db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    upgraded.close();
-    const reopened = new Repository(path);
-    expect(reopened.settings("remote")).toEqual({
-      timeZone: "Asia/Shanghai",
-      version: 3,
-    });
-    expect(
-      reopened.db.prepare("PRAGMA integrity_check").get()!.integrity_check,
-    ).toBe("ok");
-    reopened.close();
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+  },
+);

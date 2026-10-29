@@ -16,7 +16,7 @@ it("public runtime chunks do not exhaust the API quota while API and login limit
     "export const fixture = true;",
   );
   const context = await buildApp({
-    databasePath: ":memory:",
+    isolatedDatabase: true,
     origin: "http://localhost:4189",
     staticPath: root,
   });

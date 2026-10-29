@@ -65,9 +65,9 @@ test("independent members resume shared data and preserve dirty edits on mobile"
     await expect(
       desktop.getByRole("button", { name: "Save notes", exact: true }),
     ).toHaveCount(0);
-    const resumed = mobile.waitForResponse(
+    const resumed = (await mobile.waitForResponse(
       (response) => response.url().endsWith("/api/workspace") && response.ok(),
-    );
+    ));
     await mobile.evaluate(() => window.dispatchEvent(new Event("online")));
     await resumed;
     await expect(secondNotes).toHaveValue("Saved by the first member");
@@ -79,9 +79,9 @@ test("independent members resume shared data and preserve dirty edits on mobile"
     await expect(
       desktop.getByRole("button", { name: "Save notes", exact: true }),
     ).toHaveCount(0);
-    const visible = mobile.waitForResponse(
+    const visible = (await mobile.waitForResponse(
       (response) => response.url().endsWith("/api/workspace") && response.ok(),
-    );
+    ));
     await mobile.evaluate(() =>
       document.dispatchEvent(new Event("visibilitychange")),
     );
@@ -168,9 +168,9 @@ test("failed entry module keeps a native reload link that recovers the login pag
   });
   const entryModule = (url: URL) => url.pathname === "/src/main.ts";
   let blocked = 0;
-  await page.route(entryModule, (route) => {
+  await page.route(entryModule, async (route) => {
     blocked++;
-    return route.abort("failed");
+    return (await route.abort("failed"));
   });
   await page.goto("/projects");
   await expect(

@@ -52,17 +52,21 @@ export function registerSpeechRoutes(
   app: FastifyInstance,
   repo: Repository,
   actor: (req: FastifyRequest) => Actor,
-  getConfig: (actor: Actor) => QwenConfig | undefined,
+  getConfig: (
+    actor: Actor,
+  ) => QwenConfig | undefined | Promise<QwenConfig | undefined>,
   fetcher: typeof fetch = fetch,
 ) {
-  const used = (config: QwenConfig) =>
+  const used = async (config: QwenConfig) =>
     Number(
-      repo.db
+      (await repo.db
         .prepare("SELECT count(*) AS n FROM ai_attempts WHERE budget_id=?")
-        .get(config.budgetId)!.n,
+        .get(config.budgetId))!.n,
     );
-  function availability(config?: QwenConfig): SpeechCapabilities {
-    const reason = allowanceReason(config, config ? used(config) : 0);
+  async function availability(
+    config?: QwenConfig,
+  ): Promise<SpeechCapabilities> {
+    const reason = allowanceReason(config, config ? await used(config) : 0);
     return {
       enabled: !reason,
       model: DEFAULT_SPEECH_MODEL,
@@ -77,8 +81,9 @@ export function registerSpeechRoutes(
               : null,
     };
   }
-  app.get("/api/assistant/speech", (req) =>
-    availability(getConfig(actor(req))),
+  app.get(
+    "/api/assistant/speech",
+    async (req) => await availability(await getConfig(actor(req))),
   );
   app.post(
     "/api/assistant/transcribe",
@@ -93,7 +98,7 @@ export function registerSpeechRoutes(
       const hash = createHash("sha256")
         .update("assistant-asr:" + input.data)
         .digest("hex");
-      const previous = repo.db
+      const previous = await repo.db
         .prepare(
           "SELECT request_hash,status,response FROM ai_requests WHERE user_id=? AND key=?",
         )
@@ -115,8 +120,8 @@ export function registerSpeechRoutes(
             : "上次识别未成功。录音仍在本机，可点击重试发起新的识别。",
         );
       }
-      const config = getConfig(a),
-        capability = availability(config);
+      const config = await getConfig(a),
+        capability = await availability(config);
       if (!config || !capability.enabled)
         throw new AiError(
           503,
@@ -142,21 +147,27 @@ export function registerSpeechRoutes(
           purpose: "speech-transcription",
         };
       // Reserve before the network call. A restart never replays an uncertain bill.
-      repo.transaction(() => {
-        const check = availability(config);
+      await repo.transaction(async () => {
+        const check = await availability(config);
         if (!check.enabled)
           throw new AiError(503, "ASR_UNAVAILABLE", check.reason!);
-        repo.db
+        const claim = await repo.db
           .prepare(
-            "INSERT INTO ai_requests(user_id,key,request_hash,status,created_at) VALUES(?,?,?,'started',?)",
+            "INSERT INTO ai_requests(user_id,key,request_hash,status,created_at) VALUES(?,?,?,'started',?) ON CONFLICT(user_id,key) DO NOTHING",
           )
           .run(a.id, input.requestId, hash, Date.now());
-        repo.db
+        if (!claim.changes)
+          throw new AiError(
+            409,
+            "ASR_RUNNING",
+            "这段语音已经提交，请稍后查看识别结果。",
+          );
+        await repo.db
           .prepare(
             "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
           )
           .run(randomUUID(), config.budgetId, a.id, Date.now());
-        writeModelLog(repo, a.workspaceId, log);
+        await writeModelLog(repo, a.workspaceId, log);
       });
       const started = performance.now();
       try {
@@ -256,7 +267,7 @@ export function registerSpeechRoutes(
           seconds: log.audioSeconds,
         };
         log.status = "succeeded";
-        repo.db
+        await repo.db
           .prepare(
             "UPDATE ai_requests SET status='succeeded',response=? WHERE user_id=? AND key=?",
           )
@@ -273,7 +284,7 @@ export function registerSpeechRoutes(
                 "语音识别连接中断，录音仍在本机，可稍后重试。",
               );
         log.errorCode = error.code;
-        repo.db
+        await repo.db
           .prepare(
             "UPDATE ai_requests SET status='failed' WHERE user_id=? AND key=?",
           )
@@ -281,7 +292,7 @@ export function registerSpeechRoutes(
         throw error;
       } finally {
         log.durationMs = Math.round(performance.now() - started);
-        writeModelLog(repo, a.workspaceId, log);
+        await writeModelLog(repo, a.workspaceId, log);
       }
     },
   );

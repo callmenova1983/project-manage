@@ -58,13 +58,13 @@ describe.each(["legacy", "sdk"] as const)(
     beforeEach(async () => {
       fetcher.mockReset();
       ctx = await buildApp({
-        databasePath: ":memory:",
+        isolatedDatabase: true,
         origin,
         qwen: config,
         aiRuntime: runtime,
         aiFetch: fetcher,
       });
-      ctx.repo.seed("turn");
+      await ctx.repo.seed("turn");
       await createUser(ctx.repo, {
         workspaceId: "turn",
         name: "Tester",
@@ -85,7 +85,7 @@ describe.each(["legacy", "sdk"] as const)(
     });
     afterEach(() => ctx.app.close());
     it("retires every old semantic endpoint without rules, billing or business writes", async () => {
-      const before = ctx.repo.snapshot("turn");
+      const before = await ctx.repo.snapshot("turn");
       for (const path of [
         "/api/proposals",
         "/api/proposals/qwen",
@@ -100,17 +100,21 @@ describe.each(["legacy", "sdk"] as const)(
         expect(response.json().code).toBe("AI_ENDPOINT_RETIRED");
       }
       expect(fetcher).not.toHaveBeenCalled();
-      expect(ctx.repo.snapshot("turn")).toEqual(before);
+      expect(await ctx.repo.snapshot("turn")).toEqual(before);
       expect(
-        ctx.repo.db.prepare("SELECT count(*) AS n FROM ai_attempts").get()!.n,
+        (await ctx.repo.db
+          .prepare("SELECT count(*) AS n FROM ai_attempts")
+          .get())!.n,
       ).toBe(0);
       expect(
-        ctx.repo.db.prepare("SELECT count(*) AS n FROM proposals").get()!.n,
+        (await ctx.repo.db
+          .prepare("SELECT count(*) AS n FROM proposals")
+          .get())!.n,
       ).toBe(0);
     });
     const userSource = "客户名字 重庆市市院， 数字城市项目，地址是重庆";
     it("uses the full unsubmitted list after a short clarification reply, while unrelated history remains invalid evidence", async () => {
-      const before = ctx.repo.snapshot("turn");
+      const before = await ctx.repo.snapshot("turn");
       const plan = {
         kind: "project",
         rows: projectListRows.map((row) => ({
@@ -133,7 +137,7 @@ describe.each(["legacy", "sdk"] as const)(
       expect(
         (await send("/api/assistant/interpret", followup)).statusCode,
       ).toBe(502);
-      expect(ctx.repo.snapshot("turn")).toEqual(before);
+      expect(await ctx.repo.snapshot("turn")).toEqual(before);
       model(plan);
       const result = await send("/api/assistant/interpret", {
         ...followup,
@@ -172,10 +176,10 @@ describe.each(["legacy", "sdk"] as const)(
           client: p.client,
         })),
       ).toEqual(projectListRows.map(({ name, client }) => ({ name, client })));
-      expect(ctx.repo.snapshot("turn").tasks).toEqual(before.tasks);
+      expect((await ctx.repo.snapshot("turn")).tasks).toEqual(before.tasks);
     });
     it("keeps original report evidence and line locations when a later turn confirms how to record it", async () => {
-      const before = ctx.repo.snapshot("turn");
+      const before = await ctx.repo.snapshot("turn");
       const draft = "日报原文\n项目接口联调完成，等待客户确认。";
       model({
         kind: "work",
@@ -197,10 +201,10 @@ describe.each(["legacy", "sdk"] as const)(
       expect(result.statusCode, result.body).toBe(200);
       expect(result.json().proposal.source).toContain(draft);
       expect(result.json().proposal.suggestions[0].sourceLine).toBe(2);
-      expect(ctx.repo.snapshot("turn")).toEqual(before);
+      expect(await ctx.repo.snapshot("turn")).toEqual(before);
     });
     it("sends unformatted text to Qwen, applies structured fields once, and reuses the existing project on a second turn", async () => {
-      const before = ctx.repo.snapshot("turn");
+      const before = await ctx.repo.snapshot("turn");
       model({
         kind: "project",
         rows: [
@@ -225,10 +229,10 @@ describe.each(["legacy", "sdk"] as const)(
             .content,
         ),
       ).toContain(userSource);
-      expect(ctx.repo.snapshot("turn")).toEqual(before); // Understanding alone never writes.
+      expect(await ctx.repo.snapshot("turn")).toEqual(before); // Understanding alone never writes.
       const apply = async (turn: AssistantTurn) => {
         if (turn.plan.kind !== "project") throw Error("wrong plan");
-        const snapshot = ctx.repo.snapshot("turn");
+        const snapshot = await ctx.repo.snapshot("turn");
         const source = {
           kind: "text" as const,
           name: "AI",
@@ -239,7 +243,7 @@ describe.each(["legacy", "sdk"] as const)(
           ),
           originalSource: { text: userSource, materialIds: [] },
         };
-        return send("/api/intakes", {
+        return await send("/api/intakes", {
           source,
           confirmed: true,
           rows: intakeCandidates(source, snapshot.projects).map((c) => ({
@@ -254,9 +258,9 @@ describe.each(["legacy", "sdk"] as const)(
         });
       };
       expect((await apply(response.json())).statusCode).toBe(200);
-      const saved = ctx.repo
-        .snapshot("turn")
-        .projects.find((p) => p.name === "数字城市项目")!;
+      const saved = (await ctx.repo.snapshot("turn")).projects.find(
+        (p) => p.name === "数字城市项目",
+      )!;
       expect(saved).toMatchObject({
         client: "重庆市市院",
         owner: "Unassigned",
@@ -288,13 +292,13 @@ describe.each(["legacy", "sdk"] as const)(
       const result = await apply(repeat.json());
       expect(result.statusCode).toBe(200);
       expect(result.json()).toMatchObject({ projects: [], tasks: [] });
-      expect(ctx.repo.snapshot("turn").projects).toHaveLength(
+      expect((await ctx.repo.snapshot("turn")).projects).toHaveLength(
         before.projects.length + 1,
       );
-      expect(ctx.repo.snapshot("turn").tasks).toEqual(before.tasks);
+      expect((await ctx.repo.snapshot("turn")).tasks).toEqual(before.tasks);
     });
     it("uses model intent and typed query filters rather than words like today or project in the raw message", async () => {
-      const before = ctx.repo.snapshot("turn");
+      const before = await ctx.repo.snapshot("turn");
       model({
         kind: "query",
         entity: "projects",
@@ -308,10 +312,10 @@ describe.each(["legacy", "sdk"] as const)(
       });
       expect(result.statusCode).toBe(200);
       expect(result.json().answer.links).toHaveLength(before.projects.length);
-      expect(ctx.repo.snapshot("turn")).toEqual(before);
+      expect(await ctx.repo.snapshot("turn")).toEqual(before);
     });
     it("preserves model work attribution and status without keyword repair or inferred fallback projects", async () => {
-      const before = ctx.repo.snapshot("turn"),
+      const before = await ctx.repo.snapshot("turn"),
         project = before.projects[0]!;
       const source = "沟通已完成，调试仍受网络阻塞。";
       model({
@@ -337,16 +341,16 @@ describe.each(["legacy", "sdk"] as const)(
         status: "blocked",
         candidates: [{ projectId: project.id }],
       });
-      const saved = ctx.repo.db
+      const saved = (await ctx.repo.db
         .prepare("SELECT data FROM proposals WHERE id=?")
-        .get(result.json().proposal.id)!;
+        .get(result.json().proposal.id))!;
       expect(JSON.parse(String(saved.data)).suggestions[0].status).toBe(
         "blocked",
       );
-      expect(ctx.repo.snapshot("turn")).toEqual(before);
+      expect(await ctx.repo.snapshot("turn")).toEqual(before);
     });
     it("accepts screenshot report items using verbatim evidence without depending on list numbers or model line counting", async () => {
-      const projects = ctx.repo.snapshot("turn").projects.slice(0, 4);
+      const projects = (await ctx.repo.snapshot("turn")).projects.slice(0, 4);
       const lines = [
         "五粮液 单点登录用户新增开发调试",
         "大榭 9月份xml数据拉取核对，氢能对接沟通跟进",
@@ -368,7 +372,7 @@ describe.each(["legacy", "sdk"] as const)(
           assignee: "朱天翔",
         })),
       });
-      const before = ctx.repo.snapshot("turn");
+      const before = await ctx.repo.snapshot("turn");
       const result = await send("/api/assistant/interpret", {
         source,
         externalProcessingConfirmed: true,
@@ -392,7 +396,7 @@ describe.each(["legacy", "sdk"] as const)(
               item.assignee === "朱天翔",
           ),
       ).toBe(true);
-      expect(ctx.repo.snapshot("turn")).toEqual(before);
+      expect(await ctx.repo.snapshot("turn")).toEqual(before);
       expect(fetcher).toHaveBeenCalledTimes(1);
       const request = JSON.parse(String(fetcher.mock.calls[0]![1]!.body));
       const content = request.messages.find(
@@ -414,7 +418,7 @@ describe.each(["legacy", "sdk"] as const)(
         });
     });
     it("keeps schema failure diagnostics without source content and rejects invented evidence", async () => {
-      const before = ctx.repo.snapshot("turn");
+      const before = await ctx.repo.snapshot("turn");
       model({
         kind: "work",
         items: [
@@ -435,11 +439,11 @@ describe.each(["legacy", "sdk"] as const)(
       expect(result.json().code).toBe("AI_INVALID_OUTPUT");
       const log = JSON.parse(
         String(
-          ctx.repo.db
+          (await ctx.repo.db
             .prepare(
               "SELECT data FROM model_logs ORDER BY created_at DESC LIMIT 1",
             )
-            .get()!.data,
+            .get())!.data,
         ),
       );
       expect(log.failureDiagnostic).toMatchObject({
@@ -447,7 +451,7 @@ describe.each(["legacy", "sdk"] as const)(
         reason: "work-evidence",
       });
       expect(JSON.stringify(log)).not.toContain("真实原文");
-      expect(ctx.repo.snapshot("turn")).toEqual(before);
+      expect(await ctx.repo.snapshot("turn")).toEqual(before);
       expect(fetcher).toHaveBeenCalledTimes(1);
     });
     it("leaves unknown project work pending rather than assigning the only project or skipping it", async () => {
@@ -474,7 +478,7 @@ describe.each(["legacy", "sdk"] as const)(
       expect(result.json().proposal.skippedSuggestionIds).toBeUndefined();
     });
     it("fails closed on invented owners, cross-workspace IDs and model transport errors", async () => {
-      const before = ctx.repo.snapshot("turn");
+      const before = await ctx.repo.snapshot("turn");
       model({
         kind: "project",
         rows: [
@@ -516,7 +520,7 @@ describe.each(["legacy", "sdk"] as const)(
       });
       expect(failed.statusCode).toBeGreaterThanOrEqual(400);
       expect(failed.json()).not.toHaveProperty("plan");
-      expect(ctx.repo.snapshot("turn")).toEqual(before);
+      expect(await ctx.repo.snapshot("turn")).toEqual(before);
     });
     it("replays the same interpretation key without another paid call or business writes", async () => {
       const key = randomUUID(),
@@ -534,7 +538,7 @@ describe.each(["legacy", "sdk"] as const)(
       async (reason) => {
         await ctx.app.close();
         ctx = await buildApp({
-          databasePath: ":memory:",
+          isolatedDatabase: true,
           origin,
           aiRuntime: runtime,
           aiFetch: fetcher,
@@ -542,7 +546,7 @@ describe.each(["legacy", "sdk"] as const)(
             ? { qwen: { ...config, expiresAt: Date.now() - 1000 } }
             : {}),
         });
-        ctx.repo.seed("turn");
+        await ctx.repo.seed("turn");
         await createUser(ctx.repo, {
           workspaceId: "turn",
           name: "Tester",
@@ -560,7 +564,7 @@ describe.each(["legacy", "sdk"] as const)(
         });
         cookie = `pm_session=${login.cookies[0]!.value}`;
         csrf = login.json().csrf;
-        const before = ctx.repo.snapshot("turn");
+        const before = await ctx.repo.snapshot("turn");
         const result = await send("/api/assistant/interpret", {
           source: userSource,
           externalProcessingConfirmed: true,
@@ -571,7 +575,7 @@ describe.each(["legacy", "sdk"] as const)(
         );
         expect(result.json()).not.toHaveProperty("plan");
         expect(fetcher).not.toHaveBeenCalled();
-        expect(ctx.repo.snapshot("turn")).toEqual(before);
+        expect(await ctx.repo.snapshot("turn")).toEqual(before);
       },
     );
     it("cleans only the caller's temporary recognition sources after successful interpretation and can replay the result", async () => {
@@ -604,7 +608,7 @@ describe.each(["legacy", "sdk"] as const)(
       const first = await send("/api/assistant/interpret", payload, key);
       expect(first.statusCode, first.body).toBe(200);
       expect(
-        ctx.repo.db
+        await ctx.repo.db
           .prepare("SELECT id FROM progress_materials WHERE id=?")
           .get(id),
       ).toBeUndefined();

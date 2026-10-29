@@ -2,18 +2,25 @@ services:
   app:
     build: .
     ports:
-      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:${PM_HTTP_PORT:-3001}:3001"
+    # Use a private runtime file. Server deployments set PM_ENV_FILE to an
+    # absolute path outside the release checkout, so code updates preserve it.
+    env_file:
+      - ${PM_ENV_FILE:-.env}
     environment:
-      # Local-only HTTP demo. Production requires HTTPS and NODE_ENV=production.
-      NODE_ENV: development
       HOST: 0.0.0.0
-      APP_ORIGIN: http://localhost:3001
-      DATABASE_PATH: /app/data/project-manage.sqlite
+      PORT: 3001
     volumes:
       - project_data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 15s
       timeout: 3s
       retries: 3

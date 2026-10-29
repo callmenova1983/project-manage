@@ -162,7 +162,7 @@ test("minimal capture saves first, then missing details and project assignment c
     .fill("Synthetic reviewer");
   await page.getByRole("option", { name: /Use “Synthetic reviewer”/ }).click();
   await editor.getByLabel("Due date", { exact: true }).fill("2026-10-16");
-  page.once("dialog", (d) => d.dismiss());
+  page.once("dialog", async (d) => (await d.dismiss()));
   await editor.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(editor).toBeVisible();
   await editor

@@ -36,13 +36,13 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
   beforeEach(async () => {
     modelFetch.mockReset();
     ctx = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin,
       qwen: config,
       aiRuntime: runtime,
       aiFetch: modelFetch,
     });
-    ctx.repo.seed("map-translation-test");
+    await ctx.repo.seed("map-translation-test");
     const password = randomUUID();
     await createUser(ctx.repo, {
       email: "location@example.test",
@@ -61,10 +61,10 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
   afterEach(async () => ctx.app.close());
 
   it("translates without mutating projects, reuses successful content and enforces idempotency", async () => {
-    const before = ctx.repo.snapshot("map-translation-test");
-    const proposalCount = ctx.repo.db
+    const before = await ctx.repo.snapshot("map-translation-test");
+    const proposalCount = (await ctx.repo.db
       .prepare("SELECT count(*) AS total FROM proposals")
-      .get()!.total;
+      .get())!.total;
     modelFetch.mockResolvedValue(
       Response.json({
         choices: [
@@ -103,12 +103,13 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
       (await request("POST", "/api/project-map/translate", payload)).json(),
     ).toEqual(first.json());
     expect(modelFetch).toHaveBeenCalledTimes(1);
-    expect(ctx.repo.snapshot("map-translation-test").projects).toEqual(
+    expect((await ctx.repo.snapshot("map-translation-test")).projects).toEqual(
       before.projects,
     );
     expect(
-      ctx.repo.db.prepare("SELECT count(*) AS total FROM proposals").get()!
-        .total,
+      (await ctx.repo.db
+        .prepare("SELECT count(*) AS total FROM proposals")
+        .get())!.total,
     ).toBe(proposalCount);
     const conflict = await request(
       "POST",

@@ -11,7 +11,7 @@ This is a local operator command for an existing account. It adds no public pass
    npm run user:reset-password -- demo@example.test
    ```
 
-3. Check the displayed account and database path. Type your own password/passphrase (14–500 characters) and press Enter. Nothing is shown while typing, including no stars; this is normal. Type it again and press Enter. Backspace works; Ctrl+U clears the current entry.
+3. Check the displayed account, PostgreSQL host, database and schema. Type your own password/passphrase (14–500 characters) and press Enter. Nothing is shown while typing, including no stars; this is normal. Type it again and press Enter. Backspace works; Ctrl+U clears the current entry.
 4. When both entries match, read the confirmation. Type `RESET` and press Enter to submit. This confirmation also stays hidden. Any other confirmation cancels; Ctrl+C cancels before submission. A mismatch or invalid length exits without changing the account. Never put the password in the command, chat, environment variables or a shared file.
 5. When the command reports success, refresh the application and sign in as `demo@example.test` with the password **you entered**. All old sessions have been signed out. You can let your browser save/fill it. The previous generated credential file, if present, is not read or updated by this command; its old password is no longer valid.
 
@@ -30,7 +30,7 @@ npm run build
 
 Use `npm ci` first only if dependencies are not installed. Dependencies have not changed for this feature. Restart the existing API process using its current startup method, port 3001, database and origin settings. This loads the login concurrency guard before the user resets their password. Keep AI disabled and keep the current authentication configuration. No Site publication or port visibility change is required.
 
-The reset command reads the existing `DATABASE_PATH` environment setting (or the same `.env` convention as the server), falling back to `./data/project-manage.sqlite`. If the running server uses a different database, set that **non-secret path** for the command. The command displays its resolved database path before asking for passwords, refuses a missing database/account, never creates an account and does not run migrations or reseed data. Do not rerun `setup:local`, remove the database or replace the workspace to reset a password.
+The reset command reads the same PostgreSQL `DB_*` configuration as the server. For an external server configuration file, set `DOTENV_CONFIG_PATH=/etc/pm-system/production.env` when invoking the command. It displays the non-secret host, database and schema before asking for passwords, refuses a missing account, never creates an account and does not run migrations or reseed data. Do not rerun `setup:local` or replace the workspace to reset a password.
 
 For a compiled-only installation without dev dependencies, after building use:
 
@@ -43,7 +43,7 @@ node dist/server/apps/api/src/reset-password.js demo@example.test
 - Requires interactive stdin and stdout TTYs; pipes, redirected output, password arguments and password environment variables are not supported.
 - Input is hidden before the prompt is displayed. Passwords are not echoed, logged, written to a credential file or sent over HTTP by the command. They exist briefly in the Node process; JavaScript cannot promise memory zeroization or defend against an administrator/terminal recorder controlling the environment.
 - Uses the existing salted scrypt scheme and 14–500 character rule. Both password entries and exact `RESET` confirmation are required before opening the database for writes.
-- Hash update and deletion of all account sessions occur in a single SQLite transaction. Other users, projects, tasks, data and configuration remain unchanged. Failure to revoke sessions rolls back the hash update.
+- Hash update and deletion of all account sessions occur in a single PostgreSQL transaction. Other users, projects, tasks, data and configuration remain unchanged. Failure to revoke sessions rolls back the hash update.
 - An optimistic hash guard prevents overwriting a reset made by another operator while the prompt was open. The login route checks the verified hash again in the same transaction that creates its session, blocking an in-flight old-password login after a reset commits.
 - Ctrl+C, mismatch, invalid length and declined confirmation do not update credentials or sessions. Once the user submits `RESET`, the update is atomic; closing the terminal after submission is not an undo operation.
 

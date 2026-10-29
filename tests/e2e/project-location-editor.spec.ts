@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import type { WorkspaceApi } from "../../apps/web/src/services/contracts";
 
 async function readProject(page: Page, name: string) {
-  return page.evaluate(async (projectName) => {
+  return (await page.evaluate(async (projectName) => {
     const modulePath = "/src/services/local.ts";
     const { createLocalApi } = (await import(modulePath)) as {
       createLocalApi: () => WorkspaceApi;
@@ -10,7 +10,7 @@ async function readProject(page: Page, name: string) {
     return (await createLocalApi().snapshot()).projects.find(
       (project) => project.name === projectName,
     );
-  }, name);
+  }, name));
 }
 
 test.beforeEach(async ({ page }) => {

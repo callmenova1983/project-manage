@@ -25,8 +25,8 @@ const input = () => ({
   overwriteConfirmed: false,
 });
 beforeEach(async () => {
-  context = await buildApp({ databasePath: ":memory:", origin });
-  context.repo.seed("team");
+  context = await buildApp({ isolatedDatabase: true, origin });
+  await context.repo.seed("team");
   await createUser(context.repo, {
     email: "member@example.test",
     name: "Member",
@@ -44,7 +44,7 @@ beforeEach(async () => {
   });
   cookie = `pm_session=${login.cookies[0]!.value}`;
   csrf = login.json().csrf;
-  const all = context.repo.snapshot("team").tasks;
+  const all = (await context.repo.snapshot("team")).tasks;
   tasks = all
     .filter((task) => task.projectId === all[0]!.projectId)
     .slice(0, 3)
@@ -53,7 +53,7 @@ beforeEach(async () => {
       assignee: index === 0 ? "Copy source" : "",
       dueDate: index === 0 ? "2026-10-20" : null,
     }));
-  for (const task of tasks) context.repo.putTask("team", task);
+  for (const task of tasks) await context.repo.putTask("team", task);
 });
 afterEach(() => context.app.close());
 it("copies only the chosen field to several rows and replays without duplicating audit records", async () => {
@@ -61,7 +61,7 @@ it("copies only the chosen field to several rows and replays without duplicating
     body = input();
   const first = await request(body, key);
   expect(first.statusCode).toBe(200);
-  const snapshot = context.repo.snapshot("team");
+  const snapshot = await context.repo.snapshot("team");
   for (const before of tasks.slice(1, 3)) {
     expect(snapshot.tasks.find((task) => task.id === before.id)).toEqual({
       ...before,
@@ -73,13 +73,18 @@ it("copies only the chosen field to several rows and replays without duplicating
   }
   const replay = await request(body, key);
   expect(replay.json()).toEqual(first.json());
-  expect(context.repo.snapshot("team").revision).toBe(snapshot.revision);
+  expect((await context.repo.snapshot("team")).revision).toBe(
+    snapshot.revision,
+  );
 });
 it("requires explicit overwrite consent and leaves all targets untouched when any is stale", async () => {
-  context.repo.putTask("team", { ...tasks[2]!, assignee: "Existing owner" });
-  const before = context.repo.snapshot("team");
+  await context.repo.putTask("team", {
+    ...tasks[2]!,
+    assignee: "Existing owner",
+  });
+  const before = await context.repo.snapshot("team");
   expect((await request(input())).statusCode).toBe(400);
-  expect(context.repo.snapshot("team")).toEqual(before);
+  expect(await context.repo.snapshot("team")).toEqual(before);
   expect(
     (
       await request({
@@ -92,7 +97,7 @@ it("requires explicit overwrite consent and leaves all targets untouched when an
       })
     ).statusCode,
   ).toBe(409);
-  expect(context.repo.snapshot("team")).toEqual(before);
+  expect(await context.repo.snapshot("team")).toEqual(before);
   expect(
     (await request({ ...input(), overwriteConfirmed: true })).statusCode,
   ).toBe(200);
@@ -101,9 +106,9 @@ it("copies dates, rejects stale source and tasks in other projects or workspaces
   expect((await request({ ...input(), sourceVersion: 999 })).statusCode).toBe(
     409,
   );
-  const other = context.repo
-    .snapshot("team")
-    .tasks.find((task) => task.projectId !== tasks[0]!.projectId)!;
+  const other = (await context.repo.snapshot("team")).tasks.find(
+    (task) => task.projectId !== tasks[0]!.projectId,
+  )!;
   expect(
     (
       await request({
@@ -112,9 +117,9 @@ it("copies dates, rejects stale source and tasks in other projects or workspaces
       })
     ).statusCode,
   ).toBe(409);
-  context.repo.seed("other");
+  await context.repo.seed("other");
   const foreign = { ...tasks[1]!, id: "foreign-task" };
-  context.repo.putTask("other", foreign);
+  await context.repo.putTask("other", foreign);
   expect(
     (
       await request({
@@ -127,25 +132,25 @@ it("copies dates, rejects stale source and tasks in other projects or workspaces
     200,
   );
   for (const target of tasks.slice(1, 3)) {
-    const after = context.repo.get<Task>("tasks", "team", target.id);
+    const after = await context.repo.get<Task>("tasks", "team", target.id);
     expect(after.dueDate).toBe("2026-10-20");
     expect(after.assignee).toBe("");
   }
 });
 
 it("preserves an explicitly linked assignee when copying, and clears an older link when the source is text-only", async () => {
-  const member = context.repo.members("team")[0]!;
-  context.repo.putTask("team", {
+  const member = (await context.repo.members("team"))[0]!;
+  await context.repo.putTask("team", {
     ...tasks[0]!,
     assignee: member.name,
     assigneeId: member.id,
   });
   expect((await request(input())).statusCode).toBe(200);
-  let current = context.repo.snapshot("team").tasks;
+  let current = (await context.repo.snapshot("team")).tasks;
   const target = current.find((t) => t.id === tasks[1]!.id)!;
   expect(target.assigneeId).toBe(member.id);
   const source = current.find((t) => t.id === tasks[0]!.id)!;
-  context.repo.putTask("team", { ...source, assigneeId: null });
+  await context.repo.putTask("team", { ...source, assigneeId: null });
   const body = {
     ...input(),
     targets: [{ id: target.id, version: target.version }],
@@ -154,19 +159,19 @@ it("preserves an explicitly linked assignee when copying, and clears an older li
   expect(
     (await request({ ...body, overwriteConfirmed: true })).statusCode,
   ).toBe(200);
-  current = context.repo.snapshot("team").tasks;
+  current = (await context.repo.snapshot("team")).tasks;
   expect(current.find((t) => t.id === target.id)!.assigneeId).toBeNull();
 });
 it("undoes a copied identity even when the previous text-only assignee had the same name", async () => {
-  const member = context.repo.members("team")[0]!;
-  context.repo.putTask("team", {
+  const member = (await context.repo.members("team"))[0]!;
+  await context.repo.putTask("team", {
     ...tasks[0]!,
     assignee: member.name,
     assigneeId: member.id,
   });
   const target = { ...tasks[1]!, assignee: member.name };
   delete target.assigneeId;
-  context.repo.db
+  await context.repo.db
     .prepare("UPDATE tasks SET data=? WHERE id=?")
     .run(JSON.stringify(target), target.id);
   const response = await request({
@@ -175,7 +180,7 @@ it("undoes a copied identity even when the previous text-only assignee had the s
     overwriteConfirmed: true,
   });
   expect(response.statusCode).toBe(200);
-  const event = context.repo.snapshot("team").activities[0]!;
+  const event = (await context.repo.snapshot("team")).activities[0]!;
   const restored = await context.app.inject({
     method: "POST",
     url: `/api/activities/${event.id}/restore`,
@@ -193,14 +198,14 @@ it("undoes a copied identity even when the previous text-only assignee had the s
     assigneeId: null,
   });
   expect(
-    context.repo.get<Task>("tasks", "team", target.id).assigneeId,
+    (await context.repo.get<Task>("tasks", "team", target.id)).assigneeId,
   ).toBeNull();
 });
 it("copies an assignee across projects only when explicitly requested, leaving source and all other fields unchanged", async () => {
-  const target = context.repo
-    .snapshot("team")
-    .tasks.find((task) => task.projectId !== tasks[0]!.projectId)!;
-  const before = context.repo.snapshot("team");
+  const target = (await context.repo.snapshot("team")).tasks.find(
+    (task) => task.projectId !== tasks[0]!.projectId,
+  )!;
+  const before = await context.repo.snapshot("team");
   const response = await request({
     ...input(),
     targets: [{ id: target.id, version: target.version }],
@@ -216,7 +221,7 @@ it("copies an assignee across projects only when explicitly requested, leaving s
     version: target.version + 1,
     updatedAt: expect.any(String),
   });
-  const after = context.repo.snapshot("team");
+  const after = await context.repo.snapshot("team");
   expect(after.tasks.find((task) => task.id === tasks[0]!.id)).toEqual(
     before.tasks.find((task) => task.id === tasks[0]!.id),
   );
@@ -237,8 +242,8 @@ it("copies an assignee across projects only when explicitly requested, leaving s
       })
     ).statusCode,
   ).toBe(400);
-  context.repo.seed("outside");
-  context.repo.putTask("outside", { ...target, id: "outside-task" });
+  await context.repo.seed("outside");
+  await context.repo.putTask("outside", { ...target, id: "outside-task" });
   expect(
     (
       await request({
@@ -251,16 +256,16 @@ it("copies an assignee across projects only when explicitly requested, leaving s
   ).toBe(409);
 });
 it("rejects blank assignments and changed drag snapshots without partial writes", async () => {
-  const target = context.repo
-    .snapshot("team")
-    .tasks.find((task) => task.projectId !== tasks[0]!.projectId)!;
+  const target = (await context.repo.snapshot("team")).tasks.find(
+    (task) => task.projectId !== tasks[0]!.projectId,
+  )!;
   const payload = {
     ...input(),
     targets: [{ id: target.id, version: target.version }],
     overwriteConfirmed: true,
     acrossProjects: true,
   };
-  const before = context.repo.snapshot("team");
+  const before = await context.repo.snapshot("team");
   expect((await request({ ...payload, sourceVersion: 999 })).statusCode).toBe(
     409,
   );
@@ -268,8 +273,8 @@ it("rejects blank assignments and changed drag snapshots without partial writes"
     (await request({ ...payload, targets: [{ id: target.id, version: 999 }] }))
       .statusCode,
   ).toBe(409);
-  expect(context.repo.snapshot("team")).toEqual(before);
-  context.repo.putTask("team", {
+  expect(await context.repo.snapshot("team")).toEqual(before);
+  await context.repo.putTask("team", {
     ...tasks[0]!,
     assignee: "Unassigned",
     assigneeId: null,

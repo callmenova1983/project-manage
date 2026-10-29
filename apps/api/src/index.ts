@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { readDatabaseConfig } from "./database-config.js";
 import { existsSync } from "node:fs";
 import { buildApp } from "./app.js";
 import { readQwenConfig, readAiRuntime } from "./ai/config.js";
@@ -16,7 +17,7 @@ const codespacesOriginRewrite = configuredCodespacesRewrite(
   origin,
 );
 const { app } = await buildApp({
-  databasePath: process.env.DATABASE_PATH ?? "./data/project-manage.sqlite",
+  database: readDatabaseConfig(),
   origin,
   additionalOrigins: process.env.APP_ADDITIONAL_ORIGINS?.split(",")
     .map((value) => value.trim())
@@ -44,5 +45,8 @@ if (codespacesOriginRewrite)
   );
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, () => {
-    void app.close().then(() => process.exit(0));
+    void app
+      .close()
+      .then(() => process.exit(0))
+      .catch(() => process.exit(1));
   });

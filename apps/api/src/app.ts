@@ -153,7 +153,9 @@ const suggestionInput = z
   .strict();
 export async function buildApp(options: {
   starterPassword?: string;
-  databasePath: string;
+  database?: import("./database-config.js").DatabaseConfig;
+  isolatedDatabase?: boolean;
+  credentialKeyPath?: string;
   origin: string;
   additionalOrigins?: string[];
   production?: boolean;
@@ -169,6 +171,16 @@ export async function buildApp(options: {
   notificationClock?: () => Date;
   notificationIntervalMs?: number;
 }) {
+  if ("databasePath" in options)
+    throw new Error(
+      "databasePath is obsolete; configure PostgreSQL explicitly",
+    );
+  if (
+    process.env.NODE_ENV === "test" &&
+    !options.isolatedDatabase &&
+    (!options.database || !options.database.schema.startsWith("pm_test_"))
+  )
+    throw new Error("Tests must use an explicit isolated PostgreSQL schema");
   const allowedOrigin = validateAppOrigin(options.origin, !!options.production);
   const allowedOrigins = [
     allowedOrigin,
@@ -185,22 +197,30 @@ export async function buildApp(options: {
     throw new Error(
       "Web build is missing or empty. Run npm run build before serving it.",
     );
-  const repo = new Repository(options.databasePath);
-  const credentials = new QwenCredentialStore(repo, options.databasePath);
-  const wecomCredentials = new WecomCredentialStore(repo, options.databasePath);
+  const repo = await Repository.open(options.database, {
+    isolated: options.isolatedDatabase,
+  });
+  const credentialKeyPath = options.isolatedDatabase
+    ? ":memory:"
+    : (options.credentialKeyPath ??
+      options.database?.credentialKeyPath ??
+      process.env.CREDENTIAL_KEY_PATH ??
+      "./data/credentials.key");
+  const credentials = new QwenCredentialStore(repo, credentialKeyPath);
+  const wecomCredentials = new WecomCredentialStore(repo, credentialKeyPath);
   const notifications = new NotificationService(
     repo,
-    new NotificationCredentialStore(repo, options.databasePath),
+    new NotificationCredentialStore(repo, credentialKeyPath),
     {
       fetcher: options.notificationFetch,
       clock: options.notificationClock,
       intervalMs: options.notificationIntervalMs,
-      directoryCorpId: (ws) =>
-        wecomCredentials.read(ws)?.config.corpId ??
+      directoryCorpId: async (ws) =>
+        (await wecomCredentials.read(ws))?.config.corpId ??
         (options.wecom?.workspaceId === ws ? options.wecom.corpId : ""),
     },
   );
-  const app = Fastify({
+  const app = await Fastify({
     logger: false,
     bodyLimit: 2 * 1024 * 1024,
     trustProxy: false,
@@ -280,7 +300,7 @@ export async function buildApp(options: {
           403,
           "Use the signed-in browser for authentication and token management",
         );
-      const a = personalTokenActor(repo, req.headers.authorization);
+      const a = await personalTokenActor(repo, req.headers.authorization);
       if (
         mutation &&
         req.headers.origin &&
@@ -316,12 +336,12 @@ export async function buildApp(options: {
       path === "/api/auth/activate"
     )
       return;
-    const session = sessionActor(repo, req.cookies.pm_session);
+    const session = await sessionActor(repo, req.cookies.pm_session);
     identity.set(req, session);
     if (mutation && req.headers["x-csrf-token"] !== session.csrf)
       throw new HttpError(403, "Invalid request token");
   });
-  app.setErrorHandler((err, req, reply) => {
+  app.setErrorHandler(async (err, req, reply) => {
     if (err instanceof TaskBulkConflict)
       return reply
         .status(409)
@@ -355,10 +375,10 @@ export async function buildApp(options: {
       current: e.current,
     });
   });
-  app.addHook("onReady", async () => notifications.start());
+  app.addHook("onReady", async () => await notifications.start());
   app.addHook("onClose", async () => {
     await notifications.close();
-    repo.close();
+    await repo.close();
   });
   const actor = (r: FastifyRequest) => identity.get(r)!.actor;
   const apiRoutes: ApiRoute[] = [];
@@ -375,26 +395,40 @@ export async function buildApp(options: {
         apiRoutes.push({ method, path: route.url });
     }
   });
-  registerWecomLogin(app, repo, actor, { ...options, origin: allowedOrigin });
-  registerAiAccess(app, repo, actor, apiRoutes);
-  registerAiRoutes(app, repo, actor, options.qwen, options.aiFetch, (a) => {
-    const config = workspaceQwen(
-      repo,
-      a.workspaceId,
-      options.qwen ?? credentials.read(a.workspaceId),
-    );
-    return config && options.aiRuntime
-      ? { ...config, runtime: options.aiRuntime }
-      : config;
+  registerWecomLogin(app, repo, actor, {
+    ...options,
+    credentialKeyPath,
+    origin: allowedOrigin,
   });
-  function mutate<T>(req: FastifyRequest, fn: (a: Actor) => T): T {
+  registerAiAccess(app, repo, actor, apiRoutes);
+  registerAiRoutes(
+    app,
+    repo,
+    actor,
+    options.qwen,
+    options.aiFetch,
+    async (a) => {
+      const config = await workspaceQwen(
+        repo,
+        a.workspaceId,
+        options.qwen ?? (await credentials.read(a.workspaceId)),
+      );
+      return config && options.aiRuntime
+        ? { ...config, runtime: options.aiRuntime }
+        : config;
+    },
+  );
+  async function mutate<T>(
+    req: FastifyRequest,
+    fn: (a: Actor) => T | Promise<T>,
+  ): Promise<T> {
     const a = actor(req);
     const key = z.string().uuid().parse(req.headers["idempotency-key"]);
     const hash = createHash("sha256")
       .update(req.method + req.url + JSON.stringify(req.body))
       .digest("hex");
-    return repo.transaction(() => {
-      const old = repo.db
+    return await repo.transaction(async () => {
+      const old = await repo.db
         .prepare(
           "SELECT request_hash,response FROM idempotency WHERE user_id=? AND key=?",
         )
@@ -407,19 +441,19 @@ export async function buildApp(options: {
           );
         return JSON.parse(String(old.response)) as T;
       }
-      const result = fn(a);
-      notifications.reconcileWorkspace(a.workspaceId, {
+      const result = await fn(a);
+      await notifications.reconcileWorkspace(a.workspaceId, {
         suppress:
           req.url.startsWith("/api/import") ||
           req.url.includes("/restore") ||
           req.url.includes("/undo"),
       });
-      repo.db
+      await repo.db
         .prepare(
           "INSERT INTO idempotency(key,user_id,request_hash,response,created_at) VALUES(?,?,?,?,?)",
         )
         .run(key, a.id, hash, JSON.stringify(result), Date.now());
-      repo.db
+      await repo.db
         .prepare("DELETE FROM idempotency WHERE created_at<?")
         .run(Date.now() - 7 * 86400000);
       return result;
@@ -430,11 +464,11 @@ export async function buildApp(options: {
     app,
     repo,
     actor,
-    (a) =>
-      workspaceQwen(
+    async (a) =>
+      await workspaceQwen(
         repo,
         a.workspaceId,
-        options.qwen ?? credentials.read(a.workspaceId),
+        options.qwen ?? (await credentials.read(a.workspaceId)),
       ),
     options.aiFetch,
   );
@@ -471,9 +505,9 @@ export async function buildApp(options: {
           password: z.string().min(1).max(500),
         })
         .parse(req.body);
-      const user = repo.db
+      const user = await repo.db
         .prepare(
-          "SELECT * FROM users WHERE email=? OR username=? COLLATE NOCASE",
+          "SELECT * FROM users WHERE email=? OR lower(username)=lower(?)",
         )
         .get(input.email.toLowerCase(), input.email.toLowerCase());
       const valid = await verifyPassword(
@@ -489,10 +523,10 @@ export async function buildApp(options: {
         throw new HttpError(401, "Email or password is incorrect");
       const token = randomBytes(32).toString("hex"),
         csrf = randomBytes(24).toString("hex");
-      repo.transaction(() => {
+      await repo.transaction(async () => {
         // A local reset may have completed while scrypt was verifying the old
         // password. Do not issue a new session for an obsolete credential.
-        const current = repo.db
+        const current = await repo.db
           .prepare(
             "SELECT password_hash,status,requires_activation,email,username FROM users WHERE id=?",
           )
@@ -507,10 +541,10 @@ export async function buildApp(options: {
               input.email.toLowerCase())
         )
           throw new HttpError(401, "Email or password is incorrect");
-        repo.db
+        await repo.db
           .prepare("DELETE FROM sessions WHERE expires_at<?")
           .run(Date.now());
-        repo.db
+        await repo.db
           .prepare(
             "INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)",
           )
@@ -528,45 +562,50 @@ export async function buildApp(options: {
         path: "/",
         maxAge: 12 * 3600,
       });
-      return { actor: sessionActor(repo, token).actor, csrf };
+      return { actor: (await sessionActor(repo, token)).actor, csrf };
     },
   );
   app.get("/api/auth/session", (req) => identity.get(req));
   app.post("/api/auth/logout", async (req, reply) => {
-    repo.db
+    await repo.db
       .prepare("DELETE FROM sessions WHERE token_hash=?")
       .run(hashToken(req.cookies.pm_session!));
     reply.clearCookie("pm_session", { path: "/" });
     return { ok: true };
   });
-  app.get("/api/workspace", (req) => repo.snapshot(actor(req).workspaceId));
-  app.put("/api/admin/workspace-settings", (req) =>
-    mutate(req, (a) => {
-      adminActor(repo, a);
-      const input = workspaceSettingsInput
-        .extend({ confirmed: z.literal(true) })
-        .parse(req.body);
-      const old = repo.settings(a.workspaceId);
-      if (old.version !== input.version)
-        throw new HttpError(
-          409,
-          "Workspace settings changed. Reload the current settings before saving.",
-        );
-      repo.db
-        .prepare(
-          "UPDATE workspaces SET time_zone=?,settings_version=settings_version+1,revision=revision+1 WHERE id=?",
-        )
-        .run(input.timeZone, a.workspaceId);
-      adminAudit(
-        repo,
-        a,
-        `Changed workspace time zone: ${old.timeZone} → ${input.timeZone}`,
-        a.workspaceId,
-      );
-      return repo.settings(a.workspaceId);
-    }),
+  app.get(
+    "/api/workspace",
+    async (req) => await repo.snapshot(actor(req).workspaceId),
   );
-  app.get("/api/projects", (req) => {
+  app.put(
+    "/api/admin/workspace-settings",
+    async (req) =>
+      await mutate(req, async (a) => {
+        await adminActor(repo, a);
+        const input = workspaceSettingsInput
+          .extend({ confirmed: z.literal(true) })
+          .parse(req.body);
+        const old = await repo.settings(a.workspaceId);
+        if (old.version !== input.version)
+          throw new HttpError(
+            409,
+            "Workspace settings changed. Reload the current settings before saving.",
+          );
+        await repo.db
+          .prepare(
+            "UPDATE workspaces SET time_zone=?,settings_version=settings_version+1,revision=revision+1 WHERE id=?",
+          )
+          .run(input.timeZone, a.workspaceId);
+        await adminAudit(
+          repo,
+          a,
+          `Changed workspace time zone: ${old.timeZone} → ${input.timeZone}`,
+          a.workspaceId,
+        );
+        return await repo.settings(a.workspaceId);
+      }),
+  );
+  app.get("/api/projects", async (req) => {
     const q = z
       .object({
         search: z.string().optional(),
@@ -578,28 +617,28 @@ export async function buildApp(options: {
         discipline: z.string().optional(),
       })
       .parse(req.query);
-    return repo
-      .snapshot(actor(req).workspaceId)
-      .projects.filter(
-        (p) =>
-          (q.lifecycle === "all" || projectLifecycle(p) === q.lifecycle) &&
-          (!q.search ||
-            `${p.name} ${p.shortName ?? ""} ${p.aliases.join(" ")} ${p.client} ${p.latestUpdate}`
-              .toLowerCase()
-              .includes(q.search.toLowerCase())) &&
-          (!q.stage || p.stage === q.stage) &&
-          (!q.owner || p.owner === q.owner) &&
-          (!q.discipline || p.discipline === q.discipline),
-      );
+    return (await repo.snapshot(actor(req).workspaceId)).projects.filter(
+      (p) =>
+        (q.lifecycle === "all" || projectLifecycle(p) === q.lifecycle) &&
+        (!q.search ||
+          `${p.name} ${p.shortName ?? ""} ${p.aliases.join(" ")} ${p.client} ${p.latestUpdate}`
+            .toLowerCase()
+            .includes(q.search.toLowerCase())) &&
+        (!q.stage || p.stage === q.stage) &&
+        (!q.owner || p.owner === q.owner) &&
+        (!q.discipline || p.discipline === q.discipline),
+    );
   });
-  app.get("/api/projects/:id", (req) =>
-    repo.get<Project>(
-      "projects",
-      actor(req).workspaceId,
-      (req.params as { id: string }).id,
-    ),
+  app.get(
+    "/api/projects/:id",
+    async (req) =>
+      await repo.get<Project>(
+        "projects",
+        actor(req).workspaceId,
+        (req.params as { id: string }).id,
+      ),
   );
-  app.get("/api/tasks", (req) => {
+  app.get("/api/tasks", async (req) => {
     const q = z
       .object({
         projectId: z.string().optional(),
@@ -609,34 +648,36 @@ export async function buildApp(options: {
         search: z.string().optional(),
       })
       .parse(req.query);
-    return repo
-      .snapshot(actor(req).workspaceId)
-      .tasks.filter(
-        (t) =>
-          (!q.projectId || t.projectId === q.projectId) &&
-          (!q.status || t.status === q.status) &&
-          (!q.week || t.workWeek === q.week) &&
-          (!q.day || t.workDates.includes(q.day)) &&
-          (!q.search || t.title.toLowerCase().includes(q.search.toLowerCase())),
-      );
+    return (await repo.snapshot(actor(req).workspaceId)).tasks.filter(
+      (t) =>
+        (!q.projectId || t.projectId === q.projectId) &&
+        (!q.status || t.status === q.status) &&
+        (!q.week || t.workWeek === q.week) &&
+        (!q.day || t.workDates.includes(q.day)) &&
+        (!q.search || t.title.toLowerCase().includes(q.search.toLowerCase())),
+    );
   });
   app.get(
     "/api/activities",
-    (req) => repo.snapshot(actor(req).workspaceId).activities,
+    async (req) => (await repo.snapshot(actor(req).workspaceId)).activities,
   );
-  app.post("/api/activity/query", (req) => {
+  app.post("/api/activity/query", async (req) => {
     const query = activityQueryInput.parse(req.body);
     try {
-      return repo.activityPage(actor(req).workspaceId, query);
+      return await repo.activityPage(actor(req).workspaceId, query);
     } catch (e) {
       if (e instanceof HttpError) throw e;
       throw new HttpError(400, (e as Error).message);
     }
   });
-  app.post("/api/activity/export", (req, reply) => {
+  app.post("/api/activity/export", async (req, reply) => {
     const query = activityQueryInput.parse(req.body);
     try {
-      const result = repo.activityPage(actor(req).workspaceId, query, true);
+      const result = await repo.activityPage(
+        actor(req).workspaceId,
+        query,
+        true,
+      );
       reply.header(
         "Content-Disposition",
         'attachment; filename="project-manage-history.json"',
@@ -647,434 +688,471 @@ export async function buildApp(options: {
       throw new HttpError(400, (e as Error).message);
     }
   });
-  app.get("/api/activities/:id", (req) =>
-    repo.activity(actor(req).workspaceId, (req.params as { id: string }).id),
-  );
-  app.post("/api/projects", (req) =>
-    mutate(req, (a) => {
-      const data = projectInput.parse(req.body);
-      data.channelId ??= "company";
-      try {
-        checkProjectCatalog(data, repo.catalogs(a.workspaceId));
-      } catch (e) {
-        throw new HttpError(400, (e as Error).message);
-      }
-      const p: Project = {
-        ...data,
-        reportedAt: data.latestUpdate.trim() ? new Date().toISOString() : null,
-        reportedBy: data.latestUpdate.trim() ? a.name : null,
-        id: randomUUID(),
-        version: 1,
-        updatedAt: new Date().toISOString(),
-      };
-      repo.putProject(a.workspaceId, p);
-      repo.record(a, "project", "Created project", null, p);
-      return p;
-    }),
-  );
-  app.put("/api/projects/:id", (req) =>
-    mutate(req, (a) => {
-      const input = projectInput
-        .extend({ version: z.number().int().positive() })
-        .parse(req.body);
-      const old = repo.get<Project>(
-        "projects",
-        a.workspaceId,
+  app.get(
+    "/api/activities/:id",
+    async (req) =>
+      await repo.activity(
+        actor(req).workspaceId,
         (req.params as { id: string }).id,
-      );
-      repo.checkVersion(old, input.version);
-      input.channelId ??= old.channelId ?? "company";
-      // Older project editors omit location; explicit null clears it.
-      if (input.location === undefined && old.location !== undefined)
-        input.location = old.location;
-      try {
-        checkProjectCatalog(input, repo.catalogs(a.workspaceId), old);
-      } catch (e) {
-        throw new HttpError(400, (e as Error).message);
-      }
-      const p = {
-        ...input,
-        reportedAt:
-          input.latestUpdate === old.latestUpdate
-            ? (old.reportedAt ?? null)
-            : input.latestUpdate.trim()
-              ? new Date().toISOString()
-              : null,
-        reportedBy:
-          input.latestUpdate === old.latestUpdate
-            ? (old.reportedBy ?? null)
-            : input.latestUpdate.trim()
-              ? a.name
-              : null,
-        id: old.id,
-        version: old.version + 1,
-        updatedAt: new Date().toISOString(),
-      };
-      repo.putProject(a.workspaceId, p);
-      repo.record(a, "project", "Updated project", old, p);
-      return p;
-    }),
+      ),
   );
-  app.post("/api/projects/:id/lifecycle", (req) =>
-    mutate(req, (a) => {
-      const old = repo.get<Project>(
-        "projects",
-        a.workspaceId,
-        (req.params as { id: string }).id,
-      );
-      const project = planProjectLifecycle(
-        old,
-        repo.read<Task>("tasks", a.workspaceId),
-        req.body as import("../../../packages/domain/project-lifecycle.js").ProjectLifecycleInput,
-      );
-      if (project === old) return old;
-      repo.putProject(a.workspaceId, project, undefined, true);
-      repo.record(
-        a,
-        "project",
-        projectLifecycleActions[project.lifecycle!],
-        old,
-        project,
-        "Project lifecycle",
-      );
-      return project;
-    }),
+  app.post(
+    "/api/projects",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const data = projectInput.parse(req.body);
+        data.channelId ??= "company";
+        try {
+          checkProjectCatalog(data, await repo.catalogs(a.workspaceId));
+        } catch (e) {
+          throw new HttpError(400, (e as Error).message);
+        }
+        const p: Project = {
+          ...data,
+          reportedAt: data.latestUpdate.trim()
+            ? new Date().toISOString()
+            : null,
+          reportedBy: data.latestUpdate.trim() ? a.name : null,
+          id: randomUUID(),
+          version: 1,
+          updatedAt: new Date().toISOString(),
+        };
+        await repo.putProject(a.workspaceId, p);
+        await repo.record(a, "project", "Created project", null, p);
+        return p;
+      }),
+  );
+  app.put(
+    "/api/projects/:id",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = projectInput
+          .extend({ version: z.number().int().positive() })
+          .parse(req.body);
+        const old = await repo.get<Project>(
+          "projects",
+          a.workspaceId,
+          (req.params as { id: string }).id,
+        );
+        repo.checkVersion(old, input.version);
+        input.channelId ??= old.channelId ?? "company";
+        // Older project editors omit location; explicit null clears it.
+        if (input.location === undefined && old.location !== undefined)
+          input.location = old.location;
+        try {
+          checkProjectCatalog(input, await repo.catalogs(a.workspaceId), old);
+        } catch (e) {
+          throw new HttpError(400, (e as Error).message);
+        }
+        const p = {
+          ...input,
+          reportedAt:
+            input.latestUpdate === old.latestUpdate
+              ? (old.reportedAt ?? null)
+              : input.latestUpdate.trim()
+                ? new Date().toISOString()
+                : null,
+          reportedBy:
+            input.latestUpdate === old.latestUpdate
+              ? (old.reportedBy ?? null)
+              : input.latestUpdate.trim()
+                ? a.name
+                : null,
+          id: old.id,
+          version: old.version + 1,
+          updatedAt: new Date().toISOString(),
+        };
+        await repo.putProject(a.workspaceId, p);
+        await repo.record(a, "project", "Updated project", old, p);
+        return p;
+      }),
+  );
+  app.post(
+    "/api/projects/:id/lifecycle",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const old = await repo.get<Project>(
+          "projects",
+          a.workspaceId,
+          (req.params as { id: string }).id,
+        );
+        const project = planProjectLifecycle(
+          old,
+          await repo.read<Task>("tasks", a.workspaceId),
+          req.body as import("../../../packages/domain/project-lifecycle.js").ProjectLifecycleInput,
+        );
+        if (project === old) return old;
+        await repo.putProject(a.workspaceId, project, undefined, true);
+        await repo.record(
+          a,
+          "project",
+          projectLifecycleActions[project.lifecycle!],
+          old,
+          project,
+          "Project lifecycle",
+        );
+        return project;
+      }),
   );
   registerProgressMaterials(app, repo, actor, mutate);
   registerProjectFiles(app, repo, actor, mutate);
-  app.get("/api/projects/:id/progress", (req) => {
+  app.get("/api/projects/:id/progress", async (req) => {
     const a = actor(req),
       id = (req.params as { id: string }).id;
-    const project = repo.get<Project>("projects", a.workspaceId, id);
-    const events = repo.db
-      .prepare(
-        "SELECT data FROM activities WHERE workspace_id=? AND json_extract(data,'$.projectId')=? ORDER BY created_at ASC,rowid ASC",
-      )
-      .all(a.workspaceId, id)
-      .map((row) => JSON.parse(String(row.data)));
+    const project = await repo.get<Project>("projects", a.workspaceId, id);
+    const events = (
+      await repo.db
+        .prepare(
+          "SELECT data FROM activities WHERE workspace_id=? AND data::jsonb->>'projectId'=? ORDER BY created_at ASC,rowid ASC",
+        )
+        .all(a.workspaceId, id)
+    ).map((row) => JSON.parse(String(row.data)));
     return progressHistory(project, events);
   });
-  app.post("/api/projects/:id/progress", (req) =>
-    mutate(req, (a) => {
-      const input = progressInput.parse(req.body);
-      const old = repo.get<Project>(
-        "projects",
-        a.workspaceId,
-        (req.params as { id: string }).id,
-      );
-      repo.checkVersion(old, input.version);
-      if (input.mode === "correct" && !old.latestUpdate.trim())
-        throw new HttpError(
-          400,
-          "There is no previous progress entry to correct.",
+  app.post(
+    "/api/projects/:id/progress",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = progressInput.parse(req.body);
+        const old = await repo.get<Project>(
+          "projects",
+          a.workspaceId,
+          (req.params as { id: string }).id,
         );
-      for (const id of input.originalSource?.materialIds ?? []) {
-        if (
-          !repo.db
-            .prepare(
-              "SELECT 1 FROM progress_materials WHERE id=? AND workspace_id=? AND project_id=?",
-            )
-            .get(id, a.workspaceId, old.id)
-        )
-          throw new HttpError(404, "Source file not found");
-      }
-      const now = new Date().toISOString();
-      const project = {
-        ...old,
-        latestUpdate: input.text,
-        reportedAt: input.mode === "new" ? now : old.reportedAt,
-        reportedBy: input.mode === "new" ? a.name : old.reportedBy,
-        updatedAt: now,
-        version: old.version + 1,
-      };
-      repo.putProject(a.workspaceId, project);
-      repo.record(
-        a,
-        "project",
-        input.mode === "new"
-          ? "Added progress log"
-          : "Corrected latest progress log",
-        old,
-        project,
-        input.mode === "new" ? "Progress log" : "Progress correction",
-        input.originalSource,
-      );
-      return project;
-    }),
-  );
-  app.put("/api/projects/:id/name", (req) =>
-    mutate(req, (a) => {
-      const input = projectRenameInput.parse(req.body);
-      const old = repo.get<Project>(
-        "projects",
-        a.workspaceId,
-        (req.params as { id: string }).id,
-      );
-      repo.checkVersion(old, input.version);
-      const project = {
-        ...old,
-        name: input.name,
-        shortName: input.shortName ?? old.shortName,
-        version: old.version + 1,
-        updatedAt: new Date().toISOString(),
-      };
-      repo.putProject(a.workspaceId, project);
-      repo.record(a, "project", "Renamed project", old, project);
-      return project;
-    }),
-  );
-  app.post("/api/projects/merge", (req) =>
-    mutate(req, (a) => {
-      const input = projectMergeInput.parse(req.body);
-      let plan;
-      try {
-        plan = planProjectMerge(repo.snapshot(a.workspaceId), input);
-      } catch (e) {
-        if (e instanceof ProjectMergeConflict)
-          throw new HttpError(409, e.message);
-        throw e;
-      }
-      repo.putProject(a.workspaceId, plan.project);
-      for (const { before, after } of plan.movedTasks) {
-        repo.putTask(a.workspaceId, after);
-        repo.record(
-          a,
-          "task",
-          "Moved task to merged project",
-          before,
-          after,
-          "Project merge",
-        );
-      }
-      for (const source of plan.sources) {
-        repo.db
-          .prepare(
-            "INSERT INTO project_redirects(workspace_id,source_id,target_id,created_at) VALUES(?,?,?,?) ON CONFLICT(workspace_id,source_id) DO UPDATE SET target_id=excluded.target_id",
-          )
-          .run(
-            a.workspaceId,
-            source.id,
-            plan.project.id,
-            new Date().toISOString(),
+        repo.checkVersion(old, input.version);
+        if (input.mode === "correct" && !old.latestUpdate.trim())
+          throw new HttpError(
+            400,
+            "There is no previous progress entry to correct.",
           );
-        repo.db
-          .prepare(
-            "UPDATE project_redirects SET target_id=? WHERE workspace_id=? AND target_id=?",
+        for (const id of input.originalSource?.materialIds ?? []) {
+          if (
+            !(await repo.db
+              .prepare(
+                "SELECT 1 FROM progress_materials WHERE id=? AND workspace_id=? AND project_id=?",
+              )
+              .get(id, a.workspaceId, old.id))
           )
-          .run(plan.project.id, a.workspaceId, source.id);
-        repo.db
-          .prepare(
-            "UPDATE progress_materials SET project_id=? WHERE workspace_id=? AND project_id=?",
-          )
-          .run(plan.project.id, a.workspaceId, source.id);
-        repo.db
-          .prepare(
-            "INSERT INTO project_members(workspace_id,project_id,user_id,joined_at,last_edited_at) SELECT workspace_id,?,user_id,joined_at,last_edited_at FROM project_members WHERE workspace_id=? AND project_id=? ON CONFLICT(workspace_id,project_id,user_id) DO UPDATE SET joined_at=MIN(joined_at,excluded.joined_at),last_edited_at=MAX(last_edited_at,excluded.last_edited_at)",
-          )
-          .run(plan.project.id, a.workspaceId, source.id);
-        repo.db
-          .prepare("DELETE FROM projects WHERE workspace_id=? AND id=?")
-          .run(a.workspaceId, source.id);
-        repo.record(
+            throw new HttpError(404, "Source file not found");
+        }
+        const now = new Date().toISOString();
+        const project = {
+          ...old,
+          latestUpdate: input.text,
+          reportedAt: input.mode === "new" ? now : old.reportedAt,
+          reportedBy: input.mode === "new" ? a.name : old.reportedBy,
+          updatedAt: now,
+          version: old.version + 1,
+        };
+        await repo.putProject(a.workspaceId, project);
+        await repo.record(
           a,
           "project",
-          "Merged source project",
-          source,
-          null,
+          input.mode === "new"
+            ? "Added progress log"
+            : "Corrected latest progress log",
+          old,
+          project,
+          input.mode === "new" ? "Progress log" : "Progress correction",
+          input.originalSource,
+        );
+        return project;
+      }),
+  );
+  app.put(
+    "/api/projects/:id/name",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = projectRenameInput.parse(req.body);
+        const old = await repo.get<Project>(
+          "projects",
+          a.workspaceId,
+          (req.params as { id: string }).id,
+        );
+        repo.checkVersion(old, input.version);
+        const project = {
+          ...old,
+          name: input.name,
+          shortName: input.shortName ?? old.shortName,
+          version: old.version + 1,
+          updatedAt: new Date().toISOString(),
+        };
+        await repo.putProject(a.workspaceId, project);
+        await repo.record(a, "project", "Renamed project", old, project);
+        return project;
+      }),
+  );
+  app.post(
+    "/api/projects/merge",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = projectMergeInput.parse(req.body);
+        let plan;
+        try {
+          plan = planProjectMerge(await repo.snapshot(a.workspaceId), input);
+        } catch (e) {
+          if (e instanceof ProjectMergeConflict)
+            throw new HttpError(409, e.message);
+          throw e;
+        }
+        await repo.putProject(a.workspaceId, plan.project);
+        for (const { before, after } of plan.movedTasks) {
+          await repo.putTask(a.workspaceId, after);
+          await repo.record(
+            a,
+            "task",
+            "Moved task to merged project",
+            before,
+            after,
+            "Project merge",
+          );
+        }
+        for (const source of plan.sources) {
+          await repo.db
+            .prepare(
+              "INSERT INTO project_redirects(workspace_id,source_id,target_id,created_at) VALUES(?,?,?,?) ON CONFLICT(workspace_id,source_id) DO UPDATE SET target_id=excluded.target_id",
+            )
+            .run(
+              a.workspaceId,
+              source.id,
+              plan.project.id,
+              new Date().toISOString(),
+            );
+          await repo.db
+            .prepare(
+              "UPDATE project_redirects SET target_id=? WHERE workspace_id=? AND target_id=?",
+            )
+            .run(plan.project.id, a.workspaceId, source.id);
+          await repo.db
+            .prepare(
+              "UPDATE progress_materials SET project_id=? WHERE workspace_id=? AND project_id=?",
+            )
+            .run(plan.project.id, a.workspaceId, source.id);
+          await repo.db
+            .prepare(
+              "INSERT INTO project_members(workspace_id,project_id,user_id,joined_at,last_edited_at) SELECT workspace_id,?,user_id,joined_at,last_edited_at FROM project_members WHERE workspace_id=? AND project_id=? ON CONFLICT(workspace_id,project_id,user_id) DO UPDATE SET joined_at=LEAST(project_members.joined_at,excluded.joined_at),last_edited_at=GREATEST(project_members.last_edited_at,excluded.last_edited_at)",
+            )
+            .run(plan.project.id, a.workspaceId, source.id);
+          await repo.db
+            .prepare("DELETE FROM projects WHERE workspace_id=? AND id=?")
+            .run(a.workspaceId, source.id);
+          await repo.record(
+            a,
+            "project",
+            "Merged source project",
+            source,
+            null,
+            "Project merge",
+          );
+          // Keep before/after values intact while making full history accessible
+          // from the retained project, including entries outside the 500-item UI.
+          await repo.db
+            .prepare(
+              "UPDATE activities SET data=(data::jsonb || jsonb_build_object('originalProjectId',COALESCE(data::jsonb->>'originalProjectId',data::jsonb->>'projectId'),'projectId',?::text))::text WHERE workspace_id=? AND data::jsonb->>'projectId'=?",
+            )
+            .run(plan.project.id, a.workspaceId, source.id);
+        }
+        await repo.record(
+          a,
+          "project",
+          "Merged projects",
+          plan.target,
+          plan.project,
           "Project merge",
         );
-        // Keep before/after values intact while making full history accessible
-        // from the retained project, including entries outside the 500-item UI.
-        repo.db
+        await repo.validate(a.workspaceId);
+        return plan.project;
+      }),
+  );
+  app.put(
+    "/api/project-order",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = projectOrderInput.parse(req.body),
+          snapshot = await repo.snapshot(a.workspaceId);
+        if (input.revision !== snapshot.revision)
+          throw new HttpError(
+            409,
+            "Workspace changed. Refresh the project order and try again.",
+          );
+        checkProjectOrder(snapshot, input.projectIds);
+        await repo.db
           .prepare(
-            "UPDATE activities SET data=json_set(data,'$.originalProjectId',COALESCE(json_extract(data,'$.originalProjectId'),json_extract(data,'$.projectId')),'$.projectId',?) WHERE workspace_id=? AND json_extract(data,'$.projectId')=?",
+            "INSERT INTO workspace_project_order(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
           )
-          .run(plan.project.id, a.workspaceId, source.id);
-      }
-      repo.record(
-        a,
-        "project",
-        "Merged projects",
-        plan.target,
-        plan.project,
-        "Project merge",
-      );
-      repo.validate(a.workspaceId);
-      return plan.project;
-    }),
-  );
-  app.put("/api/project-order", (req) =>
-    mutate(req, (a) => {
-      const input = projectOrderInput.parse(req.body),
-        snapshot = repo.snapshot(a.workspaceId);
-      if (input.revision !== snapshot.revision)
-        throw new HttpError(
-          409,
-          "Workspace changed. Refresh the project order and try again.",
+          .run(a.workspaceId, JSON.stringify(input.projectIds));
+        await repo.record(
+          a,
+          "project",
+          "Reordered projects",
+          null,
+          null,
+          `Project order\nBefore: ${JSON.stringify(snapshot.projectOrder)}\nAfter: ${JSON.stringify(input.projectIds)}`,
         );
-      checkProjectOrder(snapshot, input.projectIds);
-      repo.db
-        .prepare(
-          "INSERT INTO workspace_project_order(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
-        )
-        .run(a.workspaceId, JSON.stringify(input.projectIds));
-      repo.record(
-        a,
-        "project",
-        "Reordered projects",
-        null,
-        null,
-        `Project order\nBefore: ${JSON.stringify(snapshot.projectOrder)}\nAfter: ${JSON.stringify(input.projectIds)}`,
-      );
-      return input.projectIds;
-    }),
+        return input.projectIds;
+      }),
   );
-  app.post("/api/tasks", (req) =>
-    mutate(req, (a) => {
-      const data = taskInput.parse(req.body);
-      repo.get("projects", a.workspaceId, data.projectId);
-      const t: Task = {
-        ...data,
-        id: randomUUID(),
-        version: 1,
-        updatedAt: new Date().toISOString(),
-      };
-      repo.putTask(a.workspaceId, t);
-      repo.validate(a.workspaceId);
-      repo.record(a, "task", "Created task", null, t);
-      return t;
-    }),
-  );
-  app.post("/api/tasks/batch", (req) =>
-    mutate(req, (a) => {
-      const input = z
-        .object({ tasks: z.array(taskInput).min(1).max(100) })
-        .strict()
-        .parse(req.body);
-      const result = input.tasks.map((data) => {
-        repo.get("projects", a.workspaceId, data.projectId);
+  app.post(
+    "/api/tasks",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const data = taskInput.parse(req.body);
+        await repo.get("projects", a.workspaceId, data.projectId);
         const t: Task = {
           ...data,
           id: randomUUID(),
           version: 1,
           updatedAt: new Date().toISOString(),
         };
-        repo.putTask(a.workspaceId, t);
-        repo.record(
-          a,
-          "task",
-          "Added from pasted text",
-          null,
-          t,
-          "Text / TSV paste",
-        );
+        await repo.putTask(a.workspaceId, t);
+        await repo.validate(a.workspaceId);
+        await repo.record(a, "task", "Created task", null, t);
         return t;
-      });
-      repo.validate(a.workspaceId);
-      return result;
-    }),
+      }),
   );
-  app.post("/api/tasks/copy-field", (req) =>
-    mutate(req, (a) => {
-      const input = taskFieldCopyInput.parse(req.body);
-      let changes;
-      try {
-        changes = planTaskFieldCopy(repo.snapshot(a.workspaceId).tasks, input);
-      } catch (e) {
-        throw new HttpError(
-          e instanceof TaskFieldCopyConflict ? 409 : 400,
-          (e as Error).message,
+  app.post(
+    "/api/tasks/batch",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = z
+          .object({ tasks: z.array(taskInput).min(1).max(100) })
+          .strict()
+          .parse(req.body);
+        const result = await Promise.all(
+          input.tasks.map(async (data) => {
+            await repo.get("projects", a.workspaceId, data.projectId);
+            const t: Task = {
+              ...data,
+              id: randomUUID(),
+              version: 1,
+              updatedAt: new Date().toISOString(),
+            };
+            await repo.putTask(a.workspaceId, t);
+            await repo.record(
+              a,
+              "task",
+              "Added from pasted text",
+              null,
+              t,
+              "Text / TSV paste",
+            );
+            return t;
+          }),
         );
-      }
-      for (const { before, after } of changes) {
-        repo.putTask(a.workspaceId, after);
-        repo.record(
-          a,
-          "task",
-          input.field === "assignee"
-            ? "Copied task assignee"
-            : "Copied task due date",
-          before,
-          after,
-          "Task field copy",
-        );
-      }
-      return changes.map((change) => change.after);
-    }),
+        await repo.validate(a.workspaceId);
+        return result;
+      }),
   );
-  app.post("/api/tasks/:id/move", (req) =>
-    mutate(req, (actor) => {
-      const id = (req.params as { id: string }).id;
-      repo.get<Task>("tasks", actor.workspaceId, id);
-      const snapshot = repo.snapshot(actor.workspaceId);
-      let changes;
-      try {
-        changes = planTaskMove(
-          snapshot.projects,
-          snapshot.tasks,
-          id,
-          taskMoveInput.parse(req.body),
-        );
-      } catch (error) {
-        if (error instanceof TaskMoveConflict)
-          throw new HttpError(409, error.message, error.current);
-        throw error;
-      }
-      for (const { before, after } of changes) {
-        repo.putTask(actor.workspaceId, after);
-        repo.record(
-          actor,
-          "task",
-          "Moved task",
-          before,
-          after,
-          "Task placement",
-        );
-      }
-      return changes.map(({ after }) => after);
-    }),
+  app.post(
+    "/api/tasks/copy-field",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = taskFieldCopyInput.parse(req.body);
+        let changes;
+        try {
+          changes = planTaskFieldCopy(
+            (await repo.snapshot(a.workspaceId)).tasks,
+            input,
+          );
+        } catch (e) {
+          throw new HttpError(
+            e instanceof TaskFieldCopyConflict ? 409 : 400,
+            (e as Error).message,
+          );
+        }
+        for (const { before, after } of changes) {
+          await repo.putTask(a.workspaceId, after);
+          await repo.record(
+            a,
+            "task",
+            input.field === "assignee"
+              ? "Copied task assignee"
+              : "Copied task due date",
+            before,
+            after,
+            "Task field copy",
+          );
+        }
+        return changes.map((change) => change.after);
+      }),
   );
-  app.post("/api/tasks/:id/lifecycle", (req) =>
-    mutate(req, (a) => {
-      const snapshot = repo.snapshot(a.workspaceId);
-      let changes;
-      const input = taskLifecycleInput.parse(req.body);
-      try {
-        changes = planTaskLifecycle(
-          snapshot.tasks,
-          (req.params as { id: string }).id,
-          input,
-          snapshot.revision,
-          a,
-          randomUUID(),
-        );
-      } catch (e) {
-        throw new HttpError(
-          e instanceof TaskLifecycleConflict ? 409 : 400,
-          (e as Error).message,
-        );
-      }
-      for (const { before, after } of changes) {
-        repo.putTask(a.workspaceId, after);
-        repo.record(
-          a,
-          "task",
-          input.action === "void" ? "作废任务" : "恢复已作废任务",
-          before,
-          after,
-          input.reason || "恢复误作废的任务",
-        );
-      }
-      repo.validate(a.workspaceId);
-      return changes.map((c) => c.after);
-    }),
+  app.post(
+    "/api/tasks/:id/move",
+    async (req) =>
+      await mutate(req, async (actor) => {
+        const id = (req.params as { id: string }).id;
+        await repo.get<Task>("tasks", actor.workspaceId, id);
+        const snapshot = await repo.snapshot(actor.workspaceId);
+        let changes;
+        try {
+          changes = planTaskMove(
+            snapshot.projects,
+            snapshot.tasks,
+            id,
+            taskMoveInput.parse(req.body),
+          );
+        } catch (error) {
+          if (error instanceof TaskMoveConflict)
+            throw new HttpError(409, error.message, error.current);
+          throw error;
+        }
+        for (const { before, after } of changes) {
+          await repo.putTask(actor.workspaceId, after);
+          await repo.record(
+            actor,
+            "task",
+            "Moved task",
+            before,
+            after,
+            "Task placement",
+          );
+        }
+        return changes.map(({ after }) => after);
+      }),
   );
-  function applyTaskSchedules(
+  app.post(
+    "/api/tasks/:id/lifecycle",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const snapshot = await repo.snapshot(a.workspaceId);
+        let changes;
+        const input = taskLifecycleInput.parse(req.body);
+        try {
+          changes = planTaskLifecycle(
+            snapshot.tasks,
+            (req.params as { id: string }).id,
+            input,
+            snapshot.revision,
+            a,
+            randomUUID(),
+          );
+        } catch (e) {
+          throw new HttpError(
+            e instanceof TaskLifecycleConflict ? 409 : 400,
+            (e as Error).message,
+          );
+        }
+        for (const { before, after } of changes) {
+          await repo.putTask(a.workspaceId, after);
+          await repo.record(
+            a,
+            "task",
+            input.action === "void" ? "作废任务" : "恢复已作废任务",
+            before,
+            after,
+            input.reason || "恢复误作废的任务",
+          );
+        }
+        await repo.validate(a.workspaceId);
+        return changes.map((c) => c.after);
+      }),
+  );
+  async function applyTaskSchedules(
     actor: Actor,
     changes: TaskScheduleChange[],
     source: string,
   ) {
-    const snapshot = repo.snapshot(actor.workspaceId);
+    const snapshot = await repo.snapshot(actor.workspaceId);
     let planned;
     try {
       planned = planTaskSchedules(snapshot.tasks, changes);
@@ -1084,10 +1162,10 @@ export async function buildApp(options: {
       throw reason;
     }
     for (const { before, after } of planned) {
-      repo.putTask(actor.workspaceId, after, undefined, {
+      await repo.putTask(actor.workspaceId, after, undefined, {
         preserveAssignment: true,
       });
-      repo.record(
+      await repo.record(
         actor,
         "task",
         "Updated task schedule",
@@ -1096,511 +1174,558 @@ export async function buildApp(options: {
         source,
       );
     }
-    repo.validate(actor.workspaceId);
+    await repo.validate(actor.workspaceId);
     const confirmed = new Map(snapshot.tasks.map((task) => [task.id, task]));
     for (const change of planned) confirmed.set(change.after.id, change.after);
     return changes.map((change) => confirmed.get(change.id)!);
   }
-  app.put("/api/tasks/:id/dependencies", (req) =>
-    mutate(req, (actor) => {
-      const input = taskDependencyReplaceInput.parse(req.body);
-      const id = (req.params as { id: string }).id;
-      const current = repo.get<Task>("tasks", actor.workspaceId, id);
-      let change;
-      try {
-        change = planTaskDependencies(
-          repo.snapshot(actor.workspaceId).tasks,
-          id,
-          input,
-        );
-      } catch (reason) {
-        if (reason instanceof TaskDependencyConflict)
-          throw new HttpError(409, reason.message, reason.current);
-        throw reason;
-      }
-      if (!change) return current;
-      repo.putTask(actor.workspaceId, change.after, undefined, {
-        preserveAssignment: true,
-      });
-      repo.validate(actor.workspaceId);
-      repo.record(
-        actor,
-        "task",
-        "Updated task dependencies",
-        change.before,
-        change.after,
-        "Dependency edit",
-      );
-      return change.after;
-    }),
-  );
-  app.patch("/api/tasks/:id/schedule", (req) =>
-    mutate(req, (actor) => {
-      const input = taskSchedulePatchInput.parse(req.body);
-      const id = (req.params as { id: string }).id;
-      const current = repo.get<Task>("tasks", actor.workspaceId, id);
-      return (
-        applyTaskSchedules(actor, [{ id, ...input }], "Schedule edit")[0] ??
-        current
-      );
-    }),
-  );
-  app.post("/api/tasks/schedule-batch", (req) =>
-    mutate(req, (actor) => {
-      const input = taskScheduleBatchInput.parse(req.body);
-      if (repo.snapshot(actor.workspaceId).revision !== input.revision)
-        throw new HttpError(409, "Workspace changed. Review again.");
-      return applyTaskSchedules(
-        actor,
-        input.changes,
-        `Schedule batch ${randomUUID()}`,
-      );
-    }),
-  );
-  app.post("/api/tasks/bulk-update", (req) =>
-    mutate(req, (actor) => {
-      const input = taskBulkUpdateInput.parse(req.body);
-      const snapshot = repo.snapshot(actor.workspaceId);
-      const result = planTaskBulkUpdate(
-        snapshot.tasks,
-        snapshot.members ?? [],
-        input,
-      );
-      const source = `Task bulk ${randomUUID()} · ${result.field}`;
-      for (const { before, after } of result.changes) {
-        repo.putTask(actor.workspaceId, after, undefined, {
+  app.put(
+    "/api/tasks/:id/dependencies",
+    async (req) =>
+      await mutate(req, async (actor) => {
+        const input = taskDependencyReplaceInput.parse(req.body);
+        const id = (req.params as { id: string }).id;
+        const current = await repo.get<Task>("tasks", actor.workspaceId, id);
+        let change;
+        try {
+          change = planTaskDependencies(
+            (await repo.snapshot(actor.workspaceId)).tasks,
+            id,
+            input,
+          );
+        } catch (reason) {
+          if (reason instanceof TaskDependencyConflict)
+            throw new HttpError(409, reason.message, reason.current);
+          throw reason;
+        }
+        if (!change) return current;
+        await repo.putTask(actor.workspaceId, change.after, undefined, {
           preserveAssignment: true,
         });
-        repo.record(actor, "task", "Bulk updated task", before, after, source);
-      }
-      repo.validate(actor.workspaceId);
-      return result.confirmed;
-    }),
-  );
-  app.put("/api/tasks/:id", (req) =>
-    mutate(req, (a) => {
-      const input = taskInput
-        .extend({ version: z.number().int().positive() })
-        .parse(req.body);
-      const old = repo.get<Task>(
-        "tasks",
-        a.workspaceId,
-        (req.params as { id: string }).id,
-      );
-      repo.checkVersion(old, input.version);
-      if (old.voided)
-        throw new HttpError(400, "任务已作废，请先恢复后再编辑。");
-      if (input.projectId !== old.projectId)
-        repo.get<Project>("projects", a.workspaceId, input.projectId);
-      const children = repo
-        .snapshot(a.workspaceId)
-        .tasks.some((t) => t.parentId === old.id);
-      if (
-        input.projectId !== old.projectId &&
-        (old.parentId || input.parentId || children)
-      )
-        throw new HttpError(
-          400,
-          "Only standalone tasks can change project assignment",
+        await repo.validate(actor.workspaceId);
+        await repo.record(
+          actor,
+          "task",
+          "Updated task dependencies",
+          change.before,
+          change.after,
+          "Dependency edit",
         );
-      if (children && input.status !== old.status)
-        throw new HttpError(
-          400,
-          "Update individual subtasks; parent progress is derived",
-        );
-      const t = {
-        ...input,
-        id: old.id,
-        version: old.version + 1,
-        updatedAt: new Date().toISOString(),
-      };
-      repo.putTask(a.workspaceId, t);
-      repo.validate(a.workspaceId);
-      repo.record(
-        a,
-        "task",
-        old.projectId !== t.projectId
-          ? "Changed project assignment"
-          : old.status !== t.status
-            ? `Changed status to ${t.status}`
-            : "Updated task",
-        old,
-        t,
-      );
-      return t;
-    }),
+        return change.after;
+      }),
   );
-  app.get("/api/export", (req, reply) => {
+  app.patch(
+    "/api/tasks/:id/schedule",
+    async (req) =>
+      await mutate(req, async (actor) => {
+        const input = taskSchedulePatchInput.parse(req.body);
+        const id = (req.params as { id: string }).id;
+        const current = await repo.get<Task>("tasks", actor.workspaceId, id);
+        return (
+          (
+            await applyTaskSchedules(actor, [{ id, ...input }], "Schedule edit")
+          )[0] ?? current
+        );
+      }),
+  );
+  app.post(
+    "/api/tasks/schedule-batch",
+    async (req) =>
+      await mutate(req, async (actor) => {
+        const input = taskScheduleBatchInput.parse(req.body);
+        if (
+          (await repo.snapshot(actor.workspaceId)).revision !== input.revision
+        )
+          throw new HttpError(409, "Workspace changed. Review again.");
+        return await applyTaskSchedules(
+          actor,
+          input.changes,
+          `Schedule batch ${randomUUID()}`,
+        );
+      }),
+  );
+  app.post(
+    "/api/tasks/bulk-update",
+    async (req) =>
+      await mutate(req, async (actor) => {
+        const input = taskBulkUpdateInput.parse(req.body);
+        const snapshot = await repo.snapshot(actor.workspaceId);
+        const result = planTaskBulkUpdate(
+          snapshot.tasks,
+          snapshot.members ?? [],
+          input,
+        );
+        const source = `Task bulk ${randomUUID()} · ${result.field}`;
+        for (const { before, after } of result.changes) {
+          await repo.putTask(actor.workspaceId, after, undefined, {
+            preserveAssignment: true,
+          });
+          await repo.record(
+            actor,
+            "task",
+            "Bulk updated task",
+            before,
+            after,
+            source,
+          );
+        }
+        await repo.validate(actor.workspaceId);
+        return result.confirmed;
+      }),
+  );
+  app.put(
+    "/api/tasks/:id",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = taskInput
+          .extend({ version: z.number().int().positive() })
+          .parse(req.body);
+        const old = await repo.get<Task>(
+          "tasks",
+          a.workspaceId,
+          (req.params as { id: string }).id,
+        );
+        repo.checkVersion(old, input.version);
+        if (old.voided)
+          throw new HttpError(400, "任务已作废，请先恢复后再编辑。");
+        if (input.projectId !== old.projectId)
+          await repo.get<Project>("projects", a.workspaceId, input.projectId);
+        const children = (await repo.snapshot(a.workspaceId)).tasks.some(
+          (t) => t.parentId === old.id,
+        );
+        if (
+          input.projectId !== old.projectId &&
+          (old.parentId || input.parentId || children)
+        )
+          throw new HttpError(
+            400,
+            "Only standalone tasks can change project assignment",
+          );
+        if (children && input.status !== old.status)
+          throw new HttpError(
+            400,
+            "Update individual subtasks; parent progress is derived",
+          );
+        const t = {
+          ...input,
+          id: old.id,
+          version: old.version + 1,
+          updatedAt: new Date().toISOString(),
+        };
+        await repo.putTask(a.workspaceId, t);
+        await repo.validate(a.workspaceId);
+        await repo.record(
+          a,
+          "task",
+          old.projectId !== t.projectId
+            ? "Changed project assignment"
+            : old.status !== t.status
+              ? `Changed status to ${t.status}`
+              : "Updated task",
+          old,
+          t,
+        );
+        return t;
+      }),
+  );
+  app.get("/api/export", async (req, reply) => {
     reply.header(
       "Content-Disposition",
       'attachment; filename="project-manage-export.json"',
     );
     const ws = actor(req).workspaceId;
-    return { ...repo.snapshot(ws), ...exportProgress(repo, ws) };
+    return {
+      ...(await repo.snapshot(ws)),
+      ...(await exportProgress(repo, ws)),
+    };
   });
-  app.post("/api/import", { bodyLimit: WORKSPACE_IMPORT_LIMIT }, (req) =>
-    mutate(req, (a) => {
-      const input = normalizeImportedTaskPlanning(
-        snapshotImport
-          .extend({
-            revision: z.number().int().positive(),
-            confirmed: z.literal(true),
-          })
-          .parse(req.body),
-      );
-      const current = repo.snapshot(a.workspaceId);
-      if (current.revision !== input.revision)
-        throw new HttpError(
-          409,
-          "Workspace changed. Export and review the current workspace before replacing it.",
+  app.post(
+    "/api/import",
+    { bodyLimit: WORKSPACE_IMPORT_LIMIT },
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = normalizeImportedTaskPlanning(
+          snapshotImport
+            .extend({
+              revision: z.number().int().positive(),
+              confirmed: z.literal(true),
+            })
+            .parse(req.body),
         );
-      validateGraph(input.projects, input.tasks);
-      if (input.projectOrder)
-        checkProjectOrder(
-          { ...current, projects: input.projects },
-          input.projectOrder,
-        );
-      let importedCatalog;
-      try {
-        importedCatalog = importCatalogs(
-          input,
-          repo.catalogs(a.workspaceId),
-          a.role === "admin",
-        );
-      } catch (e) {
-        throw new HttpError(400, (e as Error).message);
-      }
-      repo.db
-        .prepare(
-          "INSERT INTO workspace_catalogs(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
-        )
-        .run(a.workspaceId, JSON.stringify(importedCatalog));
-      repo.db
-        .prepare("DELETE FROM tasks WHERE workspace_id=?")
-        .run(a.workspaceId);
-      repo.db
-        .prepare("DELETE FROM projects WHERE workspace_id=?")
-        .run(a.workspaceId);
-      for (const p of input.projects)
-        repo.putProject(
-          a.workspaceId,
-          {
-            ...p,
-            version:
-              Math.max(
-                p.version,
-                current.projects.find((x) => x.id === p.id)?.version ?? 0,
-              ) + 1,
-            updatedAt: new Date().toISOString(),
-          },
-          current.projects.find((x) => x.id === p.id),
-        );
-      for (const t of input.tasks)
-        repo.putTask(
-          a.workspaceId,
-          {
-            ...t,
-            version:
-              Math.max(
-                t.version,
-                current.tasks.find((x) => x.id === t.id)?.version ?? 0,
-              ) + 1,
-            updatedAt: new Date().toISOString(),
-          },
-          current.tasks.find((x) => x.id === t.id),
-          { importArchived: true },
-        );
-      repo.db
-        .prepare(
-          "INSERT INTO workspace_project_order(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
-        )
-        .run(a.workspaceId, JSON.stringify(input.projectOrder ?? []));
-      importProgress(repo, a.workspaceId, input);
-      repo.record(
-        a,
-        "import",
-        `Replaced workspace with ${input.projects.length} projects and ${input.tasks.length} tasks`,
-        null,
-        null,
-        "Confirmed JSON import",
-      );
-      return repo.snapshot(a.workspaceId);
-    }),
-  );
-  app.post("/api/activities/:id/restore", (req) =>
-    mutate(req, (a) => {
-      const { version } = versionSchema.parse(req.body);
-      const row = repo.db
-        .prepare("SELECT data FROM activities WHERE workspace_id=? AND id=?")
-        .get(a.workspaceId, (req.params as { id: string }).id);
-      if (!row) throw new HttpError(404, "History record not found");
-      const event = JSON.parse(String(row.data));
-      if (event.source === "Project lifecycle")
-        throw new HttpError(
-          400,
-          "Use project status actions to restore or reactivate a project.",
-        );
-      if (event.source === "Project merge")
-        throw new HttpError(
-          400,
-          "Project merges cannot be restored as a single record.",
-        );
-      if (!event.before || !["task", "project"].includes(event.kind))
-        throw new HttpError(400, "This event cannot be restored");
-      if (event.before.voided || event.after?.voided)
-        throw new HttpError(
-          400,
-          "请在任务的已作废列表中恢复，确保同批子任务一起恢复。",
-        );
-      const old = repo.get<Project | Task>(
-        event.kind === "task" ? "tasks" : "projects",
-        a.workspaceId,
-        event.entityId,
-      );
-      repo.checkVersion(old, version);
-      const restored = {
-        ...event.before,
-        version: old.version + 1,
-        updatedAt: new Date().toISOString(),
-      };
-      if (event.kind === "task")
-        restored.assigneeId = restored.assigneeId ?? null;
-      if (
-        event.kind === "task" &&
-        !repo.db
-          .prepare("SELECT 1 FROM projects WHERE workspace_id=? AND id=?")
-          .get(a.workspaceId, restored.projectId)
-      )
-        restored.projectId = (old as Task).projectId;
-      if (event.kind === "task") repo.putTask(a.workspaceId, restored);
-      else repo.putProject(a.workspaceId, restored);
-      repo.validate(a.workspaceId);
-      repo.record(
-        a,
-        event.kind,
-        "Restored previous version",
-        old,
-        restored,
-        "History restore",
-      );
-      return restored;
-    }),
-  );
-  app.post("/api/proposals/:id/apply", (req) =>
-    mutate(req, (a) => {
-      const input = z
-        .object({
-          suggestions: z.array(suggestionInput).max(100),
-          partial: z.literal(true).optional(),
-          skippedIds: z.array(z.string().min(1).max(100)).max(100).optional(),
-          updateMode: z.literal("append").optional(),
-          newProject: meetingNewProjectInput.optional(),
-        })
-        .strict()
-        .parse(req.body);
-      const { suggestions } = input;
-      const row = repo.db
-        .prepare("SELECT data FROM proposals WHERE workspace_id=? AND id=?")
-        .get(a.workspaceId, (req.params as { id: string }).id);
-      if (!row) throw new HttpError(404, "Suggestion source not found");
-      const proposal = JSON.parse(String(row.data)) as Proposal;
-      if (proposal.status === "applied")
-        throw new HttpError(409, "Suggestions have already been applied");
-      if (!input.partial && input.skippedIds?.length)
-        throw new HttpError(400, "Skipping requires partial completion");
-      try {
-        validateMeetingSelection(
-          proposal,
-          suggestions.map((s) => s.id),
-          input.skippedIds ?? [],
-        );
-      } catch (e) {
-        throw new HttpError(409, (e as Error).message);
-      }
-      const saved: Suggestion[] = [];
-      const appliedResults: NonNullable<Proposal["appliedResults"]> = [];
-      const createdProjectIds: string[] = [];
-      if (input.newProject) {
-        if (!input.partial)
-          throw new HttpError(400, "新建项目需要明确确认对应的会议事项。");
+        const current = await repo.snapshot(a.workspaceId);
+        if (current.revision !== input.revision)
+          throw new HttpError(
+            409,
+            "Workspace changed. Export and review the current workspace before replacing it.",
+          );
+        validateGraph(input.projects, input.tasks);
+        if (input.projectOrder)
+          checkProjectOrder(
+            { ...current, projects: input.projects },
+            input.projectOrder,
+          );
+        let importedCatalog;
         try {
-          validateMeetingNewProjectSelection(input.newProject, suggestions);
+          importedCatalog = importCatalogs(
+            input,
+            await repo.catalogs(a.workspaceId),
+            a.role === "admin",
+          );
         } catch (e) {
           throw new HttpError(400, (e as Error).message);
         }
-        let fields;
+        await repo.db
+          .prepare(
+            "INSERT INTO workspace_catalogs(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
+          )
+          .run(a.workspaceId, JSON.stringify(importedCatalog));
+        await repo.db
+          .prepare("DELETE FROM tasks WHERE workspace_id=?")
+          .run(a.workspaceId);
+        await repo.db
+          .prepare("DELETE FROM projects WHERE workspace_id=?")
+          .run(a.workspaceId);
+        for (const p of input.projects)
+          await repo.putProject(
+            a.workspaceId,
+            {
+              ...p,
+              version:
+                Math.max(
+                  p.version,
+                  current.projects.find((x) => x.id === p.id)?.version ?? 0,
+                ) + 1,
+              updatedAt: new Date().toISOString(),
+            },
+            current.projects.find((x) => x.id === p.id),
+          );
+        for (const t of input.tasks)
+          await repo.putTask(
+            a.workspaceId,
+            {
+              ...t,
+              version:
+                Math.max(
+                  t.version,
+                  current.tasks.find((x) => x.id === t.id)?.version ?? 0,
+                ) + 1,
+              updatedAt: new Date().toISOString(),
+            },
+            current.tasks.find((x) => x.id === t.id),
+            { importArchived: true },
+          );
+        await repo.db
+          .prepare(
+            "INSERT INTO workspace_project_order(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
+          )
+          .run(a.workspaceId, JSON.stringify(input.projectOrder ?? []));
+        await importProgress(repo, a.workspaceId, input);
+        await repo.record(
+          a,
+          "import",
+          `Replaced workspace with ${input.projects.length} projects and ${input.tasks.length} tasks`,
+          null,
+          null,
+          "Confirmed JSON import",
+        );
+        return await repo.snapshot(a.workspaceId);
+      }),
+  );
+  app.post(
+    "/api/activities/:id/restore",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const { version } = versionSchema.parse(req.body);
+        const row = await repo.db
+          .prepare("SELECT data FROM activities WHERE workspace_id=? AND id=?")
+          .get(a.workspaceId, (req.params as { id: string }).id);
+        if (!row) throw new HttpError(404, "History record not found");
+        const event = JSON.parse(String(row.data));
+        if (event.source === "Project lifecycle")
+          throw new HttpError(
+            400,
+            "Use project status actions to restore or reactivate a project.",
+          );
+        if (event.source === "Project merge")
+          throw new HttpError(
+            400,
+            "Project merges cannot be restored as a single record.",
+          );
+        if (!event.before || !["task", "project"].includes(event.kind))
+          throw new HttpError(400, "This event cannot be restored");
+        if (event.before.voided || event.after?.voided)
+          throw new HttpError(
+            400,
+            "请在任务的已作废列表中恢复，确保同批子任务一起恢复。",
+          );
+        const old = await repo.get<Project | Task>(
+          event.kind === "task" ? "tasks" : "projects",
+          a.workspaceId,
+          event.entityId,
+        );
+        repo.checkVersion(old, version);
+        const restored = {
+          ...event.before,
+          version: old.version + 1,
+          updatedAt: new Date().toISOString(),
+        };
+        if (event.kind === "task")
+          restored.assigneeId = restored.assigneeId ?? null;
+        if (
+          event.kind === "task" &&
+          !(await repo.db
+            .prepare("SELECT 1 FROM projects WHERE workspace_id=? AND id=?")
+            .get(a.workspaceId, restored.projectId))
+        )
+          restored.projectId = (old as Task).projectId;
+        if (event.kind === "task") await repo.putTask(a.workspaceId, restored);
+        else await repo.putProject(a.workspaceId, restored);
+        await repo.validate(a.workspaceId);
+        await repo.record(
+          a,
+          event.kind,
+          "Restored previous version",
+          old,
+          restored,
+          "History restore",
+        );
+        return restored;
+      }),
+  );
+  app.post(
+    "/api/proposals/:id/apply",
+    async (req) =>
+      await mutate(req, async (a) => {
+        const input = z
+          .object({
+            suggestions: z.array(suggestionInput).max(100),
+            partial: z.literal(true).optional(),
+            skippedIds: z.array(z.string().min(1).max(100)).max(100).optional(),
+            updateMode: z.literal("append").optional(),
+            newProject: meetingNewProjectInput.optional(),
+          })
+          .strict()
+          .parse(req.body);
+        const { suggestions } = input;
+        const row = await repo.db
+          .prepare("SELECT data FROM proposals WHERE workspace_id=? AND id=?")
+          .get(a.workspaceId, (req.params as { id: string }).id);
+        if (!row) throw new HttpError(404, "Suggestion source not found");
+        const proposal = JSON.parse(String(row.data)) as Proposal;
+        if (proposal.status === "applied")
+          throw new HttpError(409, "Suggestions have already been applied");
+        if (!input.partial && input.skippedIds?.length)
+          throw new HttpError(400, "Skipping requires partial completion");
         try {
-          fields = meetingNewProjectFields(
-            input.newProject,
-            repo.snapshot(a.workspaceId).projects,
-            channelEntries(repo.catalogs(a.workspaceId)),
-            repo.catalogs(a.workspaceId),
+          validateMeetingSelection(
+            proposal,
+            suggestions.map((s) => s.id),
+            input.skippedIds ?? [],
           );
         } catch (e) {
           throw new HttpError(409, (e as Error).message);
         }
-        const created: Project = {
-          ...fields,
-          id: randomUUID(),
-          version: 1,
-          updatedAt: new Date().toISOString(),
-          reportedAt: null,
-          reportedBy: null,
-        };
-        repo.putProject(a.workspaceId, created);
-        createdProjectIds.push(created.id);
-        const original = proposal.suggestions.find(
-          (item) => item.id === input.newProject!.suggestionId,
-        )!;
-        repo.record(
-          a,
-          "project",
-          "Created project from meeting",
-          null,
-          created,
-          `Meeting source ${proposal.id} v1, line ${original.sourceLine}: ${original.sourceText}`,
-        );
-        for (const suggestion of suggestions)
-          suggestion.selectedProjectId = created.id;
-      }
-      const updates = new Map<
-        string,
-        {
-          before: Project;
-          titles: string[];
-          sources: string[];
-          sourceTexts: string[];
-          attribution: Suggestion;
-        }
-      >();
-      const members = repo.members(a.workspaceId);
-      const timeZone = repo.settings(a.workspaceId).timeZone;
-      const reportTasks = proposal.suggestions.some((item) => item.dailyReport)
-        ? repo.snapshot(a.workspaceId).tasks
-        : [];
-      for (const s of suggestions) {
-        const found = proposal.suggestions.find((x) => x.id === s.id);
-        if (!found)
-          throw new HttpError(400, "Suggestion does not match source");
-        const original = attributedReportSuggestion(found, proposal, timeZone);
-        const p = repo.get<Project>(
-          "projects",
-          a.workspaceId,
-          s.selectedProjectId,
-        );
-        const source = `${original.dailyReport ? "Daily report" : "Meeting source"} ${proposal.id} v1, line ${original.sourceLine}: ${original.sourceText}`;
-        if (s.action === "update") {
-          if (input.updateMode !== "append" && !s.overwriteConfirmed)
-            throw new HttpError(
-              400,
-              "Confirm replacement of the latest project update",
+        const saved: Suggestion[] = [];
+        const appliedResults: NonNullable<Proposal["appliedResults"]> = [];
+        const createdProjectIds: string[] = [];
+        if (input.newProject) {
+          if (!input.partial)
+            throw new HttpError(400, "新建项目需要明确确认对应的会议事项。");
+          try {
+            validateMeetingNewProjectSelection(input.newProject, suggestions);
+          } catch (e) {
+            throw new HttpError(400, (e as Error).message);
+          }
+          let fields;
+          try {
+            fields = meetingNewProjectFields(
+              input.newProject,
+              (await repo.snapshot(a.workspaceId)).projects,
+              channelEntries(await repo.catalogs(a.workspaceId)),
+              await repo.catalogs(a.workspaceId),
             );
-          if (input.updateMode !== "append")
-            repo.checkVersion(p, s.projectVersion ?? 0);
-          const groupKey = reportProgressKey(p.id, original);
-          const group = updates.get(groupKey) ?? {
-            before: p,
-            titles: [],
-            sources: [],
-            sourceTexts: [],
-            attribution: original,
+          } catch (e) {
+            throw new HttpError(409, (e as Error).message);
+          }
+          const created: Project = {
+            ...fields,
+            id: randomUUID(),
+            version: 1,
+            updatedAt: new Date().toISOString(),
+            reportedAt: null,
+            reportedBy: null,
           };
-          group.titles.push(s.title);
-          group.sources.push(source);
-          group.sourceTexts.push(original.sourceText);
-          updates.set(groupKey, group);
-          appliedResults.push({ suggestionId: s.id, projectId: p.id });
-        } else {
-          const assignment = reportTaskAssignment(original, members);
-          const existing = matchingReportTask(
-            original,
-            reportTasks,
-            p.id,
-            s.title,
-            assignment,
+          await repo.putProject(a.workspaceId, created);
+          createdProjectIds.push(created.id);
+          const original = proposal.suggestions.find(
+            (item) => item.id === input.newProject!.suggestionId,
+          )!;
+          await repo.record(
+            a,
+            "project",
+            "Created project from meeting",
+            null,
+            created,
+            `Meeting source ${proposal.id} v1, line ${original.sourceLine}: ${original.sourceText}`,
           );
-          if (existing) {
+          for (const suggestion of suggestions)
+            suggestion.selectedProjectId = created.id;
+        }
+        const updates = new Map<
+          string,
+          {
+            before: Project;
+            titles: string[];
+            sources: string[];
+            sourceTexts: string[];
+            attribution: Suggestion;
+          }
+        >();
+        const members = await repo.members(a.workspaceId);
+        const timeZone = (await repo.settings(a.workspaceId)).timeZone;
+        const reportTasks = proposal.suggestions.some(
+          (item) => item.dailyReport,
+        )
+          ? (await repo.snapshot(a.workspaceId)).tasks
+          : [];
+        for (const s of suggestions) {
+          const found = proposal.suggestions.find((x) => x.id === s.id);
+          if (!found)
+            throw new HttpError(400, "Suggestion does not match source");
+          const original = attributedReportSuggestion(
+            found,
+            proposal,
+            timeZone,
+          );
+          const p = await repo.get<Project>(
+            "projects",
+            a.workspaceId,
+            s.selectedProjectId,
+          );
+          const source = `${original.dailyReport ? "Daily report" : "Meeting source"} ${proposal.id} v1, line ${original.sourceLine}: ${original.sourceText}`;
+          if (s.action === "update") {
+            if (input.updateMode !== "append" && !s.overwriteConfirmed)
+              throw new HttpError(
+                400,
+                "Confirm replacement of the latest project update",
+              );
+            if (input.updateMode !== "append")
+              repo.checkVersion(p, s.projectVersion ?? 0);
+            const groupKey = reportProgressKey(p.id, original);
+            const group = updates.get(groupKey) ?? {
+              before: p,
+              titles: [],
+              sources: [],
+              sourceTexts: [],
+              attribution: original,
+            };
+            group.titles.push(s.title);
+            group.sources.push(source);
+            group.sourceTexts.push(original.sourceText);
+            updates.set(groupKey, group);
+            appliedResults.push({ suggestionId: s.id, projectId: p.id });
+          } else {
+            const assignment = reportTaskAssignment(original, members);
+            const existing = matchingReportTask(
+              original,
+              reportTasks,
+              p.id,
+              s.title,
+              assignment,
+            );
+            if (existing) {
+              appliedResults.push({
+                suggestionId: s.id,
+                projectId: p.id,
+                taskId: existing.id,
+                taskDisposition: "linked",
+              });
+              saved.push(saveReviewedReportSuggestion(original, s));
+              continue;
+            }
+            const t: Task = {
+              id: randomUUID(),
+              projectId: p.id,
+              parentId: null,
+              title: s.title,
+              description: original.sourceText,
+              status: s.status,
+              ...assignment,
+              dueDate: null,
+              workWeek: reportWorkWeek(original),
+              workDates: [],
+              version: 1,
+              updatedAt: new Date().toISOString(),
+            };
+            await repo.putTask(a.workspaceId, t);
+            reportTasks.push(t);
+            await repo.record(
+              a,
+              "task",
+              "Applied reviewed task",
+              null,
+              t,
+              source,
+            );
             appliedResults.push({
               suggestionId: s.id,
               projectId: p.id,
-              taskId: existing.id,
-              taskDisposition: "linked",
+              taskId: t.id,
+              ...(original.dailyReport
+                ? { taskDisposition: "created" as const }
+                : {}),
             });
-            saved.push(saveReviewedReportSuggestion(original, s));
-            continue;
           }
-          const t: Task = {
-            id: randomUUID(),
-            projectId: p.id,
-            parentId: null,
-            title: s.title,
-            description: original.sourceText,
-            status: s.status,
-            ...assignment,
-            dueDate: null,
-            workWeek: reportWorkWeek(original),
-            workDates: [],
-            version: 1,
-            updatedAt: new Date().toISOString(),
-          };
-          repo.putTask(a.workspaceId, t);
-          reportTasks.push(t);
-          repo.record(a, "task", "Applied reviewed task", null, t, source);
-          appliedResults.push({
-            suggestionId: s.id,
-            projectId: p.id,
-            taskId: t.id,
-            ...(original.dailyReport
-              ? { taskDisposition: "created" as const }
-              : {}),
-          });
+          saved.push(saveReviewedReportSuggestion(original, s));
         }
-        saved.push(saveReviewedReportSuggestion(original, s));
-      }
-      for (const group of updates.values()) {
-        const before = repo.get<Project>(
-          "projects",
-          a.workspaceId,
-          group.before.id,
-        );
-        const next = {
-          ...before,
-          latestUpdate: group.titles.join("\n"),
-          version: before.version + 1,
-          updatedAt: new Date().toISOString(),
-          reportedAt: new Date().toISOString(),
-          reportedBy: group.attribution.reporter || a.name,
-        };
-        if (next.latestUpdate.length > 4000)
-          throw new HttpError(400, "Combined update exceeds 4000 characters");
-        repo.putProject(a.workspaceId, next);
-        repo.record(
-          a,
-          "project",
-          group.attribution.dailyReport
-            ? "Added daily work log"
-            : input.updateMode === "append"
-              ? "Added meeting progress log"
-              : "Applied reviewed update",
-          before,
-          next,
-          group.sources.join("\n"),
-          reportProgressSource(proposal, group.attribution, group.sourceTexts),
-        );
-      }
-      const result = settleMeetingProposal(proposal, saved, input, {
-        appliedResults,
-        createdProjectIds,
-      });
-      repo.db
-        .prepare("UPDATE proposals SET data=? WHERE id=? AND workspace_id=?")
-        .run(JSON.stringify(result), proposal.id, a.workspaceId);
-      return result;
-    }),
+        for (const group of updates.values()) {
+          const before = await repo.get<Project>(
+            "projects",
+            a.workspaceId,
+            group.before.id,
+          );
+          const next = {
+            ...before,
+            latestUpdate: group.titles.join("\n"),
+            version: before.version + 1,
+            updatedAt: new Date().toISOString(),
+            reportedAt: new Date().toISOString(),
+            reportedBy: group.attribution.reporter || a.name,
+          };
+          if (next.latestUpdate.length > 4000)
+            throw new HttpError(400, "Combined update exceeds 4000 characters");
+          await repo.putProject(a.workspaceId, next);
+          await repo.record(
+            a,
+            "project",
+            group.attribution.dailyReport
+              ? "Added daily work log"
+              : input.updateMode === "append"
+                ? "Added meeting progress log"
+                : "Applied reviewed update",
+            before,
+            next,
+            group.sources.join("\n"),
+            reportProgressSource(
+              proposal,
+              group.attribution,
+              group.sourceTexts,
+            ),
+          );
+        }
+        const result = settleMeetingProposal(proposal, saved, input, {
+          appliedResults,
+          createdProjectIds,
+        });
+        await repo.db
+          .prepare("UPDATE proposals SET data=? WHERE id=? AND workspace_id=?")
+          .run(JSON.stringify(result), proposal.id, a.workspaceId);
+        return result;
+      }),
   );
   if (existsSync(root)) {
     const html = readFileSync(entry);
-    const document = (
+    const document = async (
       req: FastifyRequest,
       reply: import("fastify").FastifyReply,
     ) =>
@@ -1624,7 +1749,7 @@ export async function buildApp(options: {
         if (html) response.header("Content-Disposition", "inline");
       },
     });
-    app.setNotFoundHandler((req, reply) => {
+    app.setNotFoundHandler(async (req, reply) => {
       const path = req.url.split("?")[0]!;
       reply.header("Cache-Control", "no-store");
       if (path === "/api" || path.startsWith("/api/"))
@@ -1637,7 +1762,7 @@ export async function buildApp(options: {
         (req.headers.accept && !/text\/html|\*\/\*/i.test(req.headers.accept))
       )
         return reply.status(404).send({ message: "Resource not found" });
-      return document(req, reply);
+      return await document(req, reply);
     });
   }
   return { app, repo, notifications };

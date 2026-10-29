@@ -105,8 +105,8 @@ test("defers refresh atomically during interaction and clears deleted selection"
 }) => {
   await resetWorkspace(page, { language: "zh", theme: "light" });
   let data = await snapshot(page);
-  await page.route("**/api/workspace", (route) =>
-    route.fulfill({ json: data }),
+  await page.route("**/api/workspace", async (route) =>
+    (await route.fulfill({ json: data })),
   );
   await page.goto("/directory?tab=statistics");
   await page.locator(".cell-link").first().click();
@@ -155,7 +155,7 @@ test("200 projects and 5000 tasks: full totals, pagination and browser latency",
       status: "todo" as const,
     })),
   };
-  await page.route("**/api/workspace", (r) => r.fulfill({ json: data }));
+  await page.route("**/api/workspace", async (r) => (await r.fulfill({ json: data })));
   const start = Date.now();
   await page.goto("/directory?tab=statistics");
   await expect(page.locator(".condition-tags")).toContainText("200 个责任组");
@@ -290,10 +290,10 @@ test("network recovery keeps successful data and explicit view navigation suppor
   ).toHaveAttribute("aria-pressed", "true");
   const before = await page.locator(".stats-summary").innerText();
   let fail = true;
-  await page.route("**/api/workspace", (r) =>
+  await page.route("**/api/workspace", async (r) =>
     fail
-      ? r.fulfill({ status: 503, json: { error: "Temporary failure" } })
-      : r.continue(),
+      ? (await r.fulfill({ status: 503, json: { error: "Temporary failure" } }))
+      : (await r.continue()),
   );
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect(
@@ -381,7 +381,7 @@ test("pending refresh does not swallow task-total activation between pointerup a
   const row = projectStatistics(data, defaultStatisticsQuery(), {
     timeZone: data.settings?.timeZone,
   }).rows[0]!;
-  await page.route("**/api/workspace", (r) => r.fulfill({ json: data }));
+  await page.route("**/api/workspace", async (r) => (await r.fulfill({ json: data })));
   await page.goto("/directory?tab=statistics");
   const button = page.getByRole("button", {
     name: `${row.name} 任务总数 ${row.total}`,

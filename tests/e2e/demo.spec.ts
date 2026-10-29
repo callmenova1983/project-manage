@@ -96,7 +96,7 @@ for (const width of [1536, 390, 375]) {
       await page
         .getByLabel("Project name", { exact: true })
         .fill("Discarded demo title");
-      page.once("dialog", (dialog) => dialog.accept());
+      page.once("dialog", async (dialog) => (await dialog.accept()));
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(
         page.getByRole("link", { name: "Atlas Customer Portal", exact: true }),

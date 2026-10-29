@@ -23,22 +23,25 @@ export function registerWecomLogin(
   repo: Repository,
   actor: (req: FastifyRequest) => Actor,
   options: {
-    databasePath: string;
+    credentialKeyPath: string;
     origin: string;
     production?: boolean;
     wecomFetch?: typeof fetch;
   },
 ) {
-  const credentials = new WecomLoginCredentialStore(repo, options.databasePath);
+  const credentials = new WecomLoginCredentialStore(
+    repo,
+    options.credentialKeyPath,
+  );
   const callbackUrl = new URL("/api/auth/wecom/callback", options.origin).href;
   const entryUrl = (ws: string) =>
     new URL(
       `/api/auth/wecom/start?workspace=${encodeURIComponent(ws)}`,
       options.origin,
     ).href;
-  const state = (ws: string) => {
-    const saved = credentials.read(ws);
-    const event = repo.db
+  const state = async (ws: string) => {
+    const saved = await credentials.read(ws);
+    const event = await repo.db
       .prepare(
         "SELECT created_at,outcome FROM wecom_login_events WHERE workspace_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
       )
@@ -61,14 +64,16 @@ export function registerWecomLogin(
         : null,
     };
   };
-  app.get("/api/admin/wecom-login", (req) =>
-    state(adminActor(repo, actor(req)).workspaceId),
+  app.get(
+    "/api/admin/wecom-login",
+    async (req) =>
+      await state((await adminActor(repo, actor(req))).workspaceId),
   );
-  app.put("/api/admin/wecom-login", (req) => {
-    const a = adminActor(repo, actor(req));
+  app.put("/api/admin/wecom-login", async (req) => {
+    const a = await adminActor(repo, actor(req));
     const input = wecomLoginInput.parse(req.body);
-    return repo.transaction(() => {
-      const previous = credentials.read(a.workspaceId);
+    return await repo.transaction(async () => {
+      const previous = await credentials.read(a.workspaceId);
       if (input.version !== (previous?.version ?? 0))
         throw new HttpError(409, "配置已变更，请重新加载后保存。");
       if (
@@ -81,14 +86,19 @@ export function registerWecomLogin(
       const secret = input.secret || previous?.config.secret || "";
       if (!secret) throw new HttpError(400, "请填写应用 Secret。");
       const { version, ...config } = input;
-      credentials.save(a.workspaceId, version + 1, { ...config, secret });
-      adminAudit(repo, a, "Updated WeCom login configuration", a.workspaceId);
-      return state(a.workspaceId);
+      await credentials.save(a.workspaceId, version + 1, { ...config, secret });
+      await adminAudit(
+        repo,
+        a,
+        "Updated WeCom login configuration",
+        a.workspaceId,
+      );
+      return await state(a.workspaceId);
     });
   });
   app.post("/api/admin/wecom-login/check", async (req) => {
-    const a = adminActor(repo, actor(req));
-    const saved = credentials.read(a.workspaceId);
+    const a = await adminActor(repo, actor(req));
+    const saved = await credentials.read(a.workspaceId);
     if (!saved) throw new HttpError(400, "请先保存免登配置。");
     try {
       const token = await get("gettoken", {
@@ -110,14 +120,15 @@ export function registerWecomLogin(
       throw new HttpError(400, wecomLoginErrors.upstream!);
     }
   });
-  app.get("/api/auth/wecom/options", () => {
+  app.get("/api/auth/wecom/options", async () => {
     // Do not guess a tenant when more than one workspace enables login.
-    const enabled = repo.db
+    const rows = await repo.db
       .prepare("SELECT workspace_id FROM wecom_login_config")
-      .all()
-      .filter(
-        (row) => credentials.read(String(row.workspace_id))?.config.enabled,
-      );
+      .all();
+    const enabled = [];
+    for (const row of rows)
+      if ((await credentials.read(String(row.workspace_id)))?.config.enabled)
+        enabled.push(row);
     return {
       entryUrl:
         enabled.length === 1
@@ -125,13 +136,13 @@ export function registerWecomLogin(
           : null,
     };
   });
-  const event = (ws: string, outcome: string) =>
-    repo.db
+  const event = async (ws: string, outcome: string) =>
+    await repo.db
       .prepare(
         "INSERT INTO wecom_login_events(id,workspace_id,created_at,outcome) VALUES(?,?,?,?)",
       )
       .run(randomUUID(), ws, new Date().toISOString(), outcome);
-  const fail = (
+  const fail = async (
     reply: import("fastify").FastifyReply,
     code: string,
     returnTo = "/projects",
@@ -143,18 +154,19 @@ export function registerWecomLogin(
   app.get(
     "/api/auth/wecom/start",
     { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
-    (req, reply) => {
+    async (req, reply) => {
       const query = z
         .object({
           workspace: z.string().min(1).max(100),
           returnTo: z.string().optional(),
         })
         .parse(req.query);
-      const saved = credentials.read(query.workspace);
+      const saved = await credentials.read(query.workspace);
       const returnTo = safeWecomReturn(query.returnTo);
-      if (!saved?.config.enabled) return fail(reply, "unavailable", returnTo);
+      if (!saved?.config.enabled)
+        return await fail(reply, "unavailable", returnTo);
       try {
-        const session = sessionActor(repo, req.cookies.pm_session);
+        const session = await sessionActor(repo, req.cookies.pm_session);
         if (session.actor.workspaceId === query.workspace)
           return reply.redirect(returnTo);
       } catch {
@@ -162,11 +174,13 @@ export function registerWecomLogin(
       }
       const token = randomBytes(32).toString("hex"),
         browser = randomBytes(32).toString("hex");
-      repo.db
+      await repo.db
         .prepare("DELETE FROM wecom_login_states WHERE expires_at<=?")
         .run(Date.now());
-      repo.db
-        .prepare("INSERT INTO wecom_login_states VALUES(?,?,?,?,?,?)")
+      await repo.db
+        .prepare(
+          "INSERT INTO wecom_login_states(state_hash,browser_hash,workspace_id,config_version,return_to,expires_at) VALUES(?,?,?,?,?,?)",
+        )
         .run(
           hashToken(token),
           hashToken(browser),
@@ -220,9 +234,9 @@ export function registerWecomLogin(
         code: z.string().min(1).max(512),
       })
       .safeParse(req.query);
-    if (!query.success) return fail(reply, "expired");
-    const flow = repo.transaction(() => {
-      const row = repo.db
+    if (!query.success) return await fail(reply, "expired");
+    const flow = await repo.transaction(async () => {
+      const row = await repo.db
         .prepare(
           "SELECT * FROM wecom_login_states WHERE state_hash=? AND browser_hash=? AND expires_at>?",
         )
@@ -232,12 +246,12 @@ export function registerWecomLogin(
           Date.now(),
         );
       if (row)
-        repo.db
+        await repo.db
           .prepare("DELETE FROM wecom_login_states WHERE state_hash=?")
           .run(hashToken(query.data.state));
       return row;
     });
-    if (!flow) return fail(reply, "expired");
+    if (!flow) return await fail(reply, "expired");
     reply.clearCookie("pm_wecom_flow", {
       path: "/api/auth/wecom",
       secure: !!options.production,
@@ -246,7 +260,7 @@ export function registerWecomLogin(
     const ws = String(flow.workspace_id),
       returnTo = String(flow.return_to);
     try {
-      const saved = credentials.read(ws);
+      const saved = await credentials.read(ws);
       if (!saved?.config.enabled || saved.version !== flow.config_version)
         throw new Error("unavailable");
       const config = saved.config;
@@ -270,11 +284,11 @@ export function registerWecomLogin(
         throw new Error("member");
       const sessionToken = randomBytes(32).toString("hex"),
         csrf = randomBytes(24).toString("hex");
-      repo.transaction(() => {
-        const latest = credentials.read(ws);
+      await repo.transaction(async () => {
+        const latest = await credentials.read(ws);
         if (!latest?.config.enabled || latest.version !== saved.version)
           throw new Error("unavailable");
-        const directory = repo.directory(ws);
+        const directory = await repo.directory(ws);
         const matches = directory.employees.filter(
           (e) =>
             e.wecomCorpId === config.corpId &&
@@ -288,13 +302,13 @@ export function registerWecomLogin(
           // Never silently merge an existing account by name or email.
           if (
             employee.email &&
-            repo.db
-              .prepare("SELECT 1 FROM users WHERE email=? COLLATE NOCASE")
-              .get(employee.email)
+            (await repo.db
+              .prepare("SELECT 1 FROM users WHERE lower(email)=lower(?)")
+              .get(employee.email))
           )
             throw new Error("unlinked");
           const id = randomUUID();
-          repo.db
+          await repo.db
             .prepare(
               "INSERT INTO users(id,workspace_id,email,name,password_hash,username,role,status,requires_activation) VALUES(?,?,?,?,?,?,'member','active',0)",
             )
@@ -304,41 +318,45 @@ export function registerWecomLogin(
               employee.email || `wecom-${id}@pm.invalid`,
               employee.name,
               "!wecom-only",
-              assignLoginName(repo.db, employee.name),
+              await assignLoginName(repo.db, employee.name),
             );
           employee.userId = id;
           directory.version++;
-          repo.db
+          await repo.db
             .prepare(
               "UPDATE workspace_directory SET data=? WHERE workspace_id=?",
             )
             .run(JSON.stringify(directory), ws);
-          repo.db
+          await repo.db
             .prepare("UPDATE workspaces SET revision=revision+1 WHERE id=?")
             .run(ws);
         }
-        const user = repo.db
+        const user = await repo.db
           .prepare("SELECT * FROM users WHERE id=? AND workspace_id=?")
           .get(employee.userId, ws);
         if (!user || user.status !== "active" || user.requires_activation)
           throw new Error("disabled");
-        repo.db
-          .prepare("INSERT INTO sessions VALUES(?,?,?,?)")
+        await repo.db
+          .prepare(
+            "INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)",
+          )
           .run(
             hashToken(sessionToken),
             employee.userId,
             csrf,
             Date.now() + 12 * 3600000,
           );
-        repo.db
-          .prepare("INSERT INTO wecom_login_sessions VALUES(?,?,?,?)")
+        await repo.db
+          .prepare(
+            "INSERT INTO wecom_login_sessions(token_hash,workspace_id,corp_id,wecom_user_id) VALUES(?,?,?,?)",
+          )
           .run(
             hashToken(sessionToken),
             ws,
             config.corpId,
             identity.UserId as string,
           );
-        event(ws, "企微免登成功");
+        await event(ws, "企微免登成功");
       });
       reply.setCookie("pm_session", sessionToken, {
         httpOnly: true,
@@ -353,8 +371,8 @@ export function registerWecomLogin(
         error instanceof Error && wecomLoginErrors[error.message]
           ? error.message
           : "upstream";
-      event(ws, wecomLoginErrors[code]!);
-      return fail(reply, code, returnTo);
+      await event(ws, wecomLoginErrors[code]!);
+      return await fail(reply, code, returnTo);
     }
   });
 }

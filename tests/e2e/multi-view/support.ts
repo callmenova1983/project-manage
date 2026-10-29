@@ -50,7 +50,7 @@ export async function sessions(): Promise<Session[]> {
 export async function snapshot(page: Page): Promise<Snapshot> {
   const response = await page.request.get("/api/workspace");
   expect(response.status()).toBe(200);
-  return response.json();
+  return (await response.json());
 }
 export async function resetWorkspace(
   page: Page,

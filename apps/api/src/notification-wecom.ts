@@ -35,9 +35,9 @@ export class NotificationWecomSender {
     version: number,
     userId: string,
     content: string,
-    stillValid: () => boolean,
+    stillValid: () => boolean | Promise<boolean>,
   ): Promise<NotificationSendResult> {
-    if (!userId || userId.toLowerCase()==="@all" || /[|\s]/.test(userId))
+    if (!userId || userId.toLowerCase() === "@all" || /[|\s]/.test(userId))
       return {
         state: "failed",
         error: "接收人绑定无效，请重新核对企业微信成员。",
@@ -83,7 +83,7 @@ export class NotificationWecomSender {
         };
       }
     }
-    if (!stillValid())
+    if (!(await stillValid()))
       return {
         state: "cancelled",
         error: "发送前事项、接收人或通知设置已变更。",
@@ -108,7 +108,11 @@ export class NotificationWecomSender {
         msgid?: string;
         invaliduser?: string;
       };
-      if (!response.ok && value.errcode===0) return {state:"unknown",error:"HTTP 状态与消息结果不一致，请核查后再决定是否重发。"};
+      if (!response.ok && value.errcode === 0)
+        return {
+          state: "unknown",
+          error: "HTTP 状态与消息结果不一致，请核查后再决定是否重发。",
+        };
       if (response.ok && value.errcode === 0 && !value.invaliduser)
         return { state: "accepted", error: "", messageId: value.msgid };
       if (typeof value.errcode !== "number")

@@ -46,13 +46,13 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
   beforeEach(async () => {
     modelFetch.mockReset();
     ctx = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin,
       qwen: config,
       aiRuntime: runtime,
       aiFetch: modelFetch,
     });
-    ctx.repo.seed("location-test");
+    await ctx.repo.seed("location-test");
     const password = randomUUID();
     await createUser(ctx.repo, {
       email: "location@example.test",
@@ -77,7 +77,7 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
   ])(
     "saves $precision locations with version checks, audit records, exports and imports",
     async (location) => {
-      const original = ctx.repo.snapshot("location-test").projects[0]!;
+      const original = (await ctx.repo.snapshot("location-test")).projects[0]!;
       const response = await request("PUT", `/api/projects/${original.id}`, {
         ...projectInput.strip().parse(original),
         version: original.version,
@@ -87,9 +87,9 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
       const saved = response.json<Project>();
       expect(saved.location).toEqual(location);
       expect(saved.version).toBe(original.version + 1);
-      const activity = ctx.repo
-        .snapshot("location-test")
-        .activities.find((a) => a.entityId === saved.id);
+      const activity = (
+        await ctx.repo.snapshot("location-test")
+      ).activities.find((a) => a.entityId === saved.id);
       expect((activity?.after as Project).location).toEqual(location);
       const stale = await request("PUT", `/api/projects/${original.id}`, {
         ...projectInput.strip().parse(original),
@@ -130,7 +130,7 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
   );
 
   it("rejects mismatched or invalid locations before updating a project", async () => {
-    const project = ctx.repo.snapshot("location-test").projects[0]!;
+    const project = (await ctx.repo.snapshot("location-test")).projects[0]!;
     const location = cityLocation("ningbo", "map", true);
     for (const invalid of [
       { ...location, cityId: "unknown" },
@@ -145,15 +145,16 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
       expect(result.statusCode).toBe(400);
     }
     expect(
-      ctx.repo.get<Project>("projects", "location-test", project.id).version,
+      (await ctx.repo.get<Project>("projects", "location-test", project.id))
+        .version,
     ).toBe(project.version);
   });
 
   it("returns a validated AI candidate without saving, reuses idempotency, and sends only descriptive fields", async () => {
-    const project = ctx.repo.snapshot("location-test").projects[0]!;
+    const project = (await ctx.repo.snapshot("location-test")).projects[0]!;
     project.name = "天一阁南馆";
     project.notes = "PRIVATE_NOTES";
-    ctx.repo.putProject("location-test", project);
+    await ctx.repo.putProject("location-test", project);
     modelFetch.mockResolvedValue(
       Response.json({
         choices: [
@@ -188,10 +189,12 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
       location: { cityId: "ningbo", confirmed: false, source: "ai" },
     });
     expect(
-      ctx.repo.get<Project>("projects", "location-test", project.id).location,
+      (await ctx.repo.get<Project>("projects", "location-test", project.id))
+        .location,
     ).toBeUndefined();
     expect(
-      ctx.repo.get<Project>("projects", "location-test", project.id).version,
+      (await ctx.repo.get<Project>("projects", "location-test", project.id))
+        .version,
     ).toBe(project.version);
     const same = await request(
       "POST",
@@ -205,12 +208,13 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
     expect(body).not.toContain("PRIVATE_NOTES");
     expect(body).not.toContain(project.owner);
     expect(
-      ctx.repo.db.prepare("SELECT count(*) AS n FROM ai_attempts").get()?.n,
+      (await ctx.repo.db.prepare("SELECT count(*) AS n FROM ai_attempts").get())
+        ?.n,
     ).toBe(1);
   });
 
   it("requires consent and a current project before any outbound AI request", async () => {
-    const project = ctx.repo.snapshot("location-test").projects[0]!;
+    const project = (await ctx.repo.snapshot("location-test")).projects[0]!;
     const path = `/api/projects/${project.id}/location/analyze`;
     expect(
       (
@@ -246,11 +250,11 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
   it("falls back to rules when the server model is disabled", async () => {
     await ctx.app.close();
     ctx = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin,
       aiFetch: modelFetch,
     });
-    ctx.repo.seed("location-test");
+    await ctx.repo.seed("location-test");
     const password = randomUUID();
     await createUser(ctx.repo, {
       email: "location@example.test",
@@ -265,9 +269,9 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
     });
     cookie = `${login.cookies[0]!.name}=${login.cookies[0]!.value}`;
     csrf = login.json().csrf;
-    const project = ctx.repo.snapshot("location-test").projects[0]!;
+    const project = (await ctx.repo.snapshot("location-test")).projects[0]!;
     project.name = "云和玩具城酒店";
-    ctx.repo.putProject("location-test", project);
+    await ctx.repo.putProject("location-test", project);
     const result = await request(
       "POST",
       `/api/projects/${project.id}/location/analyze`,

@@ -1,3 +1,4 @@
+import { testDatabaseConfig } from "../pg-helpers.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -28,7 +29,9 @@ let actors: Record<"editor" | "recipient" | "namesake" | "foreign", Actor>;
 const fetcher = vi.fn<typeof fetch>();
 
 const options = (databasePath = ":memory:") => ({
-  databasePath,
+  ...(databasePath === ":memory:"
+    ? { isolatedDatabase: true }
+    : { database: testDatabaseConfig(databasePath) }),
   origin,
   notificationClock: () => new Date(clock),
   notificationIntervalMs: 0,
@@ -71,14 +74,17 @@ function input(patch: Partial<TaskInput> = {}): TaskInput {
     ...patch,
   };
 }
-function putTask(id: string, patch: Partial<TaskInput> = {}): Task {
+async function putTask(
+  id: string,
+  patch: Partial<TaskInput> = {},
+): Promise<Task> {
   const task: Task = {
     ...input(patch),
     id,
     version: 1,
     updatedAt: clock.toISOString(),
   };
-  ctx.repo.putTask("team", task);
+  await ctx.repo.putTask("team", task);
   return task;
 }
 async function setup(databasePath = ":memory:") {
@@ -93,9 +99,9 @@ async function setup(databasePath = ":memory:") {
   for (const [key, name, workspaceId] of specs) {
     const email = `${key}@example.test`;
     await createUser(ctx.repo, { name, email, password, workspaceId });
-    const row = ctx.repo.db
+    const row = (await ctx.repo.db
       .prepare("SELECT id FROM users WHERE email=?")
-      .get(email)!;
+      .get(email))!;
     actors[key] = {
       id: String(row.id),
       name,
@@ -104,9 +110,9 @@ async function setup(databasePath = ":memory:") {
       role: "member",
     };
   }
-  ctx.repo.putProject("team", project());
-  ctx.repo.putProject("team", project("q"));
-  ctx.repo.putProject(
+  await ctx.repo.putProject("team", project());
+  await ctx.repo.putProject("team", project("q"));
+  await ctx.repo.putProject(
     "outside",
     project("outside-project", {
       owner: actors.foreign.name,
@@ -153,7 +159,7 @@ async function state(session: Session): Promise<NotificationResponse> {
   return notificationResponseSchema.parse(response.json());
 }
 async function update(session: Session, id: string, patch: Partial<TaskInput>) {
-  const task = ctx.repo.get<Task>("tasks", "team", id);
+  const task = await ctx.repo.get<Task>("tasks", "team", id);
   const response = await request(session, "PUT", `/api/tasks/${id}`, {
     ...taskInput.strip().parse(task),
     ...patch,
@@ -177,12 +183,18 @@ afterEach(async () => {
 
 describe("account notification inbox", () => {
   it("initializes current risks without replaying historical assignments or external deliveries", async () => {
-    const historical = putTask("historical", {
+    const historical = await putTask("historical", {
       dueDate: "2026-10-15",
       status: "blocked",
       reminderAt: "2026-10-16T09:00:00Z",
     });
-    ctx.repo.record(actors.editor, "task", "Created task", null, historical);
+    await ctx.repo.record(
+      actors.editor,
+      "task",
+      "Created task",
+      null,
+      historical,
+    );
     const recipient = await login("recipient");
     const before = await state(recipient);
     expect(before.items).toHaveLength(1);
@@ -193,9 +205,9 @@ describe("account notification inbox", () => {
     });
     expect(before.items.some((item) => item.kind === "assignment")).toBe(false);
     expect(
-      ctx.repo.db
+      (await ctx.repo.db
         .prepare("SELECT COUNT(*) AS n FROM notification_outbox")
-        .get()!.n,
+        .get())!.n,
     ).toBe(0);
     await ctx.notifications.tick();
     expect((await state(recipient)).items.map((item) => item.id)).toEqual(
@@ -205,9 +217,12 @@ describe("account notification inbox", () => {
   });
 
   it("uses explicit recipient IDs, isolates workspaces, and protects open/read endpoints", async () => {
-    putTask("mine", { status: "blocked" });
-    putTask("namesake", { status: "blocked", assigneeId: actors.namesake.id });
-    putTask("text-only", { status: "blocked", assigneeId: null });
+    await putTask("mine", { status: "blocked" });
+    await putTask("namesake", {
+      status: "blocked",
+      assigneeId: actors.namesake.id,
+    });
+    await putTask("text-only", { status: "blocked", assigneeId: null });
     const recipient = await login("recipient");
     const mine = await state(recipient);
     expect(mine.items.map((item) => item.taskId)).toEqual(["mine"]);
@@ -245,7 +260,7 @@ describe("account notification inbox", () => {
   it.each(["reschedule", "complete", "void"] as const)(
     "closes obsolete task risks after %s without removing their history",
     async (change) => {
-      putTask("risk", {
+      await putTask("risk", {
         dueDate: "2026-10-15",
         status: "blocked",
         reminderAt: "2026-10-16T09:00:00Z",
@@ -263,7 +278,7 @@ describe("account notification inbox", () => {
       else if (change === "complete")
         await update(editor, "risk", { status: "done" });
       else {
-        const snapshot = ctx.repo.snapshot("team");
+        const snapshot = await ctx.repo.snapshot("team");
         const response = await request(
           editor,
           "POST",
@@ -282,17 +297,17 @@ describe("account notification inbox", () => {
       expect(
         after.items.find((item) => item.id === id)?.resolvedAt,
       ).toBeTruthy();
-      expect(ctx.repo.get<Task>("tasks", "team", "risk")).toBeDefined();
-      expect(ctx.repo.snapshot("team").activities).toHaveLength(1);
+      expect(await ctx.repo.get<Task>("tasks", "team", "risk")).toBeDefined();
+      expect((await ctx.repo.snapshot("team")).activities).toHaveLength(1);
     },
   );
 
   it("keeps reading and snoozing independent from business completion and dates", async () => {
-    putTask("risk", { status: "blocked", dueDate: "2026-10-15" });
+    await putTask("risk", { status: "blocked", dueDate: "2026-10-15" });
     const recipient = await login("recipient");
     const initial = await state(recipient);
-    const beforeTask = ctx.repo.get<Task>("tasks", "team", "risk");
-    const beforeRevision = ctx.repo.snapshot("team").revision;
+    const beforeTask = await ctx.repo.get<Task>("tasks", "team", "risk");
+    const beforeRevision = (await ctx.repo.snapshot("team")).revision;
     const read = await request(recipient, "POST", "/api/notifications/action", {
       ids: [initial.items[0]!.id],
       action: "read",
@@ -315,8 +330,10 @@ describe("account notification inbox", () => {
     expect((await state(recipient)).items[0]!.snoozedUntil).toBe(
       new Date(until).toISOString(),
     );
-    expect(ctx.repo.get<Task>("tasks", "team", "risk")).toEqual(beforeTask);
-    expect(ctx.repo.snapshot("team").revision).toBe(beforeRevision);
+    expect(await ctx.repo.get<Task>("tasks", "team", "risk")).toEqual(
+      beforeTask,
+    );
+    expect((await ctx.repo.snapshot("team")).revision).toBe(beforeRevision);
     const unread = await request(
       recipient,
       "POST",
@@ -331,7 +348,7 @@ describe("account notification inbox", () => {
   });
 
   it("validates snooze offsets as instants and normalizes the persisted time", async () => {
-    putTask("risk", { status: "blocked" });
+    await putTask("risk", { status: "blocked" });
     const recipient = await login("recipient");
     const id = (await state(recipient)).items[0]!.id;
     const past = await request(recipient, "POST", "/api/notifications/action", {
@@ -358,7 +375,7 @@ describe("account notification inbox", () => {
     folders.push(folder);
     const databasePath = join(folder, "db.sqlite");
     await setup(databasePath);
-    putTask("risk", { status: "blocked" });
+    await putTask("risk", { status: "blocked" });
     let recipient = await login("recipient");
     const item = (await state(recipient)).items[0]!;
     const preferences = {
@@ -454,9 +471,9 @@ describe("account notification inbox", () => {
       ),
     ).toHaveLength(1);
     expect(
-      ctx.repo.db
+      (await ctx.repo.db
         .prepare("SELECT COUNT(*) AS n FROM notification_outbox")
-        .get()!.n,
+        .get())!.n,
     ).toBe(1);
     const self = await request(
       editor,
@@ -505,7 +522,7 @@ describe("account notification inbox", () => {
       targetId: "q",
       sourceIds: ["p"],
       name: "保留项目",
-      revision: ctx.repo.snapshot("team").revision,
+      revision: (await ctx.repo.snapshot("team")).revision,
       confirmed: true,
     });
     expect(merged.statusCode, merged.body).toBe(200);
@@ -535,7 +552,7 @@ describe("account notification inbox", () => {
   });
 
   it("restores current risk visibility without replaying old external reminders", async () => {
-    putTask("risk", { dueDate: "2026-10-15" });
+    await putTask("risk", { dueDate: "2026-10-15" });
     const editor = await login();
     const recipient = await login("recipient");
     const initial = (await state(recipient)).items[0]!;
@@ -548,14 +565,14 @@ describe("account notification inbox", () => {
       ).statusCode,
     ).toBe(200);
     await update(editor, "risk", { status: "done" });
-    const event = ctx.repo
-      .snapshot("team")
-      .activities.find((value) => value.entityId === "risk")!;
+    const event = (await ctx.repo.snapshot("team")).activities.find(
+      (value) => value.entityId === "risk",
+    )!;
     const restore = await request(
       editor,
       "POST",
       `/api/activities/${event.id}/restore`,
-      { version: ctx.repo.get<Task>("tasks", "team", "risk").version },
+      { version: (await ctx.repo.get<Task>("tasks", "team", "risk")).version },
     );
     expect(restore.statusCode, restore.body).toBe(200);
     const after = await state(recipient);
@@ -564,9 +581,9 @@ describe("account notification inbox", () => {
     ).toBeNull();
     expect(after.pendingCount).toBe(1);
     expect(
-      ctx.repo.db
+      (await ctx.repo.db
         .prepare("SELECT COUNT(*) AS n FROM notification_outbox")
-        .get()!.n,
+        .get())!.n,
     ).toBe(0);
     await ctx.notifications.tick();
     expect(fetcher).not.toHaveBeenCalled();
@@ -587,14 +604,18 @@ describe("account notification inbox", () => {
       (await request(editor, "POST", "/api/tasks", input())).statusCode,
     ).toBe(200);
     expect(
-      ctx.repo.db.prepare("SELECT state FROM notification_outbox").get()!.state,
+      (await ctx.repo.db
+        .prepare("SELECT state FROM notification_outbox")
+        .get())!.state,
     ).toBe("pending");
-    ctx.repo.db
+    await ctx.repo.db
       .prepare("UPDATE users SET status='disabled' WHERE id=?")
       .run(actors.recipient.id);
     await ctx.notifications.tick();
     expect(
-      ctx.repo.db.prepare("SELECT state FROM notification_outbox").get()!.state,
+      (await ctx.repo.db
+        .prepare("SELECT state FROM notification_outbox")
+        .get())!.state,
     ).toBe("cancelled");
     expect(
       (await request(recipient, "GET", "/api/notifications")).statusCode,
@@ -603,7 +624,7 @@ describe("account notification inbox", () => {
   });
 
   it("materializes an exact-time reminder once and cancels its queued delivery after completion", async () => {
-    putTask("scheduled", { reminderAt: "2026-10-16T11:00:00Z" });
+    await putTask("scheduled", { reminderAt: "2026-10-16T11:00:00Z" });
     const editor = await login();
     const recipient = await login("recipient");
     expect((await state(recipient)).items).toEqual([]);
@@ -628,23 +649,27 @@ describe("account notification inbox", () => {
       tags: ["reminder"],
     });
     expect(
-      ctx.repo.db
+      (await ctx.repo.db
         .prepare("SELECT COUNT(*) AS n FROM notification_outbox")
-        .get()!.n,
+        .get())!.n,
     ).toBe(1);
     expect(
-      ctx.repo.db.prepare("SELECT state FROM notification_outbox").get()!.state,
+      (await ctx.repo.db
+        .prepare("SELECT state FROM notification_outbox")
+        .get())!.state,
     ).toBe("blocked");
     await update(editor, "scheduled", { status: "done" });
     expect((await state(recipient)).pendingCount).toBe(0);
     expect(
-      ctx.repo.db.prepare("SELECT state FROM notification_outbox").get()!.state,
+      (await ctx.repo.db
+        .prepare("SELECT state FROM notification_outbox")
+        .get())!.state,
     ).toBe("cancelled");
     expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("restores backup risk visibility without replaying imported assignment or external events", async () => {
-    putTask("backup-risk", { dueDate: "2026-10-15" });
+    await putTask("backup-risk", { dueDate: "2026-10-15" });
     const editor = await login();
     const recipient = await login("recipient");
     expect(
@@ -660,7 +685,7 @@ describe("account notification inbox", () => {
     expect((await state(recipient)).pendingCount).toBe(0);
     const imported = await request(editor, "POST", "/api/import", {
       ...saved,
-      revision: ctx.repo.snapshot("team").revision,
+      revision: (await ctx.repo.snapshot("team")).revision,
       confirmed: true,
     });
     expect(imported.statusCode, imported.body).toBe(200);
@@ -671,16 +696,16 @@ describe("account notification inbox", () => {
       [],
     );
     expect(
-      ctx.repo.db
+      (await ctx.repo.db
         .prepare("SELECT COUNT(*) AS n FROM notification_outbox")
-        .get()!.n,
+        .get())!.n,
     ).toBe(0);
     expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("rolls back a multi-item snooze when one item is already resolved and rejects foreign following", async () => {
-    putTask("open", { status: "blocked" });
-    putTask("closed", { status: "blocked" });
+    await putTask("open", { status: "blocked" });
+    await putTask("closed", { status: "blocked" });
     const editor = await login();
     const recipient = await login("recipient");
     const before = await state(recipient);
@@ -746,7 +771,9 @@ describe("account notification inbox", () => {
         ?.resolvedAt,
     ).toBeTruthy();
     expect(
-      ctx.repo.db.prepare("SELECT state FROM notification_outbox").get()!.state,
+      (await ctx.repo.db
+        .prepare("SELECT state FROM notification_outbox")
+        .get())!.state,
     ).toBe("cancelled");
     expect(fetcher).not.toHaveBeenCalled();
   });

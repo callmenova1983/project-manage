@@ -5,9 +5,9 @@ import { createUser } from "../../apps/api/src/auth";
 import { taskInput, type Task } from "../../packages/domain/types";
 it("persists independent schedules, retains old-form omissions and rejects invalid graph writes atomically", async () => {
   const origin = "http://localhost:4173";
-  const context = await buildApp({ databasePath: ":memory:", origin });
+  const context = await buildApp({ isolatedDatabase: true, origin });
   try {
-    context.repo.seed("team");
+    await context.repo.seed("team");
     await createUser(context.repo, {
       name: "Schedule member",
       email: "schedule@example.test",
@@ -40,7 +40,7 @@ it("persists independent schedules, retains old-form omissions and rejects inval
         headers: { ...headers, "idempotency-key": key },
         payload: payload as Record<string, unknown>,
       });
-    const initial = context.repo.snapshot("team");
+    const initial = await context.repo.snapshot("team");
     const leaf = initial.tasks.find(
       (task) => !initial.tasks.some((child) => child.parentId === task.id),
     )!;
@@ -69,13 +69,11 @@ it("persists independent schedules, retains old-form omissions and rejects inval
     expect(oldForm.statusCode, oldForm.body).toBe(200);
     let retained = oldForm.json<Task>();
     expect(retained.scheduleStart).toBe("2026-12-28");
-    const legacy = context.repo
-      .snapshot("team")
-      .activities.find(
-        (event) =>
-          event.entityId === leaf.id &&
-          event.after?.version === scheduled.version,
-      )!;
+    const legacy = (await context.repo.snapshot("team")).activities.find(
+      (event) =>
+        event.entityId === leaf.id &&
+        event.after?.version === scheduled.version,
+    )!;
     expect(legacy.before).not.toHaveProperty("scheduleStart");
     const restored = await request(
       "POST",
@@ -85,7 +83,7 @@ it("persists independent schedules, retains old-form omissions and rejects inval
     expect(restored.statusCode, restored.body).toBe(200);
     retained = restored.json<Task>();
     expect(retained.scheduleStart).toBe("2026-12-28");
-    const before = context.repo.snapshot("team");
+    const before = await context.repo.snapshot("team");
     const invalid = await request("PUT", `/api/tasks/${leaf.id}`, {
       ...taskInput.strip().parse(retained),
       scheduleStart: null,
@@ -98,7 +96,7 @@ it("persists independent schedules, retains old-form omissions and rejects inval
       title: "A rejected child",
     });
     expect(parent.statusCode).toBe(400);
-    const after = context.repo.snapshot("team");
+    const after = await context.repo.snapshot("team");
     expect(after.revision).toBe(before.revision);
     expect(after.tasks).toEqual(before.tasks);
     expect(after.activities).toEqual(before.activities);
@@ -116,15 +114,15 @@ it("persists independent schedules, retains old-form omissions and rejects inval
       milestone: false,
     });
     const clearedTask = cleared.json<Task>();
-    const member = context.repo
-      .members("team")
-      .find((member) => member.email === "schedule@example.test")!;
+    const member = (await context.repo.members("team")).find(
+      (member) => member.email === "schedule@example.test",
+    )!;
     const cached = {
       ...clearedTask,
       assigneeId: member.id,
       assignee: "Previously cached name",
     };
-    context.repo.putTask("team", cached, undefined, {
+    await context.repo.putTask("team", cached, undefined, {
       preserveAssignment: true,
     });
     const one = await request("PATCH", `/api/tasks/${leaf.id}/schedule`, {
@@ -137,7 +135,7 @@ it("persists independent schedules, retains old-form omissions and rejects inval
     expect(single.dueDate).toBe(leaf.dueDate);
     expect(single.assignee).toBe(cached.assignee);
     expect(single.assigneeId).toBe(member.id);
-    const batchBefore = context.repo.snapshot("team");
+    const batchBefore = await context.repo.snapshot("team");
     const other = batchBefore.tasks.find(
       (task) =>
         task.id !== leaf.id &&
@@ -163,8 +161,12 @@ it("persists independent schedules, retains old-form omissions and rejects inval
       changes: [changes[0], { ...changes[1]!, version: other.version + 99 }],
     });
     expect(conflict.statusCode).toBe(409);
-    expect(context.repo.snapshot("team").tasks).toEqual(batchBefore.tasks);
-    expect(context.repo.snapshot("team").revision).toBe(batchBefore.revision);
+    expect((await context.repo.snapshot("team")).tasks).toEqual(
+      batchBefore.tasks,
+    );
+    expect((await context.repo.snapshot("team")).revision).toBe(
+      batchBefore.revision,
+    );
     const key = randomUUID(),
       batchInput = { revision: batchBefore.revision, changes };
     const batch = await request(
@@ -175,7 +177,7 @@ it("persists independent schedules, retains old-form omissions and rejects inval
     );
     expect(batch.statusCode, batch.body).toBe(200);
     expect(batch.json<Task[]>()).toHaveLength(2);
-    const confirmed = context.repo.snapshot("team");
+    const confirmed = await context.repo.snapshot("team");
     const replay = await request(
       "POST",
       "/api/tasks/schedule-batch",
@@ -184,7 +186,9 @@ it("persists independent schedules, retains old-form omissions and rejects inval
     );
     expect(replay.statusCode).toBe(200);
     expect(replay.json()).toEqual(batch.json());
-    expect(context.repo.snapshot("team").revision).toBe(confirmed.revision);
+    expect((await context.repo.snapshot("team")).revision).toBe(
+      confirmed.revision,
+    );
     const latest = batch.json<Task[]>()[0]!;
     const staleRead = await request("POST", "/api/tasks/schedule-batch", {
       revision: batchBefore.revision,
@@ -204,7 +208,9 @@ it("persists independent schedules, retains old-form omissions and rejects inval
     });
     expect(noop.statusCode, noop.body).toBe(200);
     expect(noop.json().version).toBe(latest.version);
-    expect(context.repo.snapshot("team").revision).toBe(confirmed.revision);
+    expect((await context.repo.snapshot("team")).revision).toBe(
+      confirmed.revision,
+    );
   } finally {
     await context.app.close();
   }

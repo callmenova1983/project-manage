@@ -165,7 +165,7 @@ export async function parsePdfMaterial(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      void worker.terminate();
+      void worker.terminate().catch(() => {});
       if (error) reject(new HttpError(400, error));
       else resolve(result!);
     };

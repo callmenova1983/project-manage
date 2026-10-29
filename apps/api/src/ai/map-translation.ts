@@ -1,4 +1,4 @@
-import { translationInstruction } from './instructions.js';
+import { translationInstruction } from "./instructions.js";
 import { z } from "zod";
 import {
   hasHan,
@@ -19,8 +19,7 @@ export function makeMapTranslationRequest(texts: string[], config: QwenConfig) {
     messages: [
       {
         role: "system",
-        content:
-          translationInstruction,
+        content: translationInstruction,
       },
       { role: "user", content: JSON.stringify({ texts }) },
     ],

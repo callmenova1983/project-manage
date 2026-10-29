@@ -7,8 +7,8 @@ import type { ActivityPage } from "../../packages/domain/activity-query";
 let ctx: Awaited<ReturnType<typeof buildApp>>, cookie: string, csrf: string;
 const origin = "http://localhost:4173";
 beforeEach(async () => {
-  ctx = await buildApp({ databasePath: ":memory:", origin });
-  ctx.repo.seed("team");
+  ctx = await buildApp({ isolatedDatabase: true, origin });
+  await ctx.repo.seed("team");
   const password = randomBytes(24).toString("hex");
   await createUser(ctx.repo, {
     email: "admin@example.test",
@@ -16,7 +16,7 @@ beforeEach(async () => {
     workspaceId: "team",
     password,
   });
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='admin' WHERE workspace_id=?")
     .run("team");
   const login = await ctx.app.inject({
@@ -48,14 +48,14 @@ function request(
     },
   });
 }
-const save = (timeZone: string, version = 1) =>
-  request("PUT", "/api/admin/workspace-settings", {
+const save = async (timeZone: string, version = 1) =>
+  await request("PUT", "/api/admin/workspace-settings", {
     timeZone,
     version,
     confirmed: true,
   });
 it("defaults to UTC, requires admin and confirmation, version checks and preserves data", async () => {
-  const before = ctx.repo.snapshot("team");
+  const before = await ctx.repo.snapshot("team");
   expect(before.settings).toEqual({ timeZone: "UTC", version: 1 });
   expect(
     (
@@ -77,9 +77,11 @@ it("defaults to UTC, requires admin and confirmation, version checks and preserv
   expect(after.activities).toEqual(before.activities);
   expect(after.revision).toBeGreaterThan(before.revision);
   expect(
-    JSON.stringify(ctx.repo.db.prepare("SELECT * FROM admin_audit").all()),
+    JSON.stringify(
+      await ctx.repo.db.prepare("SELECT * FROM admin_audit").all(),
+    ),
   ).toContain("Asia/Shanghai");
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='member' WHERE workspace_id=?")
     .run("team");
   expect((await save("UTC", 2)).statusCode).toBe(403);
@@ -107,7 +109,9 @@ it("uses Shanghai boundaries consistently across SQL totals, pages and a frozen 
     before: null,
     after: null,
   });
-  times.forEach((at, i) => ctx.repo.audit("team", make(`event-${i}`, at)));
+  times.forEach(
+    async (at, i) => await ctx.repo.audit("team", make(`event-${i}`, at)),
+  );
   const query = {
     weekStart: "2020-10-05",
     search: "boundary fixture",
@@ -138,7 +142,7 @@ it("uses Shanghai boundaries consistently across SQL totals, pages and a frozen 
     start: "2020-10-04T16:00:00.000Z",
     end: "2020-10-11T16:00:00.000Z",
   });
-  ctx.repo.audit("team", make("late", "2020-10-06T00:00:00Z"));
+  await ctx.repo.audit("team", make("late", "2020-10-06T00:00:00Z"));
   const ids = first.events.map((a) => a.id);
   let cursor = first.nextCursor;
   while (cursor) {
@@ -189,7 +193,7 @@ it("includes timezone metadata in workspace exports and preserves the destinatio
     confirmed: true,
   });
   expect(result.statusCode, result.body).toBe(200);
-  expect(ctx.repo.settings("team")).toEqual({
+  expect(await ctx.repo.settings("team")).toEqual({
     timeZone: "Asia/Shanghai",
     version: 2,
   });

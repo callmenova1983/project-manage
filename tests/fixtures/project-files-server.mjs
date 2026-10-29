@@ -1,14 +1,18 @@
-// Isolated in-memory API for browser preview tests. No real workspace is touched.
+import "dotenv/config";
+// Isolated PostgreSQL API for browser preview tests. No real workspace is touched.
 import { buildApp } from "../../apps/api/src/app.ts";
 import { createUser } from "../../apps/api/src/auth.ts";
 import { randomUUID } from "node:crypto";
 const origin = process.env.PM_FILE_TEST_ORIGIN;
 const { app, repo } = await buildApp({
-  databasePath: ":memory:",
+  isolatedDatabase: true,
   origin,
   production: process.env.PM_FILE_PREVIEW_PRODUCTION === "1",
 });
-repo.seed("preview-tests");
+if (!/^pm_test_[a-f0-9]{32}$/.test(repo.db.schema))
+  throw new Error("Refusing test writes outside an isolated PostgreSQL schema");
+
+await repo.seed("preview-tests");
 const password = randomUUID();
 await createUser(repo, {
   workspaceId: "preview-tests",

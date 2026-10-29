@@ -1,6 +1,6 @@
 # Project Manage
 
-Vue 3 + TypeScript 项目协作应用，包含真实 Node/Fastify API、SQLite 数据库与迁移、认证、审计和冲突保护。默认连接后端；浏览器本地演示是可选模式。公开代码中的项目、人物和工作内容全部为合成数据。
+Vue 3 + TypeScript 项目协作应用，包含真实 Node/Fastify API、PostgreSQL 数据库与迁移、认证、审计和冲突保护。默认连接后端；浏览器本地演示是可选模式。公开代码中的项目、人物和工作内容全部为合成数据。
 
 ## 快速启动
 
@@ -8,6 +8,8 @@ Vue 3 + TypeScript 项目协作应用，包含真实 Node/Fastify API、SQLite �
 
 ```bash
 npm ci
+cp .env.example .env
+# 填写 PostgreSQL 连接信息；仅空的开发库执行 setup:local。
 npm run setup:local
 npm run dev:all
 ```
@@ -15,9 +17,9 @@ npm run dev:all
 打开 `http://localhost:4173`。登录账号与随机生成的密码保存在 **`data/local-login.txt`**（权限 0600，已被 Git 忽略）。不会创建默认弱密码。`setup:local` 只初始化空数据库，重复执行不会清空已保存的工作。
 
 - Web：4173；API：127.0.0.1:3001，仅绑定本机。
-- 数据文件：`data/project-manage.sqlite`，重启不会丢失。
+- 数据库：通过 `DB_HOST`、`DB_PORT`、`DB_DATABASE`、`DB_USERNAME`、`DB_PASSWORD` 连接 PostgreSQL；运行时不再使用 SQLite。
 - `APP_ORIGIN` 必须与浏览器来源一致。使用 `terminal.local` 或其他主机名时修改实际启动环境并重启 API（已导出的变量优先于 `.env`）。登录报 `Origin not allowed` 是来源配置问题，发生在密码校验前；[排查与无凭证验证步骤](docs/origin-troubleshooting.md)。
-- 配置见 `.env.example`。不要提交 `.env`、数据库、用户导出或真实业务纪要。
+- 配置见 `.env.example`；本地和服务器各自保存私有配置。迁移旧数据、部署及备份见 [PostgreSQL 说明](docs/postgresql.md)。不要提交 `.env`、数据库、用户导出或真实业务纪要。
 
 **免登录体验：打开同一站点的 `/demo/`**，直接使用 20 个合成项目；项目/任务编辑保存在当前浏览器，不请求 API、不创建后端会话。正式 `/projects` 与 API 继续要求登录。[演示边界、手机拍摄和部署说明](docs/browser-demo.md)。
 
@@ -75,7 +77,7 @@ npm run dev:all
 
 ## 数据库与账号
 
-迁移会在启动时按编号执行，也可显式运行 `npm run db:migrate`。迁移记录保存在 `migrations` 表。本地 006–011 保持原编号，远端历史索引与时区分别迁至 012/013，014 补齐分叉期间的通讯录与排序表；已使用远端旧 006/007 的数据库也兼容升级，既有记录、密码与凭据保持原样。空工作区可运行 `PM_WORKSPACE_ID=demo npm run db:seed` 写入合成数据，已有项目时拒绝覆盖。
+PostgreSQL 结构迁移会在启动时执行，也可显式运行 `npm run db:migrate`。迁移记录保存在所选 schema 的 `migrations` 表。原 SQLite 数据通过一次性迁移工具导入，保留账号、项目任务、完整历史、附件和加密配置；不通过演示数据初始化替代迁移。操作步骤见 [PostgreSQL 说明](docs/postgresql.md)。空工作区可运行 `PM_WORKSPACE_ID=demo npm run db:seed` 写入合成数据，已有项目时拒绝覆盖。
 
 增加一个成员（同一个 `PM_WORKSPACE_ID` 的成员可查看、编辑全部项目）：
 
@@ -91,9 +93,9 @@ unset PM_USER_PASSWORD
 
 已有测试账号需要自行设置新密码时，在自己的私人 Codespace 终端运行 `npm run user:reset-password -- demo@example.test`。按提示两次隐藏输入 14–500 字符的新密码，最后输入 `RESET` 确认提交；旧会话全部失效。此命令不读取旧密码、不接收聊天或命令行密码、不增加公共重置接口。更新部署与手机操作步骤见 [自主改密说明](docs/password-reset.md)。
 
-密码使用随机盐和 scrypt。会话 token 仅保存哈希，HttpOnly / SameSite=Strict Cookie，12 小时到期；生产模式使用 Secure Cookie。写入要求 CSRF token、允许来源、版本号与幂等请求 ID。没有公共注册或匿名写入。SQLite 使用 WAL、外键、预编译语句和事务。幂等结果保留 7 天。
+密码使用随机盐和 scrypt。会话 token 仅保存哈希，HttpOnly / SameSite=Strict Cookie，12 小时到期；生产模式使用 Secure Cookie。写入要求 CSRF token、允许来源、版本号与幂等请求 ID。没有公共注册或匿名写入。PostgreSQL 使用外键、参数化查询和事务。幂等结果保留 7 天。
 
-备份请停止写入后复制数据库，或用 SQLite backup API/工具生成一致快照；不要只复制正在写入的主文件而遗漏 WAL。JSON 导出仅包含最近 500 条活动，不能替代完整数据库备份。
+备份使用 `npm run db:backup -- data/backups/pm-system.dump`，通过 `pg_dump` 生成一致快照，并保留独立凭据加密密钥。归档可读检查不替代独立库恢复演练。JSON 导出不能替代完整数据库备份。
 
 ## 构建与容器
 
@@ -104,17 +106,19 @@ npm start
 
 构建输出 `dist/web` 和 `dist/server`。API 同源提供前端静态资源。若直接打开 `http://localhost:3001`，需先设置 `APP_ORIGIN=http://localhost:3001`。生产设置 `NODE_ENV=production`、明确的 HTTPS `APP_ORIGIN`，在受控反向代理后运行；缺少 HTTPS 配置会拒绝启动。
 
-本地容器（端口只映射到本机，数据用持久卷）：
+容器读取私有配置文件，数据库连接远端 PostgreSQL，凭据密钥使用持久卷（端口只映射到本机）：
 
 ```bash
+# .env 中设置容器访问地址 APP_ORIGIN=http://localhost:3001。
+# 已导入业务数据时不要执行 seed。
 docker compose build
-docker compose run --rm app node dist/server/apps/api/src/cli.js seed
+docker compose run --rm app node dist/server/apps/api/src/cli.js migrate
 # 设置上面的 PM_USER_EMAIL / PM_USER_NAME / PM_USER_PASSWORD 后：
 docker compose run --rm -e PM_USER_EMAIL -e PM_USER_NAME -e PM_USER_PASSWORD app node dist/server/apps/api/src/cli.js user
 docker compose up -d
 ```
 
-打开 `http://localhost:3001`。容器默认没有账号。`compose.yaml` 明确使用本机 HTTP 模式；不要把此本机演示配置直接暴露到公网。生产 HTTPS、证书、备份、监控、运维账号与容量验证由部署环境配置。
+打开 `http://localhost:3001`。全新数据库默认没有账号；导入数据库使用原账号。服务器通过 `PM_ENV_FILE=/etc/pm-system/production.env docker compose up -d --build` 注入独立配置，文件内设置 `NODE_ENV=production` 与 HTTPS `APP_ORIGIN`。生产 HTTPS、证书、备份、监控、运维账号与容量验证由部署环境配置。
 
 ## 移动端测试
 
@@ -132,7 +136,7 @@ npm run test:e2e
 npm run test:runtime  # 构建产物、真实浏览器与进程重启验证
 ```
 
-E2E 使用独立的 `data/e2e.sqlite`、运行时随机测试凭证和真实 Web/API。每次执行只重建测试数据库，不改本地工作数据库。默认支持系统 `/usr/bin/chromium`，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定其他 Chromium。运行时需要空闲 3001、4173 端口。报告在 `playwright-report/`，截图在 `artifacts/`。2026-10-12—2027-01-11 三个月体验改进计划见 [improvement-plan.md](docs/improvement-plan.md)，首批恢复改进见 [m1-recovery.md](docs/m1-recovery.md)。具体实际执行结果及视觉阻碍见 `docs/verification.md` 和 `design-qa.md`。
+E2E 使用 PostgreSQL 隔离测试 schema、运行时随机测试凭证和真实 Web/API。每次执行仅创建和清理自己的测试 schema，不清空业务 schema。默认支持系统 `/usr/bin/chromium`，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定其他 Chromium。运行时需要空闲 3001、4173 端口。报告在 `playwright-report/`，截图在 `artifacts/`。2026-10-12—2027-01-11 三个月体验改进计划见 [improvement-plan.md](docs/improvement-plan.md)，首批恢复改进见 [m1-recovery.md](docs/m1-recovery.md)。具体实际执行结果及视觉阻碍见 `docs/verification.md` 和 `design-qa.md`。
 
 ## 架构
 
@@ -140,12 +144,12 @@ E2E 使用独立的 `data/e2e.sqlite`、运行时随机测试凭证和真实 Web
 - `stores/workspace.ts`：Pinia 单一快照与写入状态；20 秒后台刷新。
 - `services/contracts.ts`：明确的 `WorkspaceApi` 契约；`api.ts` HTTP 实现；`local.ts` 浏览器演示实现。
 - `packages/domain`：共享 Zod 运行时校验、类型、统计、合成数据及确定性规则解析。
-- `apps/api/src`：Fastify 路由、认证、数据库仓储；SQL 迁移见 `apps/api/migrations`。
+- `apps/api/src`：Fastify 路由、认证、数据库仓储；SQL 迁移见 `apps/api/migrations-postgres`。
 - `tests`：领域单元测试、API 集成测试、Chromium E2E；GitHub Actions 提供同样检查，具体提交结果见 draft PR Checks。
 
 ## 交付边界
 
-这是已实现并经过本地测试的完整前后端项目，**不等于已部署或已完成生产验收**。尚未实现 SSO/MFA、账号自助恢复、WebSocket 实时推送、多副本分布式会话/限流、自定义字段/流程配置、跨时区偏好和规模压测。Qwen 适配已实现但未完成真实账户连通与付费调用验收。认证账号可由 CLI 配置；多人共享和隔离通过集成测试覆盖，真实多人员/网络部署尚未验收。当前 SQLite 同步查询适合此规模的单实例部署，扩容应测量后替换仓储实现。
+这是已实现并经过本地测试的完整前后端项目，**不等于已部署或已完成生产验收**。尚未实现 SSO/MFA、账号自助恢复、WebSocket 实时推送、多副本分布式会话/限流、自定义字段/流程配置、跨时区偏好和规模压测。Qwen 适配已实现但未完成真实账户连通与付费调用验收。认证账号可由 CLI 配置；多人共享和隔离通过集成测试覆盖，真实多人员/网络部署尚未验收。当前运行时统一使用 PostgreSQL；多实例调度与规模容量仍需单独验收。
 
 没有自动部署、合并或上传真实业务数据。视觉参考文件交付状态与精度边界见 `design-qa.md`。仓库暂无开源许可证；公开可见不等于授予开源授权。
 
@@ -153,7 +157,7 @@ E2E 使用独立的 `data/e2e.sqlite`、运行时随机测试凭证和真实 Web
 
 服务端已提供 Qwen 建议生成适配，默认 `qwen3.8-max`，管理员可通过选择器切换或填写 Qwen 模型 ID。保留输入输出校验、持久化请求额度和人工确认流程；保存或切换设置不会调用模型。本次功能验证使用模拟响应，不代表真实付费调用验收。浏览器 local demo 不会启用它。供应商/区域端点核对、安全 secret handoff、额度设置及启用步骤见 [Qwen 接入说明](docs/qwen-integration.md)。
 
-升级录入、渐进草稿与管理后台时，请使用 [迁移、私有备份和回滚步骤](docs/upgrade-intake-admin.md)。部署不包含首次管理员授权，也不启用真实模型。
+当前数据库部署、迁移与恢复请使用 [PostgreSQL 说明](docs/postgresql.md)。[旧版升级记录](docs/upgrade-intake-admin.md) 中 SQLite 备份步骤只适用于旧版本。部署不包含首次管理员授权，也不启用真实模型。
 
 ## 甘特入口与排期数据兼容
 

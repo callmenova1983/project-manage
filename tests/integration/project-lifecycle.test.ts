@@ -12,8 +12,8 @@ import {
 let context: Awaited<ReturnType<typeof buildApp>>, cookie: string, csrf: string;
 const origin = "http://localhost:4173";
 beforeEach(async () => {
-  context = await buildApp({ databasePath: ":memory:", origin });
-  context.repo.seed("lifecycle");
+  context = await buildApp({ isolatedDatabase: true, origin });
+  await context.repo.seed("lifecycle");
   const password = randomBytes(24).toString("hex");
   await createUser(context.repo, {
     workspaceId: "lifecycle",
@@ -307,13 +307,13 @@ it("preserves archived projects and their tasks through a complete export and re
 });
 
 it("cannot change a project belonging to another workspace", async () => {
-  context.repo.seed("other");
+  await context.repo.seed("other");
   const project = {
-    ...context.repo.snapshot("other").projects[0]!,
+    ...(await context.repo.snapshot("other")).projects[0]!,
     id: randomUUID(),
   };
-  context.repo.putProject("other", project);
-  const checkpoint = context.repo.snapshot("other");
+  await context.repo.putProject("other", project);
+  const checkpoint = await context.repo.snapshot("other");
   expect(
     (
       await request("POST", `/api/projects/${project.id}/lifecycle`, {
@@ -323,5 +323,5 @@ it("cannot change a project belonging to another workspace", async () => {
       })
     ).statusCode,
   ).toBe(404);
-  expect(context.repo.snapshot("other")).toEqual(checkpoint);
+  expect(await context.repo.snapshot("other")).toEqual(checkpoint);
 });

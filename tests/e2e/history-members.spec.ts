@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { readDatabaseConfig } from "../../apps/api/src/database-config.js";
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { randomUUID } from "node:crypto";
@@ -19,13 +21,16 @@ for (const width of [1536, 390]) {
       if (m.type() === "error") errors.push(m.text());
     });
     const { actor } = await scenarioLogin(page, "data/e2e-login.json");
-    const repo = new Repository("data/e2e.sqlite"),
+    const repo = await Repository.open({
+        ...readDatabaseConfig(),
+        schema: JSON.parse(readFileSync("data/e2e-login.json", "utf8")).schema,
+      }),
       prefix = `history-${randomUUID()}`;
-    const base = repo.snapshot(actor.workspaceId).projects[0]!;
+    const base = (await repo.snapshot(actor.workspaceId)).projects[0]!;
     try {
-      repo.transaction(() => {
+      await repo.transaction(async () => {
         for (let i = 0; i < 620; i++)
-          repo.audit(actor.workspaceId, {
+          await repo.audit(actor.workspaceId, {
             id: `${prefix}-${String(i).padStart(4, "0")}`,
             projectId: base.id,
             entityId: base.id,
@@ -42,7 +47,7 @@ for (const width of [1536, 390]) {
             },
           });
         for (let i = 0; i < 520; i++)
-          repo.audit(actor.workspaceId, {
+          await repo.audit(actor.workspaceId, {
             id: `${prefix}-later-${i}`,
             projectId: base.id,
             entityId: base.id,
@@ -122,7 +127,7 @@ for (const width of [1536, 390]) {
       ).toBeVisible();
       expect(errors).toEqual([]);
     } finally {
-      repo.db
+      await repo.db
         .prepare("DELETE FROM activities WHERE workspace_id=? AND id LIKE ?")
         .run(actor.workspaceId, prefix + "%");
       repo.close();
@@ -247,7 +252,7 @@ for (const width of [1536, 390]) {
     await page
       .getByLabel("Owner member", { exact: true })
       .selectOption("__unassigned");
-    page.once("dialog", (dialog) => dialog.accept());
+    page.once("dialog", async (dialog) => await dialog.accept());
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await page
       .getByRole("button", { name: "Edit project", exact: true })

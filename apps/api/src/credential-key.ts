@@ -4,16 +4,16 @@ import { resolve } from "node:path";
 import type { Repository } from "./database.js";
 
 /** Keep the existing private key and backup location shared by workspace credentials. */
-export function workspaceCredentialKey(
+export async function workspaceCredentialKey(
   repo: Repository,
-  databasePath: string,
+  credentialKeyPath: string,
   memoryKey: Buffer,
-): Buffer {
-  if (databasePath === ":memory:") return memoryKey;
-  const path = resolve(databasePath) + ".credentials-key";
+): Promise<Buffer> {
+  if (credentialKeyPath === ":memory:") return memoryKey;
+  const path = resolve(credentialKeyPath);
   if (!existsSync(path)) {
     if (
-      repo.db
+      await repo.db
         .prepare(
           "SELECT 1 FROM workspace_ai_credentials UNION ALL SELECT 1 FROM workspace_wecom_credentials UNION ALL SELECT 1 FROM notification_wecom_config UNION ALL SELECT 1 FROM wecom_login_config LIMIT 1",
         )

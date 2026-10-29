@@ -4,9 +4,9 @@ import { buildApp } from "../../apps/api/src/app";
 import { createUser } from "../../apps/api/src/auth";
 it("applies existing-task bulk changes atomically, isolates foreign IDs and replays one audit batch", async () => {
   const origin = "http://localhost:4173",
-    context = await buildApp({ databasePath: ":memory:", origin });
+    context = await buildApp({ isolatedDatabase: true, origin });
   try {
-    context.repo.seed("team");
+    await context.repo.seed("team");
     await createUser(context.repo, {
       name: "Bulk member",
       email: "bulk@example.test",
@@ -34,7 +34,7 @@ it("applies existing-task bulk changes atomically, isolates foreign IDs and repl
         headers: { ...headers, "idempotency-key": key },
         payload: payload as Record<string, unknown>,
       });
-    const initial = context.repo.snapshot("team");
+    const initial = await context.repo.snapshot("team");
     const leaves = initial.tasks
       .filter(
         (task) => !initial.tasks.some((child) => child.parentId === task.id),
@@ -68,9 +68,9 @@ it("applies existing-task bulk changes atomically, isolates foreign IDs and repl
         currentVersion: targets[1]!.version,
       },
     ]);
-    expect(context.repo.snapshot("team")).toEqual(initial);
-    context.repo.seed("other");
-    context.repo.putTask("other", {
+    expect(await context.repo.snapshot("team")).toEqual(initial);
+    await context.repo.seed("other");
+    await context.repo.putTask("other", {
       ...leaves[0]!,
       id: "foreign-only",
       title: "Secret foreign task",
@@ -88,18 +88,18 @@ it("applies existing-task bulk changes atomically, isolates foreign IDs and repl
       },
     ]);
     expect(foreign.body).not.toContain("Secret foreign task");
-    expect(context.repo.snapshot("team")).toEqual(initial);
+    expect(await context.repo.snapshot("team")).toEqual(initial);
     const key = randomUUID(),
       updated = await request(payload, key);
     expect(updated.statusCode, updated.body).toBe(200);
-    const after = context.repo.snapshot("team");
+    const after = await context.repo.snapshot("team");
     const audits = after.activities.filter(
       (event) => event.action === "Bulk updated task",
     );
     expect(audits).toHaveLength(2);
     expect(new Set(audits.map((event) => event.source)).size).toBe(1);
     expect((await request(payload, key)).json()).toEqual(updated.json());
-    expect(context.repo.snapshot("team")).toEqual(after);
+    expect(await context.repo.snapshot("team")).toEqual(after);
     const noop = await request({
       targets: updated.json().map((task: { id: string; version: number }) => ({
         id: task.id,
@@ -108,7 +108,7 @@ it("applies existing-task bulk changes atomically, isolates foreign IDs and repl
       change: payload.change,
     });
     expect(noop.statusCode).toBe(200);
-    expect(context.repo.snapshot("team")).toEqual(after);
+    expect(await context.repo.snapshot("team")).toEqual(after);
     const currentTargets = noop
       .json()
       .map((task: { id: string; version: number }) => ({
@@ -135,12 +135,10 @@ it("applies existing-task bulk changes atomically, isolates foreign IDs and repl
         ),
     ).toBe(true);
     const cleared = await request({
-      targets: assigned
-        .json()
-        .map((task: { id: string; version: number }) => ({
-          id: task.id,
-          version: task.version,
-        })),
+      targets: assigned.json().map((task: { id: string; version: number }) => ({
+        id: task.id,
+        version: task.version,
+      })),
       change: { field: "assignee", value: { assigneeId: null, assignee: "" } },
     });
     expect(cleared.statusCode, cleared.body).toBe(200);

@@ -44,7 +44,7 @@ for (const width of [1536, 390])
     );
     expect(stored).not.toContain("Spreadsheet portal");
     expect(stored).not.toContain("Review import");
-    page.once("dialog", (d) => d.accept());
+    page.once("dialog", async (d) => (await d.accept()));
     await page.reload();
     await page
       .getByRole("button", {
@@ -213,7 +213,7 @@ test("saved mappings remain private across account switching in the same browser
   await page
     .getByRole("button", { name: "Toggle sidebar", exact: true })
     .click();
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await scenarioLogin(page, admin);
   await page.goto("/intake");
@@ -226,7 +226,7 @@ test("saved mappings remain private across account switching in the same browser
   await page
     .getByRole("button", { name: "Toggle sidebar", exact: true })
     .click();
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await scenarioLogin(page, member);
   await page.goto("/intake");

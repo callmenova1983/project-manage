@@ -131,8 +131,8 @@ async function pasteFiles(
 }
 
 async function stubScreenshot(page: Page) {
-  await page.route("**/api/capture/materials", (route) =>
-    route.fulfill({
+  await page.route("**/api/capture/materials", async (route) =>
+    (await route.fulfill({
       json: {
         id: screenshotMaterialId,
         name: "截图.png",
@@ -142,15 +142,15 @@ async function stubScreenshot(page: Page) {
         imageCount: 1,
         warnings: [],
       },
-    }),
+    })),
   );
   await page.route(
     `**/api/capture/materials/${screenshotMaterialId}/images/0`,
-    (route) =>
-      route.fulfill({
+    async (route) =>
+      (await route.fulfill({
         contentType: "image/png",
         body: Buffer.from(screenshotImage, "base64"),
-      }),
+      })),
   );
 }
 
@@ -162,12 +162,12 @@ async function pauseProposalSubmission(page: Page) {
   }[] = [];
   // Keep the composer and attachments intact so retries exercise source reuse.
   // No proposal or project is written, even to the isolated fixture workspace.
-  await page.route("**/api/assistant/interpret", (route) => {
+  await page.route("**/api/assistant/interpret", async (route) => {
     submissions.push(route.request().postDataJSON());
-    return route.fulfill({
+    return (await route.fulfill({
       status: 503,
       json: { message: "测试暂停保存，请重试。" },
-    });
+    }));
   });
   return submissions;
 }
@@ -199,13 +199,13 @@ test("stores XLS, XLSX and PDF as reference files without extracting their conte
       bytes: await readFile(fixture("report.pdf")),
     },
   ];
-  const responses = attachments.map(({ name }) =>
-    page.waitForResponse(
+  const responses = attachments.map(async ({ name }) =>
+    (await page.waitForResponse(
       (response) =>
         response.url().endsWith("/api/capture/materials") &&
         response.request().method() === "POST" &&
         response.request().postDataJSON().name === name,
-    ),
+    )),
   );
   const dialog = page.locator("#global-ai-assistant");
   const input = dialog.getByRole("textbox", { name: "录入内容", exact: true });
@@ -264,13 +264,13 @@ test("accepts a Chinese PDF through the attachment file chooser", async ({
   page,
 }, testInfo) => {
   const dialog = page.locator("#global-ai-assistant");
-  const chooser = page.waitForEvent("filechooser");
+  const chooser = (await page.waitForEvent("filechooser"));
   await dialog.getByRole("button", { name: "添加附件", exact: true }).click();
-  const response = page.waitForResponse(
+  const response = (await page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/capture/materials") &&
       response.request().method() === "POST",
-  );
+  ));
   await (await chooser).setFiles(fixture("report-cjk.pdf"));
   const uploaded = await response;
   expect(uploaded.status()).toBe(200);
@@ -300,23 +300,23 @@ test("archives a document by filename without generating proposals or reading it
   const document = unzipSync(await readFile(fixture("contract.docx")));
   document["word/media/logo.png"] = Buffer.from(screenshotImage, "base64");
   let analysisAttempts = 0;
-  await page.route("**/api/capture/analyze", (route) => {
+  await page.route("**/api/capture/analyze", async (route) => {
     analysisAttempts++;
-    return route.fulfill({
+    return (await route.fulfill({
       status: 500,
       json: { message: "仅文字模式不应调用图片识别。" },
-    });
+    }));
   });
   const submissions = await pauseProposalSubmission(page);
   const dialog = page.locator("#global-ai-assistant");
   const input = dialog.getByRole("textbox", { name: "录入内容", exact: true });
   const typedText = "请整理附件中的合同约定。";
   await input.fill(typedText);
-  const response = page.waitForResponse(
+  const response = (await page.waitForResponse(
     (result) =>
       result.url().endsWith("/api/capture/materials") &&
       result.request().method() === "POST",
-  );
+  ));
   await pasteFiles(input, [
     {
       name: "contract-with-logo.docx",
@@ -354,12 +354,12 @@ test("pasted screenshots default to recognition without retaining originals, but
 }) => {
   await stubScreenshot(page);
   let analysisAttempts = 0;
-  await page.route("**/api/capture/analyze", (route) => {
+  await page.route("**/api/capture/analyze", async (route) => {
     analysisAttempts++;
-    return route.fulfill({
+    return (await route.fulfill({
       status: 500,
       json: { message: "仅文字模式不应调用图片识别。" },
-    });
+    }));
   });
   const submissions = await pauseProposalSubmission(page);
   const dialog = page.locator("#global-ai-assistant");
@@ -397,10 +397,10 @@ test("reuses an unchanged OCR result and analyzes again only after changing dept
   const analyses: (CaptureSource & {
     externalProcessingConfirmed: boolean;
   })[] = [];
-  await page.route("**/api/capture/analyze", (route) => {
+  await page.route("**/api/capture/analyze", async (route) => {
     const source = route.request().postDataJSON();
     analyses.push(source);
-    return route.fulfill({
+    return (await route.fulfill({
       json: {
         text:
           source.recognitionDepth === "deep"
@@ -409,7 +409,7 @@ test("reuses an unchanged OCR result and analyzes again only after changing dept
         uncertainties: [],
         model: "isolated-test-model",
       },
-    });
+    }));
   });
   const submissions = await pauseProposalSubmission(page);
   const dialog = page.locator("#global-ai-assistant");
@@ -465,15 +465,15 @@ test("shows one localized budget failure and retains the input and image for ret
 }) => {
   await stubScreenshot(page);
   let attempts = 0;
-  await page.route("**/api/capture/analyze", (route) => {
+  await page.route("**/api/capture/analyze", async (route) => {
     attempts++;
-    return route.fulfill({
+    return (await route.fulfill({
       status: 429,
       json: {
         code: "AI_BUDGET_EXPIRED",
         message: "The approved AI attempt budget is exhausted or expired.",
       },
-    });
+    }));
   });
   const dialog = page.locator("#global-ai-assistant");
   const input = dialog.getByRole("textbox", { name: "录入内容", exact: true });
@@ -508,12 +508,12 @@ for (const recover of [false, true])
     page,
   }) => {
     const pane = page.locator("#global-ai-assistant");
-    const taskCount = () =>
-      page.evaluate(async () => {
+    const taskCount = async () =>
+      (await page.evaluate(async () => {
         const response = await fetch("/api/workspace");
         if (!response.ok) throw new Error("Cannot read isolated workspace");
         return (await response.json()).tasks.length as number;
-      });
+      }));
     const beforeTasks = await taskCount();
     const input = pane.getByRole("textbox", { name: "录入内容", exact: true });
     let archiveRequests = 0;

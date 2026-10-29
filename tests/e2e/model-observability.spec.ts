@@ -68,11 +68,11 @@ for (const language of ["en", "zh-CN"])
           expiresAt: null,
         };
         // Synthetic response fixtures exercise rendering only; real HTTP statistics have integration coverage.
-        await page.route("**/api/admin/model", (route) =>
-          route.fulfill({ json: state }),
+        await page.route("**/api/admin/model", async (route) =>
+          (await route.fulfill({ json: state })),
         );
-        await page.route("**/api/admin/model/logs", (route) =>
-          route.fulfill({
+        await page.route("**/api/admin/model/logs", async (route) =>
+          (await route.fulfill({
             json: [
               {
                 id: "synthetic-failed",
@@ -120,7 +120,7 @@ for (const language of ["en", "zh-CN"])
                 attempts: 0,
               },
             ],
-          }),
+          })),
         );
         await page.goto("/admin");
         await page
@@ -213,7 +213,7 @@ for (const language of ["en", "zh-CN"])
           await table.focus();
           for (let i = 0; i < 24; i++) await page.keyboard.press("ArrowRight");
           await expect
-            .poll(() => table.evaluate((element) => element.scrollLeft))
+            .poll(async () => (await table.evaluate((element) => element.scrollLeft)))
             .toBeGreaterThan(0);
           await page.screenshot({
             path: `artifacts/model-reporting/${language}-${theme}-${width}-scrolled.png`,

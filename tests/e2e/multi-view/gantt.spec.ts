@@ -7,7 +7,7 @@ import {
   origin,
 } from "./support";
 
-test.beforeEach(async ({ page }) => resetWorkspace(page));
+test.beforeEach(async ({ page }) => (await resetWorkspace(page)));
 async function open(page: Page) {
   await page.goto(
     "/projects/project-1?scope=all&view=gantt&ganttDate=2026-10-17&ganttScale=day",
@@ -60,7 +60,7 @@ test("gantt cancellation and Escape do not write or leave ghost bars", async ({
   await expect(dialog.getByLabel("Schedule end", { exact: true })).toHaveValue(
     "2026-10-22",
   );
-  page.once("dialog", (confirmation) => confirmation.accept());
+  page.once("dialog", async (confirmation) => (await confirmation.accept()));
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.locator(".drag-preview")).toHaveCount(0);
@@ -163,11 +163,11 @@ test("schedule conflict preserves the proposed dates until explicit latest-versi
       },
     });
     expect(competitor.status()).toBe(200);
-    const conflict = page.waitForResponse(
+    const conflict = (await page.waitForResponse(
       (response) =>
         response.request().method() === "PATCH" &&
         response.url().endsWith("/api/tasks/task-3/schedule"),
-    );
+    ));
     await dialog.getByRole("button", { name: "Save", exact: true }).click();
     expect((await conflict).status()).toBe(409);
     await expect(
@@ -180,7 +180,7 @@ test("schedule conflict preserves the proposed dates until explicit latest-versi
       (await snapshot(page)).tasks.find((task) => task.id === original.id)!
         .scheduleStart,
     ).toBe("2026-10-18");
-    page.once("dialog", (confirmation) => confirmation.accept());
+    page.once("dialog", async (confirmation) => (await confirmation.accept()));
     await dialog
       .getByRole("button", { name: "Load latest version", exact: true })
       .click();

@@ -113,13 +113,13 @@ test("project edits, cancellation, unsaved navigation and reload persistence", a
     page.getByLabel("Latest reported update", { exact: true }),
   ).toHaveValue("A reviewed and saved delivery update.");
   await page.getByLabel("Project name", { exact: true }).fill("Unsaved title");
-  page.once("dialog", (d) => d.dismiss());
+  page.once("dialog", async (d) => (await d.dismiss()));
   await page
     .getByRole("link", { name: "Activity", exact: true })
     .first()
     .click();
   await expect(page).toHaveURL(/\/projects$/);
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(
     page.getByRole("link", { name: "Atlas Customer Portal", exact: true }),
@@ -200,7 +200,7 @@ test("today/week scopes and task editing cancellation", async ({ page }) => {
     .getByRole("button", { name: "Edit Confirm project scope", exact: true })
     .click();
   await page.getByLabel("Task title", { exact: true }).fill("Cancel this edit");
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Confirm project scope", exact: true }),
@@ -285,7 +285,7 @@ test("export and import preview, cancellation and invalid files", async ({
   await page
     .getByRole("link", { name: "Workspace settings", exact: true })
     .click();
-  const downloadPromise = page.waitForEvent("download");
+  const downloadPromise = (await page.waitForEvent("download"));
   await page.getByRole("button", { name: "Export JSON", exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/project-manage.*\.json/);
@@ -359,9 +359,9 @@ test("network failure preserves drafts and retry reuses its request identifier",
     .getByLabel("Project name", { exact: true })
     .fill("Saved after connection returns");
   let firstKey = "";
-  await page.route("**/api/projects/project-1", (route) => {
+  await page.route("**/api/projects/project-1", async (route) => {
     firstKey = route.request().headers()["idempotency-key"] ?? "";
-    return route.abort("failed");
+    return (await route.abort("failed"));
   });
   await page.getByRole("button", { name: "Save project", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText(
@@ -371,9 +371,9 @@ test("network failure preserves drafts and retry reuses its request identifier",
     "Saved after connection returns",
   );
   await page.unroute("**/api/projects/project-1");
-  const request = page.waitForRequest(
+  const request = (await page.waitForRequest(
     (r) => r.url().endsWith("/api/projects/project-1") && r.method() === "PUT",
-  );
+  ));
   await page.getByRole("button", { name: "Save project", exact: true }).click();
   expect((await request).headers()["idempotency-key"]).toBe(firstKey);
   await expect(
@@ -494,7 +494,7 @@ test("inline notes preserve text, cancellation and reviewed dates", async ({
   });
   const original = await notes.inputValue();
   await notes.fill("Unsaved notes");
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Cancel notes", exact: true }).click();
   await page.getByRole("button", { name: "Edit notes", exact: true }).click();
   await expect(notes).toHaveValue(original);
@@ -613,7 +613,7 @@ test("tablet widths contain the table and keep keyboard scrolling available", as
   }
 });
 test("login, invalid credentials and sign out", async ({ page }) => {
-  page.once("dialog", (d) => d.accept());
+  page.once("dialog", async (d) => (await d.accept()));
   await page.getByRole("button", { name: "Toggle sidebar" }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(

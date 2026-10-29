@@ -1,8 +1,9 @@
+import "dotenv/config";
 import { buildApp } from "../../apps/api/src/app.ts";
 import { createUser } from "../../apps/api/src/auth.ts";
 const origin = "http://127.0.0.1:4187";
 const { app, repo } = await buildApp({
-  databasePath: ":memory:",
+  isolatedDatabase: true,
   origin,
   wecomFetch: async (url) =>
     new Response(
@@ -17,14 +18,17 @@ const { app, repo } = await buildApp({
       ),
     ),
 });
-repo.seed("wecom-test");
+if (!/^pm_test_[a-f0-9]{32}$/.test(repo.db.schema))
+  throw new Error("Refusing test writes outside an isolated PostgreSQL schema");
+
+await repo.seed("wecom-test");
 await createUser(repo, {
   workspaceId: "wecom-test",
   email: "wecom-admin@example.test",
   name: "企微测试管理员",
   password: "wecom-test-password-only",
 });
-repo.db
+await repo.db
   .prepare(
     "UPDATE users SET role='admin' WHERE email='wecom-admin@example.test'",
   )
@@ -35,10 +39,10 @@ await createUser(repo, {
   name: "企微测试成员",
   password: "wecom-test-password-only",
 });
-const user = repo.db
+const user = await repo.db
   .prepare("SELECT id FROM users WHERE email='wecom-member@example.test'")
   .get();
-const directory = repo.directory("wecom-test");
+const directory = await repo.directory("wecom-test");
 directory.employees.push({
   id: "employee-1",
   employeeNo: "",
@@ -52,8 +56,8 @@ directory.employees.push({
   active: true,
   source: "wecom",
 });
-repo.db
-  .prepare("INSERT INTO workspace_directory VALUES(?,?)")
+await repo.db
+  .prepare("INSERT INTO workspace_directory(workspace_id,data) VALUES(?,?)")
   .run("wecom-test", JSON.stringify(directory));
 await app.listen({ port: 4187, host: "127.0.0.1" });
 process.on("SIGTERM", () => void app.close().then(() => process.exit(0)));

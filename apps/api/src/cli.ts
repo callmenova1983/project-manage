@@ -2,14 +2,12 @@ import "dotenv/config";
 import { Repository } from "./database.js";
 import { createUser } from "./auth.js";
 import { z } from "zod";
-const repo = new Repository(
-  process.env.DATABASE_PATH ?? "./data/project-manage.sqlite",
-);
+const repo = await Repository.open();
 try {
   const command = process.argv[2];
   if (command === "migrate") console.log("Database migrations applied");
   else if (command === "seed") {
-    repo.seed(process.env.PM_WORKSPACE_ID ?? "demo");
+    await repo.seed(process.env.PM_WORKSPACE_ID ?? "demo");
     console.log("Synthetic seed created");
   } else if (command === "user") {
     const input = z
@@ -29,5 +27,5 @@ try {
     console.log("User created");
   } else throw new Error("Use migrate, seed, or user");
 } finally {
-  repo.close();
+  await repo.close();
 }

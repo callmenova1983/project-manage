@@ -121,7 +121,7 @@ for (const width of [375, 390]) {
       });
       const original = await notes.inputValue();
       await notes.fill("Temporary note");
-      page.once("dialog", (d) => d.accept());
+      page.once("dialog", async (d) => (await d.accept()));
       await page
         .getByRole("button", { name: "Cancel notes", exact: true })
         .tap();
@@ -182,7 +182,7 @@ for (const width of [375, 390]) {
       await page
         .getByLabel("Task title", { exact: true })
         .fill("Cancelled title");
-      page.once("dialog", (d) => d.accept());
+      page.once("dialog", async (d) => (await d.accept()));
       await page.getByRole("button", { name: "Cancel", exact: true }).tap();
       await expect(
         page.getByRole("button", {

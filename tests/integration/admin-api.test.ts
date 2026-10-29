@@ -41,8 +41,8 @@ const request = (
     headers: { origin, cookie, "x-csrf-token": csrf, "idempotency-key": key },
   });
 beforeEach(async () => {
-  context = await buildApp({ databasePath: ":memory:", origin });
-  context.repo.seed("team");
+  context = await buildApp({ isolatedDatabase: true, origin });
+  await context.repo.seed("team");
   password = randomBytes(24).toString("hex");
   for (const [email, name, ws] of [
     ["admin@example.test", "Admin", "team"],
@@ -55,7 +55,7 @@ beforeEach(async () => {
       workspaceId: ws!,
       password,
     });
-  context.repo.db
+  await context.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email='admin@example.test'")
     .run();
   ({ cookie, csrf } = await login());
@@ -64,24 +64,42 @@ afterEach(() => context.app.close());
 describe("workspace administration", () => {
   it("distinguishes fully metered multi-call requests from partial and legacy retry logs", async () => {
     const makeLog = (): ModelLog => ({
-      id: randomUUID(), createdAt: new Date().toISOString(), actor: "test",
-      provider: "qwen", model: "test", mode: "real", status: "succeeded",
-      durationMs: 1, inputTokens: null, outputTokens: null, cost: null,
-      errorCode: null, attempts: 1,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+      actor: "test",
+      provider: "qwen",
+      model: "test",
+      mode: "real",
+      status: "succeeded",
+      durationMs: 1,
+      inputTokens: null,
+      outputTokens: null,
+      cost: null,
+      errorCode: null,
+      attempts: 1,
     });
     const complete = makeLog();
     recordModelCallUsage(complete, { inputTokens: 10, outputTokens: 3 });
     complete.attempts = 2;
     recordModelCallUsage(complete, { inputTokens: 5, outputTokens: 2 });
-    writeModelLog(context.repo, "team", complete);
+    await writeModelLog(context.repo, "team", complete);
     const partial = makeLog();
     partial.attempts = 2;
     recordModelCallUsage(partial, { inputTokens: 3, outputTokens: 1 });
-    writeModelLog(context.repo, "team", partial);
-    writeModelLog(context.repo, "team", { ...makeLog(), attempts: 2, inputTokens: 2, outputTokens: 1 });
+    await writeModelLog(context.repo, "team", partial);
+    await writeModelLog(context.repo, "team", {
+      ...makeLog(),
+      attempts: 2,
+      inputTokens: 2,
+      outputTokens: 1,
+    });
     expect((await request("GET", "/api/ai/usage")).json()).toMatchObject({
-      inputTokens: 20, outputTokens: 7, totalTokens: 27,
-      measuredRequests: 1, unmeasuredRequests: 2, pendingRequests: 0,
+      inputTokens: 20,
+      outputTokens: 7,
+      totalTokens: 27,
+      measuredRequests: 1,
+      unmeasuredRequests: 2,
+      pendingRequests: 0,
     });
   });
   it("shows workspace token totals beyond 100 logs without exposing logs or estimating missing usage", async () => {
@@ -101,9 +119,10 @@ describe("workspace administration", () => {
       attempts: 1,
       ...patch,
     });
-    for (let i = 0; i < 101; i++) writeModelLog(context.repo, "team", log());
-    writeModelLog(context.repo, "team", log({ attempts: 2 }));
-    writeModelLog(
+    for (let i = 0; i < 101; i++)
+      await writeModelLog(context.repo, "team", log());
+    await writeModelLog(context.repo, "team", log({ attempts: 2 }));
+    await writeModelLog(
       context.repo,
       "team",
       log({
@@ -113,17 +132,17 @@ describe("workspace administration", () => {
         createdAt: "2026-10-17T02:00:00.000Z",
       }),
     );
-    writeModelLog(
+    await writeModelLog(
       context.repo,
       "team",
       log({ status: "started", inputTokens: null, outputTokens: null }),
     );
-    writeModelLog(
+    await writeModelLog(
       context.repo,
       "team",
       log({ mode: "simulated", inputTokens: 99999 }),
     );
-    writeModelLog(context.repo, "other", log({ inputTokens: 99999 }));
+    await writeModelLog(context.repo, "other", log({ inputTokens: 99999 }));
     ({ cookie, csrf } = await login("member@example.test"));
     const result = await request("GET", "/api/ai/usage");
     expect(result.statusCode).toBe(200);
@@ -154,13 +173,13 @@ describe("workspace administration", () => {
         .statusCode,
     ).toBe(401);
     expect(
-      context.repo.db
+      (await context.repo.db
         .prepare("SELECT count(*) AS total FROM ai_attempts")
-        .get()!.total,
+        .get())!.total,
     ).toBe(0);
   });
   it("round-trips version 3 schedules and dependencies and rejects invalid imports atomically", async () => {
-    const initial = context.repo.snapshot("team");
+    const initial = await context.repo.snapshot("team");
     const leaves = initial.tasks.filter(
       (task) => !initial.tasks.some((child) => child.parentId === task.id),
     );
@@ -186,12 +205,12 @@ describe("workspace administration", () => {
     malformed.tasks.find(
       (item: { id: string }) => item.id === task.id,
     ).dependencies = [{ taskId: "missing-task", type: "finish_to_start" }];
-    const before = context.repo.snapshot("team");
+    const before = await context.repo.snapshot("team");
     expect(
       (await request("POST", "/api/import", { ...malformed, confirmed: true }))
         .statusCode,
     ).toBe(400);
-    expect(context.repo.snapshot("team")).toEqual(before);
+    expect(await context.repo.snapshot("team")).toEqual(before);
     const missingCatalog = structuredClone(exported);
     delete missingCatalog.catalogs;
     expect(
@@ -208,10 +227,12 @@ describe("workspace administration", () => {
     });
     expect(imported.statusCode, imported.body).toBe(200);
     expect(
-      context.repo.snapshot("team").tasks.find((item) => item.id === task.id),
+      (await context.repo.snapshot("team")).tasks.find(
+        (item) => item.id === task.id,
+      ),
     ).toMatchObject(planning);
     for (const schemaVersion of [1, 2]) {
-      const revision = context.repo.snapshot("team").revision;
+      const revision = (await context.repo.snapshot("team")).revision;
       const legacy = await request("POST", "/api/import", {
         ...exported,
         schemaVersion,
@@ -220,7 +241,9 @@ describe("workspace administration", () => {
       });
       expect(legacy.statusCode, legacy.body).toBe(200);
       expect(
-        context.repo.snapshot("team").tasks.find((item) => item.id === task.id),
+        (await context.repo.snapshot("team")).tasks.find(
+          (item) => item.id === task.id,
+        ),
       ).toMatchObject({
         scheduleStart: null,
         scheduleEnd: null,
@@ -241,7 +264,7 @@ describe("workspace administration", () => {
     expect(
       (await request("PUT", "/api/admin/catalogs", defaultCatalogs)).statusCode,
     ).toBe(403);
-    const p = context.repo.snapshot("team").projects[0]!;
+    const p = (await context.repo.snapshot("team")).projects[0]!;
     expect(
       (
         await request("PUT", `/api/projects/${p.id}`, {
@@ -252,9 +275,9 @@ describe("workspace administration", () => {
       ).statusCode,
     ).toBe(200);
     ({ cookie, csrf } = await login());
-    const outsider = context.repo.db
+    const outsider = (await context.repo.db
       .prepare("SELECT id FROM users WHERE email='outside@example.test'")
-      .get()!;
+      .get())!;
     expect(
       (
         await request("PUT", `/api/admin/users/${outsider.id}`, {
@@ -286,14 +309,14 @@ describe("workspace administration", () => {
       })
     ).json();
     expect(second.token).not.toBe(first.token);
-    const rows = context.repo.db
+    const rows = await context.repo.db
       .prepare("SELECT * FROM user_activations")
       .all();
     expect(rows).toHaveLength(1);
     expect(rows[0]!.token_hash).toBe(hashToken(second.token));
     expect(
       JSON.stringify(
-        context.repo.db.prepare("SELECT * FROM idempotency").all(),
+        await context.repo.db.prepare("SELECT * FROM idempotency").all(),
       ),
     ).not.toContain(second.token);
     const activate = (token: string) =>
@@ -447,7 +470,7 @@ describe("workspace administration", () => {
     const result = await request("PUT", "/api/admin/catalogs", next);
     expect(result.statusCode).toBe(200);
     const catalog = result.json();
-    const p = context.repo.snapshot("team").projects[0]!;
+    const p = (await context.repo.snapshot("team")).projects[0]!;
     const created = await request("POST", "/api/projects", {
       ...projectInput.strip().parse(p),
       name: "Catalog project",
@@ -576,7 +599,9 @@ it("rejects an expired activation without enabling the account", async () => {
       confirmed: true,
     })
   ).json().token;
-  context.repo.db.prepare("UPDATE user_activations SET expires_at=0").run();
+  await context.repo.db
+    .prepare("UPDATE user_activations SET expires_at=0")
+    .run();
   const response = await context.app.inject({
     method: "POST",
     url: "/api/auth/activate",
@@ -585,14 +610,15 @@ it("rejects an expired activation without enabling the account", async () => {
   });
   expect(response.statusCode).toBe(400);
   expect(
-    context.repo.db.prepare("SELECT status FROM users WHERE id=?").get(user.id)!
-      .status,
+    (await context.repo.db
+      .prepare("SELECT status FROM users WHERE id=?")
+      .get(user.id))!.status,
   ).toBe("pending");
 });
 
 describe("channel catalog and project records", () => {
   it("defaults new projects to company, preserves full names and short names, and persists channel assignments", async () => {
-    const original = context.repo.snapshot("team").projects[0]!;
+    const original = (await context.repo.snapshot("team")).projects[0]!;
     const created = await request("POST", "/api/projects", {
       ...projectInput.strip().parse(original),
       name: "渠道测试项目完整名称",
@@ -612,9 +638,9 @@ describe("channel catalog and project records", () => {
     });
     expect(updated.statusCode).toBe(200);
     expect(
-      context.repo
-        .snapshot("team")
-        .projects.find((p) => p.id === updated.json().id),
+      (await context.repo.snapshot("team")).projects.find(
+        (p) => p.id === updated.json().id,
+      ),
     ).toMatchObject({ channelId: "boyu", shortName: "渠道测试" });
     const catalog = (await request("GET", "/api/catalogs")).json();
     catalog.channels.find((c: { id: string }) => c.id === "boyu").archived =
@@ -693,7 +719,7 @@ it("persists editable channel company profiles and multiple contacts without cha
     .json()
     .channels.find((c: { id: string }) => c.id === "company");
   expect(reloaded).toEqual(channel);
-  const old = context.repo.snapshot("team").projects[0]!;
+  const old = (await context.repo.snapshot("team")).projects[0]!;
   const project = await request(
     "POST",
     "/api/projects",

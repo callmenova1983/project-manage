@@ -1,3 +1,4 @@
+import { testDatabaseConfig } from "../pg-helpers.js";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
@@ -14,7 +15,7 @@ const origin = "http://localhost:4173",
   password = "synthetic-password-test";
 const fetcher = vi.fn<typeof fetch>();
 const options = () => ({
-  databasePath: path,
+  database: testDatabaseConfig(path),
   origin,
   wecom: {
     corpId: "env-corp",
@@ -34,12 +35,12 @@ async function login(email = "admin@example.test") {
   cookie = `pm_session=${r.cookies[0]!.value}`;
   csrf = r.json().csrf;
 }
-const request = (
+const request = async (
   method: "GET" | "PUT" | "POST",
   url: string,
   payload?: unknown,
 ) =>
-  ctx.app.inject({
+  await ctx.app.inject({
     method,
     url,
     headers: {
@@ -55,7 +56,7 @@ beforeEach(async () => {
   path = join(folder, "db.sqlite");
   fetcher.mockReset();
   ctx = await buildApp(options());
-  ctx.repo.seed("a");
+  await ctx.repo.seed("a");
   for (const [email, workspaceId] of [
     ["admin@example.test", "a"],
     ["member@example.test", "a"],
@@ -67,7 +68,7 @@ beforeEach(async () => {
       workspaceId: workspaceId!,
       password,
     });
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email!='member@example.test'")
     .run();
   await login();
@@ -101,11 +102,11 @@ it("encrypts workspace credentials, preserves them across restart and leaves syn
     source: "workspace",
   });
   expect(result.body).not.toContain("synthetic-new-secret");
-  const row = ctx.repo.db
+  const row = (await ctx.repo.db
     .prepare(
       "SELECT encrypted_config FROM workspace_wecom_credentials WHERE workspace_id='a'",
     )
-    .get()!;
+    .get())!;
   expect(String(row.encrypted_config)).not.toContain("synthetic-new-secret");
   expect(statSync(path + ".credentials-key").mode & 0o777).toBe(0o600);
   expect(fetcher).not.toHaveBeenCalled();
@@ -140,7 +141,7 @@ it("encrypts workspace credentials, preserves them across restart and leaves syn
     return Response.json({ userlist: [] });
   });
   const sync = await request("POST", "/api/directory/wecom/sync", {
-    version: ctx.repo.directory("a").version,
+    version: (await ctx.repo.directory("a")).version,
     confirmed: true,
   });
   expect(sync.statusCode).toBe(200);
@@ -210,7 +211,7 @@ it("does not import a roster fetched with a configuration that changed during sy
       });
     return Response.json({ userlist: [] });
   });
-  const before = ctx.repo.directory("a");
+  const before = await ctx.repo.directory("a");
   const syncing = request("POST", "/api/directory/wecom/sync", {
     version: before.version,
     confirmed: true,
@@ -227,5 +228,5 @@ it("does not import a roster fetched with a configuration that changed during sy
   ).toBe(200);
   release(Response.json({ access_token: "synthetic-token" }));
   expect((await syncing).statusCode).toBe(409);
-  expect(ctx.repo.directory("a")).toEqual(before);
+  expect(await ctx.repo.directory("a")).toEqual(before);
 });

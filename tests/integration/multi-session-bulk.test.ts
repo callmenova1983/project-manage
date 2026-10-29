@@ -6,9 +6,9 @@ import type { Snapshot, Task } from "../../packages/domain/types";
 
 it("keeps five independent sessions consistent while concurrent bulk edits conflict and replay safely", async () => {
   const origin = "http://localhost:4173",
-    context = await buildApp({ databasePath: ":memory:", origin });
+    context = await buildApp({ isolatedDatabase: true, origin });
   try {
-    context.repo.seed("team");
+    await context.repo.seed("team");
     const sessions: { cookie: string; csrf: string }[] = [];
     for (let i = 0; i < 5; i++) {
       const email = `collaborator-${i}@example.test`;
@@ -66,7 +66,9 @@ it("keeps five independent sessions consistent while concurrent bulk edits confl
     ];
     const keys = [randomUUID(), randomUUID()];
     const responses = await Promise.all(
-      drafts.map((draft, index) => write(index, draft, keys[index]!)),
+      drafts.map(
+        async (draft, index) => await write(index, draft, keys[index]!),
+      ),
     );
     expect(responses.map((response) => response.statusCode).sort()).toEqual([
       200, 409,
@@ -81,7 +83,9 @@ it("keeps five independent sessions consistent while concurrent bulk edits confl
         .conflicts.map((item: { id: string }) => item.id)
         .sort(),
     ).toEqual(leaves.map((task) => task.id).sort());
-    const polls = await Promise.all(sessions.map((_, index) => read(index)));
+    const polls = await Promise.all(
+      sessions.map(async (_, index) => await read(index)),
+    );
     for (const poll of polls) {
       expect(poll).toEqual(polls[0]);
       for (const saved of acknowledged)

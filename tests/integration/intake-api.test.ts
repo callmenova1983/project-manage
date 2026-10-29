@@ -52,8 +52,8 @@ const request = (
     headers: { origin, cookie, "x-csrf-token": csrf, "idempotency-key": key },
   });
 beforeEach(async () => {
-  context = await buildApp({ databasePath: ":memory:", origin });
-  context.repo.seed("a");
+  context = await buildApp({ isolatedDatabase: true, origin });
+  await context.repo.seed("a");
   const password = randomBytes(24).toString("hex");
   await createUser(context.repo, {
     email: "intake@example.test",
@@ -75,7 +75,7 @@ afterEach(async () => {
 });
 describe("transactional reviewed intake", () => {
   it("persists model-structured client/project/address fields and reuses the project without duplicate writes", async () => {
-    const before = context.repo.snapshot("a");
+    const before = await context.repo.snapshot("a");
     const natural: IntakeSource = {
       kind: "text",
       name: "AI 录入",
@@ -94,25 +94,26 @@ describe("transactional reviewed intake", () => {
       ),
     };
     natural.rows = parseDelimited(natural.text);
-    const payload = () => ({
+    const payload = async () => ({
       source: natural,
       confirmed: true,
-      rows: intakeCandidates(natural, context.repo.snapshot("a").projects).map(
-        (c) => ({
-          sourceRow: c.sourceRow,
-          sourcePart: c.sourcePart,
-          contextRows: c.contextRows,
-          project: c.project,
-          task: c.task,
-          targetProjectId: c.targetProjectId,
-          targetProjectVersion: c.targetProjectVersion,
-          duplicateConfirmed: false,
-        }),
-      ),
+      rows: intakeCandidates(
+        natural,
+        (await context.repo.snapshot("a")).projects,
+      ).map((c) => ({
+        sourceRow: c.sourceRow,
+        sourcePart: c.sourcePart,
+        contextRows: c.contextRows,
+        project: c.project,
+        task: c.task,
+        targetProjectId: c.targetProjectId,
+        targetProjectVersion: c.targetProjectVersion,
+        duplicateConfirmed: false,
+      })),
     });
-    const created = await request("POST", "/api/intakes", payload());
+    const created = await request("POST", "/api/intakes", await payload());
     expect(created.statusCode).toBe(200);
-    const after = context.repo.snapshot("a");
+    const after = await context.repo.snapshot("a");
     expect(after.projects).toHaveLength(before.projects.length + 1);
     expect(after.tasks).toEqual(before.tasks);
     const saved = after.projects.find((p) => p.name === "数字城市项目")!;
@@ -121,14 +122,14 @@ describe("transactional reviewed intake", () => {
       description: "地址：重庆",
       owner: "Unassigned",
     });
-    const repeat = await request("POST", "/api/intakes", payload());
+    const repeat = await request("POST", "/api/intakes", await payload());
     expect(repeat.statusCode).toBe(200);
     expect(repeat.json()).toMatchObject({
       projects: [],
       tasks: [],
       entries: [{ projectId: saved.id, taskId: null }],
     });
-    expect(context.repo.snapshot("a")).toEqual(after);
+    expect(await context.repo.snapshot("a")).toEqual(after);
     // Reusing an existing project must never grant an undo that deletes it.
     expect(
       (
@@ -137,7 +138,7 @@ describe("transactional reviewed intake", () => {
         })
       ).statusCode,
     ).toBe(200);
-    expect(context.repo.snapshot("a")).toEqual(after);
+    expect(await context.repo.snapshot("a")).toEqual(after);
     expect(
       (
         await request("POST", `/api/intakes/${created.json().id}/undo`, {
@@ -145,11 +146,13 @@ describe("transactional reviewed intake", () => {
         })
       ).statusCode,
     ).toBe(200);
-    expect(context.repo.snapshot("a").projects).toEqual(before.projects);
+    expect((await context.repo.snapshot("a")).projects).toEqual(
+      before.projects,
+    );
   });
   it("creates one project and two tasks once, preserves source and can undo the batch", async () => {
     const key = randomUUID(),
-      before = context.repo.snapshot("a");
+      before = await context.repo.snapshot("a");
     const a = await request("POST", "/api/intakes", input(), key);
     expect(a.statusCode).toBe(200);
     const batch = a.json();
@@ -158,10 +161,12 @@ describe("transactional reviewed intake", () => {
     expect(
       (await request("POST", "/api/intakes", input(), key)).json().id,
     ).toBe(batch.id);
-    expect(context.repo.snapshot("a").projects).toHaveLength(
+    expect((await context.repo.snapshot("a")).projects).toHaveLength(
       before.projects.length + 1,
     );
-    expect(context.repo.snapshot("a").activities[0]!.source).toContain("Row");
+    expect((await context.repo.snapshot("a")).activities[0]!.source).toContain(
+      "Row",
+    );
     expect((await request("GET", "/api/intakes")).json()).toHaveLength(1);
     expect(
       (
@@ -170,18 +175,20 @@ describe("transactional reviewed intake", () => {
         })
       ).statusCode,
     ).toBe(200);
-    expect(context.repo.snapshot("a").tasks).toHaveLength(before.tasks.length);
-    expect(context.repo.snapshot("a").projects).toHaveLength(
+    expect((await context.repo.snapshot("a")).tasks).toHaveLength(
+      before.tasks.length,
+    );
+    expect((await context.repo.snapshot("a")).projects).toHaveLength(
       before.projects.length,
     );
   });
   it("rolls back all writes on an invalid later row and rejects unconfirmed input", async () => {
-    const before = context.repo.snapshot("a"),
+    const before = await context.repo.snapshot("a"),
       data = input();
     data.rows[0]!.project.owner = "First known owner";
     data.rows[1]!.project.owner = "Conflicting owner";
     expect((await request("POST", "/api/intakes", data)).statusCode).toBe(400);
-    expect(context.repo.snapshot("a")).toEqual(before);
+    expect(await context.repo.snapshot("a")).toEqual(before);
     expect(
       (await request("POST", "/api/intakes", { ...input(), confirmed: false }))
         .statusCode,
@@ -190,7 +197,7 @@ describe("transactional reviewed intake", () => {
   it("protects newer changes and workspace isolation during undo", async () => {
     const batch = (await request("POST", "/api/intakes", input())).json();
     const p = batch.projects[0];
-    context.repo.putProject("a", { ...p, version: 2 });
+    await context.repo.putProject("a", { ...p, version: 2 });
     expect(
       (
         await request("POST", `/api/intakes/${batch.id}/undo`, {
@@ -198,11 +205,11 @@ describe("transactional reviewed intake", () => {
         })
       ).statusCode,
     ).toBe(400);
-    expect(context.repo.snapshot("a").projects.some((x) => x.id === p.id)).toBe(
-      true,
-    );
-    context.repo.workspace("b");
-    context.repo.db.prepare("UPDATE users SET workspace_id='b'").run();
+    expect(
+      (await context.repo.snapshot("a")).projects.some((x) => x.id === p.id),
+    ).toBe(true);
+    await context.repo.workspace("b");
+    await context.repo.db.prepare("UPDATE users SET workspace_id='b'").run();
     expect((await request("GET", "/api/intakes")).json()).toEqual([]);
     expect(
       (
@@ -225,7 +232,10 @@ it("persists missing details, later completes a project and reassigns a standalo
       ["准备讨论", "下周五"],
     ],
   };
-  const c = intakeCandidates(source, context.repo.snapshot("a").projects)[0]!;
+  const c = intakeCandidates(
+    source,
+    (await context.repo.snapshot("a")).projects,
+  )[0]!;
   const res = await request("POST", "/api/intakes", {
     source,
     confirmed: true,
@@ -259,9 +269,9 @@ it("persists missing details, later completes a project and reassigns a standalo
     version: p.version,
   });
   expect(completed.statusCode).toBe(200);
-  const target = context.repo
-    .snapshot("a")
-    .projects.find((x) => x.id !== p.id)!;
+  const target = (await context.repo.snapshot("a")).projects.find(
+    (x) => x.id !== p.id,
+  )!;
   const edit = {
     ...taskInput.strip().parse(task),
     projectId: target.id,
@@ -275,7 +285,7 @@ it("persists missing details, later completes a project and reassigns a standalo
   expect((await request("PUT", `/api/tasks/${task.id}`, edit)).statusCode).toBe(
     409,
   );
-  const snapshot = context.repo.snapshot("a");
+  const snapshot = await context.repo.snapshot("a");
   expect(snapshot.tasks.find((t) => t.id === task.id)).toMatchObject({
     projectId: target.id,
     dueDate: "2026-10-16",
@@ -296,7 +306,7 @@ it("persists missing details, later completes a project and reassigns a standalo
 });
 
 it("rejects moving parents, children or cross-workspace targets without partial writes", async () => {
-  const before = context.repo.snapshot("a"),
+  const before = await context.repo.snapshot("a"),
     child = before.tasks.find((t) => t.parentId)!,
     parent = before.tasks.find((t) => t.id === child.parentId)!,
     target = before.projects.find((p) => p.id !== child.projectId)!;
@@ -311,8 +321,8 @@ it("rejects moving parents, children or cross-workspace targets without partial 
         })
       ).statusCode,
     ).toBe(400);
-  context.repo.workspace("other");
-  context.repo.putProject("other", {
+  await context.repo.workspace("other");
+  await context.repo.putProject("other", {
     ...target,
     id: "other-workspace-project",
   });
@@ -328,5 +338,5 @@ it("rejects moving parents, children or cross-workspace targets without partial 
       })
     ).statusCode,
   ).toBe(404);
-  expect(context.repo.snapshot("a")).toEqual(before);
+  expect(await context.repo.snapshot("a")).toEqual(before);
 });

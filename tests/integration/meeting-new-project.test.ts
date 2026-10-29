@@ -38,8 +38,8 @@ const body = () => ({
   },
 });
 beforeEach(async () => {
-  context = await buildApp({ databasePath: ":memory:", origin });
-  context.repo.seed("team");
+  context = await buildApp({ isolatedDatabase: true, origin });
+  await context.repo.seed("team");
   await createUser(context.repo, {
     name: "Member",
     email: "member@example.test",
@@ -65,27 +65,32 @@ beforeEach(async () => {
 });
 afterEach(() => context.app.close());
 it("persists a split meeting fact and followup separately and never replays either", async () => {
-  const before = context.repo.snapshot("team");
+  const before = await context.repo.snapshot("team");
   const project = before.projects[0]!;
   const source = `### ${project.name}\n- 设备已上线，下周继续检查运行情况。`;
-  const created = storedProposalResponse(context.repo, "team", { source }, [
-    {
-      sourceLine: 2,
-      sourceText: "设备已上线",
-      title: "设备已上线",
-      action: "update",
-      status: "done",
-      selectedProjectId: project.id,
-    },
-    {
-      sourceLine: 2,
-      sourceText: "下周继续检查运行情况。",
-      title: "下周继续检查运行情况。",
-      action: "task",
-      status: "todo",
-      selectedProjectId: project.id,
-    },
-  ]);
+  const created = await storedProposalResponse(
+    context.repo,
+    "team",
+    { source },
+    [
+      {
+        sourceLine: 2,
+        sourceText: "设备已上线",
+        title: "设备已上线",
+        action: "update",
+        status: "done",
+        selectedProjectId: project.id,
+      },
+      {
+        sourceLine: 2,
+        sourceText: "下周继续检查运行情况。",
+        title: "下周继续检查运行情况。",
+        action: "task",
+        status: "todo",
+        selectedProjectId: project.id,
+      },
+    ],
+  );
   expect(created.statusCode).toBe(200);
   const draft = created.json<Proposal>();
   expect(draft.suggestions.map((item) => [item.action, item.status])).toEqual([
@@ -112,7 +117,7 @@ it("persists a split meeting fact and followup separately and never replays eith
     key,
   );
   expect(result.statusCode).toBe(200);
-  const after = context.repo.snapshot("team");
+  const after = await context.repo.snapshot("team");
   const newTasks = after.tasks.filter(
     (task) => !before.tasks.some((old) => old.id === task.id),
   );
@@ -143,10 +148,10 @@ it("persists a split meeting fact and followup separately and never replays eith
   expect(
     (await request(`/api/proposals/${draft.id}/apply`, payload)).statusCode,
   ).toBe(409);
-  expect(context.repo.snapshot("team")).toEqual(after);
+  expect(await context.repo.snapshot("team")).toEqual(after);
 });
 it("atomically creates a confirmed project and attaches only the selected meeting item, with idempotent replay", async () => {
-  const before = context.repo.snapshot("team"),
+  const before = await context.repo.snapshot("team"),
     key = randomUUID();
   const response = await request(
     `/api/proposals/${proposal.id}/apply`,
@@ -154,7 +159,7 @@ it("atomically creates a confirmed project and attaches only the selected meetin
     key,
   );
   expect(response.statusCode).toBe(200);
-  const snapshot = context.repo.snapshot("team"),
+  const snapshot = await context.repo.snapshot("team"),
     created = snapshot.projects.find((project) => project.name === "韵升项目")!;
   expect(created).toMatchObject({
     channelId: "company",
@@ -186,7 +191,9 @@ it("atomically creates a confirmed project and attaches only the selected meetin
     key,
   );
   expect(replay.json()).toEqual(response.json());
-  expect(context.repo.snapshot("team").revision).toBe(snapshot.revision);
+  expect((await context.repo.snapshot("team")).revision).toBe(
+    snapshot.revision,
+  );
 });
 it("returns exact destinations for identical titles and keeps prior receipts through partial completion", async () => {
   proposal = (
@@ -194,7 +201,7 @@ it("returns exact destinations for identical titles and keeps prior receipts thr
       source: "跟进设备调试\n跟进设备调试\n现场安装完成\n暂缓处理事项",
     })
   ).json();
-  const projects = context.repo.snapshot("team").projects;
+  const projects = (await context.repo.snapshot("team")).projects;
   const review = (index: number, projectId: string, action = "task") => ({
     id: proposal.suggestions[index]!.id,
     selectedProjectId: projectId,
@@ -213,7 +220,7 @@ it("returns exact destinations for identical titles and keeps prior receipts thr
   const receipts = first.json<Proposal>().appliedResults!;
   expect(receipts).toHaveLength(2);
   expect(receipts[0]!.taskId).not.toBe(receipts[1]!.taskId);
-  const snapshot = context.repo.snapshot("team");
+  const snapshot = await context.repo.snapshot("team");
   for (const receipt of receipts) {
     expect(
       snapshot.tasks.find((task) => task.id === receipt.taskId),
@@ -240,15 +247,15 @@ it("returns exact destinations for identical titles and keeps prior receipts thr
     ],
     skippedSuggestionIds: [proposal.suggestions[3]!.id],
   });
-  const persisted = context.repo.db
+  const persisted = (await context.repo.db
     .prepare("SELECT data FROM proposals WHERE id=?")
-    .get(proposal.id)!;
+    .get(proposal.id))!;
   expect(JSON.parse(String(persisted.data)).appliedResults).toEqual(
     second.json<Proposal>().appliedResults,
   );
 });
 it("requires confirmation and prevents duplicate creation by name or an unavailable channel", async () => {
-  const count = context.repo.snapshot("team").projects.length;
+  const count = (await context.repo.snapshot("team")).projects.length;
   const raw = body();
   expect(
     (
@@ -266,7 +273,7 @@ it("requires confirmation and prevents duplicate creation by name or an unavaila
       })
     ).statusCode,
   ).toBe(409);
-  const existing = context.repo.snapshot("team").projects[0]!;
+  const existing = (await context.repo.snapshot("team")).projects[0]!;
   expect(
     (
       await request(`/api/proposals/${proposal.id}/apply`, {
@@ -275,18 +282,18 @@ it("requires confirmation and prevents duplicate creation by name or an unavaila
       })
     ).statusCode,
   ).toBe(409);
-  expect(context.repo.snapshot("team").projects).toHaveLength(count);
+  expect((await context.repo.snapshot("team")).projects).toHaveLength(count);
 });
 it("persists supplied project metadata instead of replacing it with blank defaults", async () => {
-  const catalog = context.repo.catalogs("team");
+  const catalog = await context.repo.catalogs("team");
   const { channelEntries } = await import("../../packages/domain/channels");
   const channels = [
     ...channelEntries(catalog),
     { id: "longying", name: "龙赢科技", shortName: "龙赢", archived: false },
   ];
-  context.repo.db
+  await context.repo.db
     .prepare(
-      "INSERT OR REPLACE INTO workspace_catalogs(workspace_id,data) VALUES(?,?)",
+      "INSERT INTO workspace_catalogs(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
     )
     .run("team", JSON.stringify({ ...catalog, channels }));
   const payload = body();
@@ -306,13 +313,13 @@ it("persists supplied project metadata instead of replacing it with blank defaul
   });
   expect(response.statusCode).toBe(200);
   expect(
-    context.repo
-      .snapshot("team")
-      .projects.find((project) => project.name === payload.newProject.name),
+    (await context.repo.snapshot("team")).projects.find(
+      (project) => project.name === payload.newProject.name,
+    ),
   ).toMatchObject({ channelId: "longying", ...details });
 });
 it("rolls back a created project if writing the meeting task fails", async () => {
-  const before = context.repo.snapshot("team");
+  const before = await context.repo.snapshot("team");
   const failure = vi
     .spyOn(context.repo, "putTask")
     .mockImplementationOnce(() => {
@@ -322,7 +329,7 @@ it("rolls back a created project if writing the meeting task fails", async () =>
     (await request(`/api/proposals/${proposal.id}/apply`, body())).statusCode,
   ).toBe(500);
   failure.mockRestore();
-  expect(context.repo.snapshot("team")).toEqual(before);
+  expect(await context.repo.snapshot("team")).toEqual(before);
   expect(
     (await request(`/api/proposals/${proposal.id}/apply`, body())).statusCode,
   ).toBe(200);
@@ -359,7 +366,7 @@ it("creates one project for a confirmed group of items and leaves another group 
   expect(incomplete.statusCode).toBe(400);
   const result = await request(`/api/proposals/${proposal.id}/apply`, grouped);
   expect(result.statusCode).toBe(200);
-  const snapshot = context.repo.snapshot("team"),
+  const snapshot = await context.repo.snapshot("team"),
     created = snapshot.projects.filter((project) => project.name === "重儿");
   expect(created).toHaveLength(1);
   expect(

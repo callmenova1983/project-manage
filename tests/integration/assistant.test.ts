@@ -60,12 +60,12 @@ async function login(email: string) {
 beforeEach(async () => {
   fetcher.mockReset();
   ctx = await buildApp({
-    databasePath: ":memory:",
+    isolatedDatabase: true,
     origin,
     qwen: config,
     aiFetch: fetcher,
   });
-  ctx.repo.seed("assistant");
+  await ctx.repo.seed("assistant");
   await createUser(ctx.repo, {
     workspaceId: "assistant",
     name: "Assistant Tester",
@@ -113,8 +113,8 @@ it("persists private conversation, unfinished draft and attachment references wi
   );
 });
 it("clears only the personal conversation, keeps business data and rejects old-tab resurrection", async () => {
-  const project = ctx.repo.snapshot("assistant").projects[0]!;
-  const proposal = storedProposal(
+  const project = (await ctx.repo.snapshot("assistant")).projects[0]!;
+  const proposal = await storedProposal(
     ctx.repo,
     "assistant",
     `${project.name}：现场核对`,
@@ -130,7 +130,7 @@ it("clears only the personal conversation, keeps business data and rejects old-t
     (await send("PUT", "/api/assistant/session", { version: 0, state }))
       .statusCode,
   ).toBe(200);
-  const before = ctx.repo.snapshot("assistant");
+  const before = await ctx.repo.snapshot("assistant");
   const cleared = await send("PUT", "/api/assistant/session", {
     version: 1,
     state: {},
@@ -141,9 +141,9 @@ it("clears only the personal conversation, keeps business data and rejects old-t
     version: 2,
     state: {},
   });
-  expect(ctx.repo.snapshot("assistant")).toEqual(before);
+  expect(await ctx.repo.snapshot("assistant")).toEqual(before);
   expect(
-    ctx.repo.db
+    await ctx.repo.db
       .prepare("SELECT data FROM proposals WHERE workspace_id=? AND id=?")
       .get("assistant", proposal.id),
   ).toBeDefined();
@@ -156,8 +156,8 @@ it("clears only the personal conversation, keeps business data and rejects old-t
   );
 });
 it("rehydrates the authoritative proposal so a lost apply response cannot re-create tasks", async () => {
-  const project = ctx.repo.snapshot("assistant").projects[0]!;
-  const proposal = storedProposal(
+  const project = (await ctx.repo.snapshot("assistant")).projects[0]!;
+  const proposal = await storedProposal(
     ctx.repo,
     "assistant",
     `${project.name}：确认现场点位`,
@@ -172,7 +172,7 @@ it("rehydrates the authoritative proposal so a lost apply response cannot re-cre
     status: "applied",
     appliedSuggestionIds: proposal.suggestions.map((s: { id: string }) => s.id),
   };
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE proposals SET data=? WHERE id=?")
     .run(JSON.stringify(updated), proposal.id);
   expect(
@@ -195,7 +195,7 @@ it("defaults to Qwen ASR, sends audio only, persists actual usage and replays on
     ),
   );
   const input = { requestId: randomUUID(), mime: "audio/wav", data: wav() };
-  const before = ctx.repo.snapshot("assistant");
+  const before = await ctx.repo.snapshot("assistant");
   const response = await send("POST", "/api/assistant/transcribe", input);
   expect(response.statusCode).toBe(200);
   expect(response.json()).toMatchObject({
@@ -226,7 +226,7 @@ it("defaults to Qwen ASR, sends audio only, persists actual usage and replays on
     (await send("POST", "/api/assistant/transcribe", input)).json(),
   ).toEqual(response.json());
   expect(fetcher).toHaveBeenCalledTimes(1);
-  const logs = ctx.repo.db.prepare("SELECT data FROM model_logs").all();
+  const logs = await ctx.repo.db.prepare("SELECT data FROM model_logs").all();
   expect(logs).toHaveLength(1);
   expect(JSON.parse(String(logs[0]!.data))).toMatchObject({
     model: DEFAULT_SPEECH_MODEL,
@@ -242,7 +242,7 @@ it("defaults to Qwen ASR, sends audio only, persists actual usage and replays on
     totalTokens: 37,
     speech: { requests: 1, recordedSeconds: 1, unmeasuredRequests: 0 },
   });
-  expect(ctx.repo.snapshot("assistant")).toEqual(before);
+  expect(await ctx.repo.snapshot("assistant")).toEqual(before);
 });
 it("does not duplicate an in-flight transcription or hide unknown usage as zero", async () => {
   let finish!: (response: Response) => void;
@@ -276,11 +276,11 @@ it("validates audio before billing, respects the existing allowance, and never r
   });
   expect(invalid.statusCode).toBe(400);
   expect(fetcher).not.toHaveBeenCalled();
-  const user = ctx.repo.db
+  const user = (await ctx.repo.db
     .prepare("SELECT id FROM users WHERE email=?")
-    .get("assistant@example.test")!;
+    .get("assistant@example.test"))!;
   for (let i = 0; i < config.maxRequests; i++)
-    ctx.repo.db
+    await ctx.repo.db
       .prepare(
         "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
       )
@@ -297,7 +297,8 @@ it("validates audio before billing, respects the existing allowance, and never r
   expect(result.json().message).toContain("额度");
   expect(fetcher).not.toHaveBeenCalled();
   expect(
-    ctx.repo.db.prepare("SELECT count(*) AS n FROM ai_attempts").get()!.n,
+    (await ctx.repo.db.prepare("SELECT count(*) AS n FROM ai_attempts").get())!
+      .n,
   ).toBe(config.maxRequests);
 });
 it("never retries a billed provider failure automatically or leaks its response", async () => {

@@ -1,3 +1,4 @@
+import "dotenv/config";
 import {
   referenceContext,
   makeReferenceRequest,
@@ -8,7 +9,8 @@ import {
   makeCaptureRequest,
   validateCaptureAnalysis,
 } from "../apps/api/src/ai/capture.js";
-import { DatabaseSync } from "node:sqlite";
+import { PostgresDatabase } from "../apps/api/src/postgres.js";
+import { readDatabaseConfig } from "../apps/api/src/database-config.js";
 import { createDecipheriv, createHash, randomUUID } from "node:crypto";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -48,13 +50,12 @@ import {
   assistantWorkProposal,
 } from "../apps/api/src/ai/assistant-plan.js";
 import { instructionVersions } from "../apps/api/src/ai/instructions.js";
-
 // Benchmark the same semantic interpreter used by the application. No rule fallback.
 async function generateAssistantWork(
   source: string,
   projects: ReturnType<typeof createSeed>["projects"],
   config: QwenConfig,
-  reserve: () => void,
+  reserve: () => Promise<void>,
   fetcher: typeof fetch,
   usage: (value: {
     inputTokens: number | null;
@@ -74,7 +75,6 @@ async function generateAssistantWork(
     throw new Error("Model did not return report work items");
   return assistantWorkProposal(plan, input, config).suggestions;
 }
-
 // Operator-only local acceptance runner. Synthetic input; no business writes.
 // Default is read-only inspection. --run permits two metered model requests.
 const args = process.argv.slice(2);
@@ -135,10 +135,11 @@ const live =
   meetingcheck ||
   pagecheck ||
   args.includes("--run");
-const databasePath = resolve("data/project-manage.sqlite");
-const db = new DatabaseSync(databasePath, { readOnly: !live });
+const database = readDatabaseConfig();
+// No initialize(): inspection must not run schema migrations or seed data.
+const db = new PostgresDatabase(database);
 try {
-  const rows = db
+  const rows = await db
     .prepare(
       "SELECT workspace_id,encrypted_config FROM workspace_ai_credentials",
     )
@@ -149,7 +150,7 @@ try {
   const [iv, tag, encrypted] = String(rows[0]!.encrypted_config).split(".");
   const decipher = createDecipheriv(
     "aes-256-gcm",
-    readFileSync(databasePath + ".credentials-key"),
+    readFileSync(database.credentialKeyPath),
     Buffer.from(iv!, "base64"),
   );
   decipher.setAAD(Buffer.from(ws));
@@ -160,22 +161,24 @@ try {
       decipher.final(),
     ]).toString(),
   ) as QwenConfig;
-  const settings = () =>
+  const settings = async () =>
     modelSettingsInput.parse(
       JSON.parse(
         String(
-          db
-            .prepare("SELECT data FROM model_settings WHERE workspace_id=?")
-            .get(ws)?.data,
+          (
+            await db
+              .prepare("SELECT data FROM model_settings WHERE workspace_id=?")
+              .get(ws)
+          )?.data,
         ),
       ),
     );
-  const state = settings();
-  const used = () =>
+  const state = await settings();
+  const used = async () =>
     Number(
-      db
+      (await db
         .prepare("SELECT count(*) AS n FROM ai_attempts WHERE budget_id=?")
-        .get(base.budgetId)!.n,
+        .get(base.budgetId))!.n,
     );
   const config: QwenConfig = {
     ...base,
@@ -194,16 +197,16 @@ try {
       model: config.model,
       endpointHost: new URL(config.baseUrl).hostname,
       timeoutMs: config.timeoutMs,
-      remainingAttempts: Math.max(0, base.maxRequests - used()),
-      allowance: allowanceReason(config, used()),
+      remainingAttempts: Math.max(0, base.maxRequests - (await used())),
+      allowance: allowanceReason(config, await used()),
       live,
     }),
   );
   if (live) {
     if (
       !enabled ||
-      allowanceReason(config, used()) ||
-      base.maxRequests - used() <
+      allowanceReason(config, await used()) ||
+      base.maxRequests - (await used()) <
         (meetingcheck || pagecheck
           ? 1
           : holdout
@@ -213,7 +216,7 @@ try {
               : 2)
     )
       throw new Error("Insufficient enabled allowance");
-    const actor = db
+    const actor = await db
       .prepare(
         "SELECT id FROM users WHERE workspace_id=? AND role='admin' AND status='active' ORDER BY id LIMIT 1",
       )
@@ -334,45 +337,41 @@ try {
         purpose,
         instructionVersion: instructionVersions[purpose],
       };
-      const save = () =>
-        db
+      const save = async () =>
+        await db
           .prepare(
             "INSERT INTO model_logs(id,workspace_id,created_at,data) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
           )
           .run(log.id, ws, log.createdAt, JSON.stringify(log));
       const started = performance.now();
       let output: unknown;
-      save();
+      await save();
       try {
         output = await generateJson(
           request,
           { ...config, runtime: "sdk" },
-          () => {
-            db.exec("BEGIN IMMEDIATE");
-            try {
-              const current = settings();
+          () =>
+            db.transaction(async () => {
+              const current = await settings();
               if (
                 !current.enabled ||
                 current.model !== config.model ||
-                allowanceReason(config, used())
+                allowanceReason(config, await used())
               )
                 throw Error("Allowance changed");
-              db.prepare(
-                "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
-              ).run(
-                randomUUID(),
-                config.budgetId,
-                String(actor.id),
-                Date.now(),
-              );
+              await db
+                .prepare(
+                  "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
+                )
+                .run(
+                  randomUUID(),
+                  config.budgetId,
+                  String(actor.id),
+                  Date.now(),
+                );
               log.attempts++;
-              save();
-              db.exec("COMMIT");
-            } catch (error) {
-              db.exec("ROLLBACK");
-              throw error;
-            }
-          },
+              await save();
+            }),
           validate,
           fetch,
           (usage) => recordModelCallUsage(log, usage),
@@ -387,7 +386,7 @@ try {
         process.exitCode = 1;
       } finally {
         log.durationMs = Math.round(performance.now() - started);
-        save();
+        await save();
         const dir = resolve("artifacts/assistant-live");
         mkdirSync(dir, { recursive: true });
         const path = resolve(dir, `${purpose}-check-${Date.now()}.json`);
@@ -571,45 +570,41 @@ try {
             purpose: "assistant-turn",
             instructionVersion: instructionVersions["assistant-turn"],
           };
-          const saveLog = () =>
-            db
+          const saveLog = async () =>
+            await db
               .prepare(
                 "INSERT INTO model_logs(id,workspace_id,created_at,data) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
               )
               .run(log.id, ws, log.createdAt, JSON.stringify(log));
           const start = performance.now();
-          saveLog();
+          await saveLog();
           try {
             const output = await generateAssistantWork(
               example.source,
               projects,
               { ...config, runtime },
-              () => {
-                db.exec("BEGIN IMMEDIATE");
-                try {
-                  const current = settings();
+              () =>
+                db.transaction(async () => {
+                  const current = await settings();
                   if (
                     !current.enabled ||
                     current.model !== config.model ||
-                    allowanceReason(config, used())
+                    allowanceReason(config, await used())
                   )
                     throw new Error("Allowance changed");
-                  db.prepare(
-                    "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
-                  ).run(
-                    randomUUID(),
-                    config.budgetId,
-                    String(actor.id),
-                    Date.now(),
-                  );
+                  await db
+                    .prepare(
+                      "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
+                    )
+                    .run(
+                      randomUUID(),
+                      config.budgetId,
+                      String(actor.id),
+                      Date.now(),
+                    );
                   log.attempts++;
-                  saveLog();
-                  db.exec("COMMIT");
-                } catch (error) {
-                  db.exec("ROLLBACK");
-                  throw error;
-                }
-              },
+                  await saveLog();
+                }),
               observedFetch,
               (usage) => recordModelCallUsage(log, usage),
             );
@@ -697,7 +692,7 @@ try {
             });
           } finally {
             log.durationMs = Math.round(performance.now() - start);
-            saveLog();
+            await saveLog();
             samples[runtime]!.push({
               id: example.id,
               durationMs: log.durationMs,
@@ -762,5 +757,5 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  db.close();
+  await db.close();
 }

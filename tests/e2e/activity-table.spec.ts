@@ -23,7 +23,7 @@ async function noHorizontalOverflow(page: Page, table?: Locator) {
 }
 
 async function createDemoHistory(page: Page) {
-  return page.evaluate(async () => {
+  return (await page.evaluate(async () => {
     // Exercise the real browser-only adapter so all before/after snapshots,
     // versions, audit actions and pagination inputs follow production logic.
     const modulePath = "/src/services/local.ts";
@@ -90,7 +90,7 @@ async function createDemoHistory(page: Page) {
         (item) => item.source !== "Synthetic demo seed",
       ).length,
     };
-  });
+  }));
 }
 
 for (const mobile of [false, true]) {

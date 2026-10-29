@@ -48,7 +48,7 @@ describe("explicit browser origin configuration", () => {
 describe("Codespaces origin regression with synthetic local injection only", () => {
   it("reproduces the exact deployment error before credentials are validated", async () => {
     const { app } = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin: "http://localhost:4173",
     });
     try {
@@ -66,7 +66,7 @@ describe("Codespaces origin regression with synthetic local injection only", () 
   });
   it("accepts the exact configured public origin behind an internal proxy Host while retaining CSRF checks", async () => {
     const { app, repo } = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin: publicOrigin + "/",
       production: true,
     });
@@ -153,7 +153,7 @@ describe("Codespaces origin regression with synthetic local injection only", () 
     "rejects foreign origins even with forged Host and proxy headers %#",
     async (origin) => {
       const { app } = await buildApp({
-        databasePath: ":memory:",
+        isolatedDatabase: true,
         origin: publicOrigin,
       });
       try {
@@ -183,7 +183,7 @@ describe("temporary origin diagnostics redact everything outside the explicit al
     try {
       for (const enabled of [false, true]) {
         const { app } = await buildApp({
-          databasePath: ":memory:",
+          isolatedDatabase: true,
           origin: publicOrigin,
           originDiagnostics: enabled,
         });
@@ -368,7 +368,7 @@ describe("opt-in Codespaces proxy rewrite", () => {
     const { configuredCodespacesRewrite } =
       await import("../../apps/api/src/origin.js");
     const { app, repo } = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin: publicOrigin,
       production: true,
       codespacesOriginRewrite: configuredCodespacesRewrite(
@@ -445,7 +445,7 @@ describe("opt-in Codespaces proxy rewrite", () => {
 
 it("allows explicit LAN and loopback origins while rejecting mismatched and foreign origins", async () => {
   const { app } = await buildApp({
-    databasePath: ":memory:",
+    isolatedDatabase: true,
     origin: "http://localhost:4173",
     additionalOrigins: ["http://192.168.110.4:4173", "http://127.0.0.1:4173"],
   });

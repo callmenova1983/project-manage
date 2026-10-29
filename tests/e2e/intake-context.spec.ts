@@ -84,7 +84,7 @@ for (const width of [1536, 390]) {
           .analyze()
       ).violations,
     ).toEqual([]);
-    page.once("dialog", (dialog) => dialog.accept());
+    page.once("dialog", async (dialog) => (await dialog.accept()));
     await page.reload();
     await page
       .getByRole("button", { name: "Restore draft", exact: true })

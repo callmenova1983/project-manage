@@ -34,13 +34,13 @@ describe.each(["legacy", "sdk"] as const)("progress runtime %s", (runtime) => {
   beforeEach(async () => {
     fetchMock.mockReset();
     ctx = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin,
       qwen: config,
       aiRuntime: runtime,
       aiFetch: fetchMock,
     });
-    ctx.repo.seed("test");
+    await ctx.repo.seed("test");
     const password = randomBytes(24).toString("hex");
     await createUser(ctx.repo, {
       workspaceId: "test",
@@ -88,10 +88,10 @@ describe.each(["legacy", "sdk"] as const)("progress runtime %s", (runtime) => {
       payload: payload as Record<string, unknown>,
       headers: { cookie, origin, "x-csrf-token": csrf, "idempotency-key": key },
     });
-  const first = () => ctx.repo.snapshot("test").projects[0]!;
+  const first = async () => (await ctx.repo.snapshot("test")).projects[0]!;
   it("sends images plus original text to the model, keeps editable output separate and preserves source bytes through corrections, merge and export", async () => {
-    const p = first(),
-      target = ctx.repo.snapshot("test").projects[1]!;
+    const p = await first(),
+      target = (await ctx.repo.snapshot("test")).projects[1]!;
     const uploaded = await request("POST", `/api/projects/${p.id}/materials`, {
       name: "site.png",
       data: png.toString("base64"),
@@ -135,7 +135,7 @@ describe.each(["legacy", "sdk"] as const)("progress runtime %s", (runtime) => {
       ).json(),
     ).toEqual(analysis);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(first().latestUpdate).toBe(p.latestUpdate);
+    expect((await first()).latestUpdate).toBe(p.latestUpdate);
     const source = {
       text: body.text,
       materialIds: body.materialIds,
@@ -180,7 +180,7 @@ describe.each(["legacy", "sdk"] as const)("progress runtime %s", (runtime) => {
       targetId: target.id,
       sourceIds: [p.id],
       name: "Combined project",
-      revision: ctx.repo.snapshot("test").revision,
+      revision: (await ctx.repo.snapshot("test")).revision,
       confirmed: true,
     });
     expect(merged.statusCode).toBe(200);
@@ -198,7 +198,7 @@ describe.each(["legacy", "sdk"] as const)("progress runtime %s", (runtime) => {
         .some((e) => e.originalSource?.materialIds.includes(material.id)),
     ).toBe(true);
     const exp = (await request("GET", "/api/export")).json();
-    ctx.repo.seed("other");
+    await ctx.repo.seed("other");
     await createUser(ctx.repo, {
       workspaceId: "other",
       email: "other@example.test",
@@ -206,20 +206,20 @@ describe.each(["legacy", "sdk"] as const)("progress runtime %s", (runtime) => {
       password: randomBytes(24).toString("hex"),
     });
     // Import through the public API with a different isolated workspace session.
-    const user = ctx.repo.db
+    const user = (await ctx.repo.db
       .prepare("SELECT id FROM users WHERE workspace_id=?")
-      .get("other")!;
-    ctx.repo.db
+      .get("other"))!;
+    await ctx.repo.db
       .prepare("UPDATE users SET workspace_id=? WHERE id=?")
       .run(
         "other",
-        ctx.repo.db
+        (await ctx.repo.db
           .prepare("SELECT id FROM users WHERE email=?")
-          .get("reporter@example.test")!.id,
+          .get("reporter@example.test"))!.id,
       );
     const imported = await request("POST", "/api/import", {
       ...exp,
-      revision: ctx.repo.snapshot("other").revision,
+      revision: (await ctx.repo.snapshot("other")).revision,
       confirmed: true,
     });
     expect(imported.statusCode).toBe(200);
@@ -239,14 +239,14 @@ describe.each(["legacy", "sdk"] as const)("progress runtime %s", (runtime) => {
     expect(user.id).toBeTruthy();
   });
   it("requires explicit external processing, validates project version and prevents foreign-file access", async () => {
-    const p = first();
+    const p = await first();
     const uploaded = (
       await request("POST", `/api/projects/${p.id}/materials`, {
         name: "site.png",
         data: png.toString("base64"),
       })
     ).json<ProgressMaterial>();
-    const target = ctx.repo.snapshot("test").projects[1]!;
+    const target = (await ctx.repo.snapshot("test")).projects[1]!;
     expect(
       (
         await request(
@@ -326,7 +326,7 @@ describe.each(["legacy", "sdk"] as const)("progress runtime %s", (runtime) => {
     const result = await parseMaterial("现场.docx", Buffer.from(doc));
     expect(result.text).toContain("现场设备安装完成");
     expect(result.images).toHaveLength(1);
-    const p = first(),
+    const p = await first(),
       upload = (
         await request("POST", `/api/projects/${p.id}/materials`, {
           name: "现场.docx",

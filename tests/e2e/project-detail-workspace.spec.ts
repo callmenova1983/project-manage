@@ -9,7 +9,7 @@ async function fixture(page: Page) {
   });
   await page.goto("/demo/projects");
   await expect(page.locator(".project-record").first()).toBeVisible();
-  return page.evaluate(async () => {
+  return (await page.evaluate(async () => {
     const modulePath = "/src/services/local.ts";
     const { createLocalApi } = (await import(modulePath)) as {
       createLocalApi: () => WorkspaceApi;
@@ -53,7 +53,7 @@ async function fixture(page: Page) {
       workDates: [],
     });
     return { projectId: project.id, taskId: task.id };
-  });
+  }));
 }
 async function noOverflow(page: Page) {
   expect(

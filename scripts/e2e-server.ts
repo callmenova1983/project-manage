@@ -1,15 +1,17 @@
+import "dotenv/config";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { buildApp } from "../apps/api/src/app.js";
 import { createUser } from "../apps/api/src/auth.js";
 mkdirSync("data", { recursive: true });
-for (const suffix of ["", "-wal", "-shm"])
-  rmSync(`data/e2e.sqlite${suffix}`, { force: true });
 const { app, repo } = await buildApp({
-  databasePath: "data/e2e.sqlite",
+  isolatedDatabase: true,
   origin: "http://127.0.0.1:4173",
 });
-repo.seed("e2e");
+if (!/^pm_test_[a-f0-9]{32}$/.test(repo.db.schema))
+  throw new Error("Refusing test writes outside an isolated PostgreSQL schema");
+
+await repo.seed("e2e");
 const password = randomBytes(24).toString("hex");
 await createUser(repo, {
   email: "e2e@example.test",
@@ -19,7 +21,11 @@ await createUser(repo, {
 });
 writeFileSync(
   "data/e2e-login.json",
-  JSON.stringify({ email: "e2e@example.test", password }),
+  JSON.stringify({
+    email: "e2e@example.test",
+    password,
+    schema: repo.db.schema,
+  }),
   { mode: 0o600 },
 );
 const adminPassword = randomBytes(24).toString("hex");
@@ -29,7 +35,7 @@ await createUser(repo, {
   password: adminPassword,
   workspaceId: "e2e",
 });
-repo.db
+await repo.db
   .prepare("UPDATE users SET role='admin' WHERE email='e2e-admin@example.test'")
   .run();
 writeFileSync(

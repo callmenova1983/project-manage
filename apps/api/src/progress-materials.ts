@@ -74,7 +74,7 @@ export async function parseMaterial(
   if (!bytes.length || bytes.length > MATERIAL_LIMIT)
     throw new HttpError(400, "Each file must be no larger than 8 MB.");
   if (name.split(".").at(-1)?.toLowerCase() === "pdf")
-    return parsePdfMaterial(bytes);
+    return await parsePdfMaterial(bytes);
   return new Promise((resolve, reject) => {
     const worker = new Worker(program, {
       eval: true,
@@ -89,12 +89,12 @@ export async function parseMaterial(
       },
     });
     const timer = setTimeout(() => {
-      void worker.terminate();
+      void worker.terminate().catch(() => {});
       reject(new HttpError(400, "File parsing timed out. Split the document."));
     }, 10000);
     const finish = () => {
       clearTimeout(timer);
-      void worker.terminate();
+      void worker.terminate().catch(() => {});
     };
     worker.once("message", (result) => {
       finish();
@@ -118,13 +118,13 @@ export async function parseMaterial(
     });
   });
 }
-export function readMaterial(
+export async function readMaterial(
   repo: Repository,
   workspaceId: string,
   projectId: string,
   id: string,
 ) {
-  const row = repo.db
+  const row = await repo.db
     .prepare(
       "SELECT * FROM progress_materials WHERE workspace_id=? AND project_id=? AND id=?",
     )
@@ -142,11 +142,11 @@ export function registerProgressMaterials(
   actor: (req: FastifyRequest) => Actor,
   mutate: Mutate,
 ) {
-  const project = (req: FastifyRequest) => {
+  const project = async (req: FastifyRequest) => {
     const a = actor(req),
       id = (req.params as { id: string }).id;
     if (!id) return { a, id: CAPTURE_SCOPE };
-    repo.get<Project>("projects", a.workspaceId, id);
+    await repo.get<Project>("projects", a.workspaceId, id);
     return { a, id };
   };
   app.post("/api/capture/materials/:materialId/extract", async (req) => {
@@ -155,12 +155,17 @@ export function registerProgressMaterials(
         .string()
         .uuid()
         .parse((req.params as { materialId: string }).materialId);
-    const source = readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, key);
+    const source = await readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, key);
     const result = source.metadata.referenceOnly
       ? await parseMaterial(source.metadata.name, source.bytes)
       : null;
-    return mutate(req, () => {
-      const current = readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, key);
+    return await mutate(req, async () => {
+      const current = await readMaterial(
+        repo,
+        a.workspaceId,
+        CAPTURE_SCOPE,
+        key,
+      );
       if (!result || !current.metadata.referenceOnly) return current.metadata;
       const meta = {
         ...current.metadata,
@@ -170,7 +175,7 @@ export function registerProgressMaterials(
         imageCount: result.images.length,
         warnings: result.warnings,
       };
-      repo.db
+      await repo.db
         .prepare(
           "UPDATE progress_materials SET metadata=?,images=? WHERE id=? AND workspace_id=? AND project_id=?",
         )
@@ -195,7 +200,7 @@ export function registerProgressMaterials(
         config: { rateLimit: { max: 12, timeWindow: "1 minute" } },
       },
       async (req) => {
-        const { a, id } = project(req),
+        const { a, id } = await project(req),
           input = (
             id === CAPTURE_SCOPE
               ? materialInput
@@ -225,22 +230,22 @@ export function registerProgressMaterials(
           uploadedBy: a.name,
           ...(input.referenceOnly ? { referenceOnly: true } : {}),
         };
-        return mutate(req, () => {
+        return await mutate(req, async () => {
           if (id !== CAPTURE_SCOPE)
-            repo.assertProjectWritable(a.workspaceId, id);
+            await repo.assertProjectWritable(a.workspaceId, id);
           const total = Number(
-            repo.db
+            (await repo.db
               .prepare(
                 "SELECT coalesce(sum(length(bytes)),0) AS total FROM progress_materials WHERE workspace_id=?",
               )
-              .get(a.workspaceId)!.total,
+              .get(a.workspaceId))!.total,
           );
           if (total + bytes.length > 256 * 1024 * 1024)
             throw new HttpError(
               400,
               "Workspace source files exceed 256 MB. Ask the administrator to archive old files.",
             );
-          repo.db
+          await repo.db
             .prepare(
               "INSERT INTO progress_materials(id,workspace_id,project_id,created_at,metadata,bytes,images) VALUES(?,?,?,?,?,?,?)",
             )
@@ -257,17 +262,22 @@ export function registerProgressMaterials(
         });
       },
     );
-    app.post(`${base}/list`, (req) => {
-      const { a, id } = project(req);
-      return z
-        .object({ ids: z.array(z.string().uuid()).max(6) })
-        .strict()
-        .parse(req.body)
-        .ids.map((key) => readMaterial(repo, a.workspaceId, id, key).metadata);
+    app.post(`${base}/list`, async (req) => {
+      const { a, id } = await project(req);
+      return await Promise.all(
+        z
+          .object({ ids: z.array(z.string().uuid()).max(6) })
+          .strict()
+          .parse(req.body)
+          .ids.map(
+            async (key) =>
+              (await readMaterial(repo, a.workspaceId, id, key)).metadata,
+          ),
+      );
     });
-    app.get(`${base}/:materialId`, (req, reply) => {
-      const { a, id } = project(req),
-        m = readMaterial(
+    app.get(`${base}/:materialId`, async (req, reply) => {
+      const { a, id } = await project(req),
+        m = await readMaterial(
           repo,
           a.workspaceId,
           id,
@@ -285,10 +295,10 @@ export function registerProgressMaterials(
         );
       return reply.send(m.bytes);
     });
-    app.get(`${base}/:materialId/images/:index`, (req, reply) => {
-      const { a, id } = project(req),
+    app.get(`${base}/:materialId/images/:index`, async (req, reply) => {
+      const { a, id } = await project(req),
         p = req.params as { materialId: string; index: string },
-        m = readMaterial(
+        m = await readMaterial(
           repo,
           a.workspaceId,
           id,

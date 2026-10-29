@@ -4,15 +4,16 @@ import { progressArchiveInput } from "../../../packages/domain/progress-material
 import type { Activity, Project } from "../../../packages/domain/types.js";
 import { z } from "zod";
 import { HttpError, type Repository } from "./database.js";
-export function exportProgress(repo: Repository, ws: string) {
-  const projects = repo.read<Project>("projects", ws);
+export async function exportProgress(repo: Repository, ws: string) {
+  const projects = await repo.read<Project>("projects", ws);
   const projectIds = new Set(projects.map((project) => project.id));
-  const activities = repo.db
-    .prepare(
-      "SELECT data FROM activities WHERE workspace_id=? ORDER BY created_at",
-    )
-    .all(ws)
-    .map((r) => JSON.parse(String(r.data)) as Activity);
+  const activities = (
+    await repo.db
+      .prepare(
+        "SELECT data FROM activities WHERE workspace_id=? ORDER BY created_at",
+      )
+      .all(ws)
+  ).map((r) => JSON.parse(String(r.data)) as Activity);
   const archive = projects.flatMap((project) =>
     progressHistory(project, activities).map((entry) => ({
       ...entry,
@@ -22,9 +23,11 @@ export function exportProgress(repo: Repository, ws: string) {
   const ids = new Set(
     archive.flatMap((e) => e.originalSource?.materialIds ?? []),
   );
-  const files = repo.db
-    .prepare("SELECT * FROM progress_materials WHERE workspace_id=?")
-    .all(ws)
+  const files = (
+    await repo.db
+      .prepare("SELECT * FROM progress_materials WHERE workspace_id=?")
+      .all(ws)
+  )
     .filter(
       (r) => projectIds.has(String(r.project_id)) || ids.has(String(r.id)),
     )
@@ -36,12 +39,12 @@ export function exportProgress(repo: Repository, ws: string) {
     }));
   return { progressArchive: archive, progressFiles: files };
 }
-export function importProgress(
+export async function importProgress(
   repo: Repository,
   ws: string,
   input: z.infer<typeof progressArchiveInput>,
 ) {
-  const projects = repo.read<Project>("projects", ws),
+  const projects = await repo.read<Project>("projects", ws),
     hasProject = (id: string) => projects.some((p) => p.id === id);
   for (const file of input.progressFiles ?? []) {
     if (!hasProject(file.projectId))
@@ -53,7 +56,7 @@ export function importProgress(
       file.images.length !== file.metadata.imageCount
     )
       throw new HttpError(400, "Invalid source file archive");
-    const old = repo.db
+    const old = await repo.db
       .prepare(
         "SELECT bytes,project_id FROM progress_materials WHERE workspace_id=? AND id=?",
       )
@@ -64,13 +67,13 @@ export function importProgress(
           409,
           "Source file archive conflicts with an existing file",
         );
-      repo.db
+      await repo.db
         .prepare(
           "UPDATE progress_materials SET project_id=? WHERE workspace_id=? AND id=?",
         )
         .run(file.projectId, ws, file.metadata.id);
     } else
-      repo.db
+      await repo.db
         .prepare(
           "INSERT INTO progress_materials(id,workspace_id,project_id,created_at,metadata,bytes,images) VALUES(?,?,?,?,?,?,?)",
         )
@@ -93,18 +96,18 @@ export function importProgress(
       );
     for (const id of entry.originalSource?.materialIds ?? [])
       if (
-        !repo.db
+        !(await repo.db
           .prepare(
             "SELECT 1 FROM progress_materials WHERE workspace_id=? AND project_id=? AND id=?",
           )
-          .get(ws, entry.projectId, id)
+          .get(ws, entry.projectId, id))
       )
         throw new HttpError(
           400,
           "A progress entry references a missing source file",
         );
     if (
-      repo.db
+      await repo.db
         .prepare("SELECT 1 FROM activities WHERE workspace_id=? AND id=?")
         .get(ws, entry.id)
     )
@@ -113,9 +116,9 @@ export function importProgress(
         .update(ws + ":" + entry.id)
         .digest("hex"),
       id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
-    if (repo.db.prepare("SELECT 1 FROM activities WHERE id=?").get(id))
+    if (await repo.db.prepare("SELECT 1 FROM activities WHERE id=?").get(id))
       continue;
-    repo.audit(ws, {
+    await repo.audit(ws, {
       id,
       projectId: project.id,
       entityId: project.id,

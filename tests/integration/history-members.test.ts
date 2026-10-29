@@ -23,8 +23,8 @@ let ctx: Awaited<ReturnType<typeof buildApp>>, cookie: string, csrf: string;
 let members: string[] = [];
 const origin = "http://localhost:4173";
 beforeEach(async () => {
-  ctx = await buildApp({ databasePath: ":memory:", origin });
-  ctx.repo.seed("team");
+  ctx = await buildApp({ isolatedDatabase: true, origin });
+  await ctx.repo.seed("team");
   const password = randomBytes(24).toString("hex");
   for (const [email, workspaceId] of [
     ["one@example.test", "team"],
@@ -38,8 +38,9 @@ beforeEach(async () => {
       password,
     });
   }
+  const availableMembers = await ctx.repo.members("team");
   members = ["one@example.test", "two@example.test"].map(
-    (email) => ctx.repo.members("team").find((m) => m.email === email)!.id,
+    (email) => availableMembers.find((m) => m.email === email)!.id,
   );
   const login = await ctx.app.inject({
     method: "POST",
@@ -95,7 +96,7 @@ async function page(query: ActivityQuery) {
   return response.json<ActivityPage>();
 }
 it("recovers missing and rotated history tokens against the authenticated API without bypassing CSRF", async () => {
-  ctx.repo.audit("team", event("client-token-recovery"));
+  await ctx.repo.audit("team", event("client-token-recovery"));
   const responses: { url: string; status: number }[] = [];
   vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
     const response = await ctx.app.inject({
@@ -120,7 +121,9 @@ it("recovers missing and rotated history tokens against the authenticated API wi
     { url: "/api/auth/session", status: 200 },
     { url: "/api/activity/query", status: 200 },
   ]);
-  ctx.repo.db.prepare("UPDATE sessions SET csrf=?").run("rotated-test-token");
+  await ctx.repo.db
+    .prepare("UPDATE sessions SET csrf=?")
+    .run("rotated-test-token");
   expect(
     (await api.activityPage(query)).events.map((item) => item.id),
   ).toContain("client-token-recovery");
@@ -137,17 +140,17 @@ it("recovers missing and rotated history tokens against the authenticated API wi
   );
 });
 it("queries all selected-week records beyond 500 with identical filtered totals and detail pages", async () => {
-  ctx.repo.transaction(() => {
+  await ctx.repo.transaction(async () => {
     for (let i = 0; i < 725; i++)
-      ctx.repo.audit("team", event(`old-${String(i).padStart(4, "0")}`));
+      await ctx.repo.audit("team", event(`old-${String(i).padStart(4, "0")}`));
     for (let i = 0; i < 650; i++)
-      ctx.repo.audit(
+      await ctx.repo.audit(
         "team",
         event(`recent-${i}`, "2021-01-01T00:00:00.000Z", "project-2"),
       );
-    ctx.repo.audit("other", event("foreign"));
+    await ctx.repo.audit("other", event("foreign"));
   });
-  expect(ctx.repo.snapshot("team").activities).toHaveLength(500);
+  expect((await ctx.repo.snapshot("team")).activities).toHaveLength(500);
   let result = await page({
     weekStart: "2020-10-05",
     projectIds: ["project-1"],
@@ -182,11 +185,11 @@ it("queries all selected-week records beyond 500 with identical filtered totals 
   ).toBe(0);
 });
 it("uses stable cursor cutoffs with tied timestamps and excludes later backdated inserts", async () => {
-  for (const id of ["c", "a", "b"]) ctx.repo.audit("team", event(id));
+  for (const id of ["c", "a", "b"]) await ctx.repo.audit("team", event(id));
   const query = { weekStart: "2020-10-05", limit: 1 };
   const first = await page(query);
   expect(first.events[0]!.id).toBe("a");
-  ctx.repo.audit("team", event("aa"));
+  await ctx.repo.audit("team", event("aa"));
   const second = await page({ ...query, cursor: first.nextCursor! });
   expect(second.total).toBe(3);
   expect(second.events[0]!.id).toBe("b");
@@ -205,7 +208,7 @@ it("uses stable cursor cutoffs with tied timestamps and excludes later backdated
   ).toBe(400);
 });
 it("normalizes timezone offsets, excludes next week and future events, and keeps completion semantics shared", async () => {
-  const task = ctx.repo.snapshot("team").tasks.find((t) => t.parentId)!;
+  const task = (await ctx.repo.snapshot("team")).tasks.find((t) => t.parentId)!;
   const records = [
     event("previous", "2020-10-04T23:59:59.999Z"),
     event("start", "2020-10-05T02:00:00+02:00"),
@@ -226,7 +229,7 @@ it("normalizes timezone offsets, excludes next week and future events, and keeps
     { ...completion, id: "same-transition" },
     { ...completion, id: "restored", source: "History restore" },
   );
-  for (const e of records) ctx.repo.audit("team", e);
+  for (const e of records) await ctx.repo.audit("team", e);
   const query = { weekStart: "2020-10-05", excludeSeed: true };
   const result = await page(query);
   expect(result.total).toBe(5);
@@ -241,8 +244,8 @@ it("normalizes timezone offsets, excludes next week and future events, and keeps
   expect({ ...result, nextCursor: null }).toEqual(local);
 });
 it("protects history queries and old exact links with workspace authentication and validates inputs", async () => {
-  ctx.repo.audit("team", event("own"));
-  ctx.repo.audit("other", event("other"));
+  await ctx.repo.audit("team", event("own"));
+  await ctx.repo.audit("other", event("other"));
   expect(
     (
       await ctx.app.inject({
@@ -283,7 +286,7 @@ it("provides a minimal same-workspace directory and never guesses identity from 
   expect(saved.json().ownerId).toBeUndefined();
 });
 it("keeps stable owner, participant and task associations across rename and disable without changing historical names", async () => {
-  const snapshot = ctx.repo.snapshot("team"),
+  const snapshot = await ctx.repo.snapshot("team"),
     p = snapshot.projects[0]!,
     task = snapshot.tasks.find((t) => t.parentId)!;
   let response = await request("PUT", `/api/projects/${p.id}`, {
@@ -302,7 +305,7 @@ it("keeps stable owner, participant and task associations across rename and disa
     })
   ).json();
   expect(savedTask.assignee).toBe("Same Name");
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET name=?,status=? WHERE id=?")
     .run("Renamed person", "disabled", members[1]!);
   response = await request("PUT", `/api/projects/${p.id}`, {
@@ -323,11 +326,9 @@ it("keeps stable owner, participant and task associations across rename and disa
     assigneeId: members[1],
     assignee: "Renamed person",
   });
-  const oldEvent = ctx.repo
-    .snapshot("team")
-    .activities.find(
-      (a) => a.entityId === task.id && a.after?.version === savedTask.version,
-    )!;
+  const oldEvent = (await ctx.repo.snapshot("team")).activities.find(
+    (a) => a.entityId === task.id && a.after?.version === savedTask.version,
+  )!;
   expect(oldEvent.after).toMatchObject({
     assignee: "Same Name",
     assigneeId: members[1],
@@ -343,7 +344,7 @@ it("keeps stable owner, participant and task associations across rename and disa
       })
     ).statusCode,
   ).toBe(400);
-  const foreign = ctx.repo.members("other")[0]!.id;
+  const foreign = (await ctx.repo.members("other"))[0]!.id;
   expect(
     (
       await request("PUT", `/api/projects/${other.id}`, {
@@ -378,7 +379,7 @@ it("keeps stable owner, participant and task associations across rename and disa
   });
 });
 it("retains assignments for older clients and same-workspace imports, rejecting foreign links atomically", async () => {
-  const initial = ctx.repo.snapshot("team"),
+  const initial = await ctx.repo.snapshot("team"),
     p = initial.projects[0]!;
   let current = (
     await request("PUT", `/api/projects/${p.id}`, {
@@ -400,20 +401,20 @@ it("retains assignments for older clients and same-workspace imports, rejecting 
   ).json();
   expect(current.ownerId).toBe(members[1]);
   expect(current.participantIds).toEqual([members[1]]);
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET status='disabled' WHERE id=?")
     .run(members[1]!);
-  const snapshot = ctx.repo.snapshot("team");
+  const snapshot = await ctx.repo.snapshot("team");
   expect(
     (await request("POST", "/api/import", { ...snapshot, confirmed: true }))
       .statusCode,
   ).toBe(200);
-  const before = ctx.repo.snapshot("team");
-  const bad = structuredClone(before);
-  bad.projects[0]!.ownerId = ctx.repo.members("other")[0]!.id;
+  const before = await ctx.repo.snapshot("team");
+  const bad = await structuredClone(before);
+  bad.projects[0]!.ownerId = (await ctx.repo.members("other"))[0]!.id;
   expect(
     (await request("POST", "/api/import", { ...bad, confirmed: true }))
       .statusCode,
   ).toBe(400);
-  expect(ctx.repo.snapshot("team")).toEqual(before);
+  expect(await ctx.repo.snapshot("team")).toEqual(before);
 });

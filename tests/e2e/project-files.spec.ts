@@ -121,7 +121,7 @@ test("uploads, persists and renders DOCX, XLSX, PDF and PPTX with no external do
         document
           .getAnimations()
           .filter((a) => a.effect?.getTiming().iterations !== Infinity)
-          .map((a) => a.finished.catch(() => {})),
+          .map(async (a) => (await a.finished.catch(() => {}))),
       );
     });
     await page.screenshot({ path: testInfo.outputPath(`preview-${name}.png`) });
@@ -134,7 +134,7 @@ test("uploads, persists and renders DOCX, XLSX, PDF and PPTX with no external do
     await expect(
       panel.getByRole("button", { name, exact: true }),
     ).toBeVisible();
-  const downloaded = page.waitForEvent("download");
+  const downloaded = (await page.waitForEvent("download"));
   await panel
     .getByRole("link", { name: "下载 contract.docx", exact: true })
     .click();
@@ -170,7 +170,7 @@ test("mobile previews escaped text, falls back to download, and keeps the dialog
       document
         .getAnimations()
         .filter((a) => a.effect?.getTiming().iterations !== Infinity)
-        .map((a) => a.finished.catch(() => {})),
+        .map(async (a) => (await a.finished.catch(() => {}))),
     );
   });
   expect(

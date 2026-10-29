@@ -29,5 +29,5 @@ export async function scenarioLogin(page: Page, file: string) {
     response.ok(),
     `Synthetic scenario login returned HTTP ${response.status()}`,
   ).toBe(true);
-  return response.json();
+  return (await response.json());
 }

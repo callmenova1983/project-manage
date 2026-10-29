@@ -9,9 +9,9 @@ import {
 } from "../../packages/domain/task-dependencies";
 it("serializes opposing dependency writes, preserves date fields and rolls back invalid lifecycle changes", async () => {
   const origin = "http://localhost:4173",
-    context = await buildApp({ databasePath: ":memory:", origin });
+    context = await buildApp({ isolatedDatabase: true, origin });
   try {
-    context.repo.seed("team");
+    await context.repo.seed("team");
     await createUser(context.repo, {
       name: "Dependency member",
       email: "dependency@example.test",
@@ -39,7 +39,7 @@ it("serializes opposing dependency writes, preserves date fields and rolls back 
         headers: { ...headers, "idempotency-key": randomUUID() },
         payload: payload as Record<string, unknown>,
       });
-    const initial = context.repo.snapshot("team"),
+    const initial = await context.repo.snapshot("team"),
       projectId = initial.projects[0]!.id;
     const leaves = initial.tasks.filter(
       (task) =>
@@ -49,11 +49,11 @@ it("serializes opposing dependency writes, preserves date fields and rolls back 
     const [a, b] = leaves as [Task, Task];
     const edge = (taskId: string) => ({ taskId, type: "finish_to_start" });
     const results = await Promise.all([
-      request("PUT", `/api/tasks/${a.id}/dependencies`, {
+      await request("PUT", `/api/tasks/${a.id}/dependencies`, {
         version: a.version,
         dependencies: [edge(b.id)],
       }),
-      request("PUT", `/api/tasks/${b.id}/dependencies`, {
+      await request("PUT", `/api/tasks/${b.id}/dependencies`, {
         version: b.version,
         dependencies: [edge(a.id)],
       }),
@@ -71,7 +71,7 @@ it("serializes opposing dependency writes, preserves date fields and rolls back 
       workDates: original.workDates,
       status: original.status,
     });
-    const before = context.repo.snapshot("team");
+    const before = await context.repo.snapshot("team");
     expect(() => validateTaskDependencies(before.tasks)).not.toThrow();
     const noop = await request("PUT", `/api/tasks/${changed.id}/dependencies`, {
       version: changed.version,
@@ -79,7 +79,9 @@ it("serializes opposing dependency writes, preserves date fields and rolls back 
     });
     expect(noop.statusCode).toBe(200);
     expect(noop.json().version).toBe(changed.version);
-    expect(context.repo.snapshot("team").revision).toBe(before.revision);
+    expect((await context.repo.snapshot("team")).revision).toBe(
+      before.revision,
+    );
     const foreign = initial.tasks.find(
       (task) =>
         task.projectId !== projectId &&
@@ -103,8 +105,10 @@ it("serializes opposing dependency writes, preserves date fields and rolls back 
       version: changed.version,
     });
     expect(moved.statusCode).toBe(400);
-    expect(context.repo.snapshot("team").tasks).toEqual(before.tasks);
-    expect(context.repo.snapshot("team").revision).toBe(before.revision);
+    expect((await context.repo.snapshot("team")).tasks).toEqual(before.tasks);
+    expect((await context.repo.snapshot("team")).revision).toBe(
+      before.revision,
+    );
     const predecessor = before.tasks.find(
       (task) => task.id === changed.dependencies![0]!.taskId,
     )!;
@@ -119,7 +123,7 @@ it("serializes opposing dependency writes, preserves date fields and rolls back 
       },
     );
     expect(voided.statusCode, voided.body).toBe(200);
-    const afterVoid = context.repo.snapshot("team");
+    const afterVoid = await context.repo.snapshot("team");
     expect(
       taskDependencyWarnings(afterVoid.tasks).some(
         (warning) => warning.taskId === changed.id && warning.kind === "voided",

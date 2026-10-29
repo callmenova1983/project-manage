@@ -40,29 +40,33 @@ async function boundedJson(response: Response, signal: AbortSignal) {
 export async function generateJson<T>(
   request: unknown,
   config: QwenConfig,
-  reserveAttempt: () => void,
+  reserveAttempt: () => void | Promise<void>,
   validate: (value: unknown) => T,
   fetchImpl: typeof fetch = fetch,
   reportUsage?: (usage: {
     inputTokens: number | null;
     outputTokens: number | null;
-  }) => void,
+  }) => void | Promise<void>,
 ): Promise<T> {
   if (config.runtime === "sdk") {
     const deadline = performance.now() + config.timeoutMs;
     const { generateSdkJson } = await import("./sdk.js");
-    return generateSdkJson(request, config, validate, (body) =>
-      generateLegacyJson(
-        body,
-        { ...config, timeoutMs: Math.max(0, deadline - performance.now()) },
-        reserveAttempt,
-        (_value, envelope) => envelope,
-        fetchImpl,
-        reportUsage,
-      ),
+    return await generateSdkJson(
+      request,
+      config,
+      validate,
+      async (body) =>
+        await generateLegacyJson(
+          body,
+          { ...config, timeoutMs: Math.max(0, deadline - performance.now()) },
+          reserveAttempt,
+          (_value, envelope) => envelope,
+          fetchImpl,
+          reportUsage,
+        ),
     );
   }
-  return generateLegacyJson(
+  return await generateLegacyJson(
     request,
     config,
     reserveAttempt,
@@ -75,13 +79,13 @@ export async function generateJson<T>(
 async function generateLegacyJson<T>(
   request: unknown,
   config: QwenConfig,
-  reserveAttempt: () => void,
+  reserveAttempt: () => void | Promise<void>,
   validate: (value: unknown, envelope: unknown) => T,
   fetchImpl: typeof fetch,
   reportUsage?: (usage: {
     inputTokens: number | null;
     outputTokens: number | null;
-  }) => void,
+  }) => void | Promise<void>,
 ): Promise<T> {
   const body = JSON.stringify(request);
   const deadline = performance.now() + config.timeoutMs;
@@ -94,7 +98,8 @@ async function generateLegacyJson<T>(
   for (let attempt = 0; attempt <= config.retries; attempt++) {
     const remainingMs = Math.floor(deadline - performance.now());
     if (remainingMs <= 0) throw timedOut();
-    reserveAttempt();
+    await reserveAttempt();
+    if (performance.now() >= deadline) throw timedOut();
     const signal = AbortSignal.timeout(remainingMs);
     let response: Response;
     try {
@@ -155,7 +160,7 @@ async function generateLegacyJson<T>(
         })
         .safeParse(envelope.success ? envelope.data.usage : undefined);
       if (usage.success)
-        reportUsage?.({
+        await reportUsage?.({
           inputTokens: usage.data.prompt_tokens,
           outputTokens: usage.data.completion_tokens,
         });

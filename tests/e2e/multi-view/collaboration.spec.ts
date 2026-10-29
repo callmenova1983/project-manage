@@ -19,15 +19,15 @@ test("five isolated browser sessions poll confirmed changes while an old editor 
   const identities = await sessions();
   const before = await snapshot(page);
   const contexts = await Promise.all(
-    identities.map((identity) =>
-      browser.newContext({
+    identities.map(async (identity) =>
+      (await browser.newContext({
         baseURL: origin,
         storageState: identity.state,
         viewport: { width: 1536, height: 1000 },
-      }),
+      })),
     ),
   );
-  const pages = await Promise.all(contexts.map((context) => context.newPage()));
+  const pages = await Promise.all(contexts.map(async (context) => (await context.newPage())));
   try {
     const actors = await Promise.all(
       contexts.map(
@@ -92,11 +92,11 @@ test("five isolated browser sessions poll confirmed changes while an old editor 
         exact: true,
       })
       .check();
-    const receipt = writer.waitForResponse(
+    const receipt = (await writer.waitForResponse(
       (response) =>
         response.url().endsWith("/api/tasks/bulk-update") &&
         response.request().method() === "POST",
-    );
+    ));
     await bulk
       .getByRole("button", { name: "Apply selected changes", exact: true })
       .click();
@@ -120,17 +120,17 @@ test("five isolated browser sessions poll confirmed changes while an old editor 
       "Unsaved collaborator 4 draft",
     );
     const snapshots = await Promise.all(
-      pages.map((client) => snapshot(client)),
+      pages.map(async (client) => (await snapshot(client))),
     );
     const saved = snapshots[0]!.tasks.find((task) => task.id === "task-1")!;
     expect(saved.status).toBe("blocked");
     for (const current of snapshots)
       expect(current.tasks.find((task) => task.id === saved.id)).toEqual(saved);
-    const stale = editor.waitForResponse(
+    const stale = (await editor.waitForResponse(
       (response) =>
         response.url().endsWith("/api/tasks/task-1") &&
         response.request().method() === "PUT",
-    );
+    ));
     await editor
       .getByRole("button", { name: "Save task", exact: true })
       .click();

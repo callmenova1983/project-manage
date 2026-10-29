@@ -38,15 +38,15 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
     vi.setSystemTime(new Date("2026-10-15T18:20:00Z"));
     modelFetch.mockReset().mockImplementation(async () => modelReply());
     ctx = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin,
       qwen: config,
       aiRuntime: runtime,
       aiFetch: modelFetch,
     });
-    ctx.repo.seed("team");
-    ctx.repo.seed("other-team");
-    ctx.repo.db
+    await ctx.repo.seed("team");
+    await ctx.repo.seed("other-team");
+    await ctx.repo.db
       .prepare("UPDATE workspaces SET time_zone=? WHERE id=?")
       .run("Asia/Shanghai", "other-team");
     const password = randomBytes(24).toString("hex");
@@ -70,8 +70,8 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
     vi.useRealTimers();
   });
 
-  function review(key = randomUUID()) {
-    const task = ctx.repo.snapshot("team").tasks[0]!;
+  async function review(key = randomUUID()) {
+    const task = (await ctx.repo.snapshot("team")).tasks[0]!;
     return ctx.app.inject({
       method: "POST",
       url: `/api/tasks/${task.id}/review`,
@@ -79,8 +79,8 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
       headers: { cookie, origin, "x-csrf-token": csrf, "idempotency-key": key },
     });
   }
-  function setTimeZone(timeZone: string) {
-    ctx.repo.db
+  async function setTimeZone(timeZone: string) {
+    await ctx.repo.db
       .prepare("UPDATE workspaces SET time_zone=? WHERE id=?")
       .run(timeZone, "team");
   }
@@ -93,8 +93,8 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
     ])(
       "passes %s to the model without changing saved task fields",
       async (timeZone, today) => {
-        setTimeZone(timeZone);
-        const before = ctx.repo.snapshot("team").tasks;
+        await setTimeZone(timeZone);
+        const before = (await ctx.repo.snapshot("team")).tasks;
         expect((await review()).statusCode).toBe(200);
         expect(modelFetch).toHaveBeenCalledTimes(1);
         const body = JSON.parse(String(modelFetch.mock.calls[0]![1]!.body));
@@ -111,15 +111,15 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
           today,
         });
         expect(body.messages[0].content).toContain(`工作区 ${timeZone} 时区`);
-        expect(ctx.repo.snapshot("team").tasks).toEqual(before);
-        expect(ctx.repo.settings("team").timeZone).toBe(timeZone);
+        expect((await ctx.repo.snapshot("team")).tasks).toEqual(before);
+        expect((await ctx.repo.settings("team")).timeZone).toBe(timeZone);
       },
     );
 
     it("does not reuse a successful candidate after the workspace time zone changes", async () => {
       const key = randomUUID();
       expect((await review(key)).statusCode).toBe(200);
-      setTimeZone("Asia/Kathmandu");
+      await setTimeZone("Asia/Kathmandu");
       expect((await review(key)).statusCode).toBe(409);
       expect(modelFetch).toHaveBeenCalledTimes(1);
       expect((await review()).statusCode).toBe(200);
@@ -143,15 +143,15 @@ describe.each(["legacy", "sdk"] as const)("runtime %s", (runtime) => {
         });
         return modelReply();
       });
-      const before = ctx.repo.snapshot("team").tasks;
+      const before = (await ctx.repo.snapshot("team")).tasks;
       const pending = review().then((response) => response);
       await vi.waitFor(() => expect(modelFetch).toHaveBeenCalledTimes(1));
-      setTimeZone("Asia/Shanghai");
+      await setTimeZone("Asia/Shanghai");
       finish();
       const response = await pending;
       expect(response.statusCode).toBe(409);
       expect(response.json().code).toBe("AI_STALE");
-      expect(ctx.repo.snapshot("team").tasks).toEqual(before);
+      expect((await ctx.repo.snapshot("team")).tasks).toEqual(before);
     });
   });
 });

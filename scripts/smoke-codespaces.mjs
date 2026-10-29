@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Isolated browser replay of the observed proxy rewrite; no live Codespace,
 // user browser, external service, real password or persistent database is used.
 import assert from "node:assert/strict";
@@ -10,7 +11,7 @@ import { configuredCodespacesRewrite } from "../dist/server/apps/api/src/origin.
 
 const publicOrigin = "https://synthetic-space-3001.app.github.dev";
 const { app, repo } = await buildApp({
-  databasePath: ":memory:",
+  isolatedDatabase: true,
   origin: publicOrigin,
   production: true,
   codespacesOriginRewrite: configuredCodespacesRewrite(
@@ -24,7 +25,10 @@ const { app, repo } = await buildApp({
     publicOrigin,
   ),
 });
-repo.seed("synthetic");
+if (!/^pm_test_[a-f0-9]{32}$/.test(repo.db.schema))
+  throw new Error("Refusing test writes outside an isolated PostgreSQL schema");
+
+await repo.seed("synthetic");
 const password = randomBytes(24).toString("hex");
 await createUser(repo, {
   email: "proxy-browser@example.test",

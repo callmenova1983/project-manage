@@ -1,3 +1,4 @@
+import { testDatabaseConfig } from "../pg-helpers.js";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -56,20 +57,20 @@ function reply(projectId: string) {
     ],
   });
 }
-const request = (
+const request = async (
   method: "GET" | "POST",
   url: string,
   payload?: unknown,
   key = randomUUID(),
 ) =>
-  ctx.app.inject({
+  await ctx.app.inject({
     method,
     url,
     payload: payload as Record<string, unknown>,
     headers: { cookie, origin, "x-csrf-token": csrf, "idempotency-key": key },
   });
-const propose = (key = randomUUID()) =>
-  request(
+const propose = async (key = randomUUID()) =>
+  await request(
     "POST",
     "/api/assistant/interpret",
     { source, externalProcessingConfirmed: true },
@@ -79,12 +80,12 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "pm-qwen-"));
   mock.mockReset();
   ctx = await buildApp({
-    databasePath: join(dir, "db.sqlite"),
+    database: testDatabaseConfig(join(dir, "db.sqlite")),
     origin,
     qwen: config,
     aiFetch: mock,
   });
-  ctx.repo.seed("test");
+  await ctx.repo.seed("test");
   const password = randomBytes(24).toString("hex");
   await createUser(ctx.repo, {
     email: "ai@example.test",
@@ -99,7 +100,7 @@ beforeEach(async () => {
   });
   cookie = login.cookies[0]!.name + "=" + login.cookies[0]!.value;
   csrf = login.json().csrf;
-  const project = ctx.repo.snapshot("test").projects[0]!;
+  const project = (await ctx.repo.snapshot("test")).projects[0]!;
   mock.mockImplementation(async () => reply(project.id));
 });
 afterEach(async () => {
@@ -143,7 +144,7 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
     expect(mock).not.toHaveBeenCalled();
   });
   it("generates a source-backed draft, requires review/overwrite confirmation, then applies exactly once", async () => {
-    const before = ctx.repo.snapshot("test");
+    const before = await ctx.repo.snapshot("test");
     const key = randomUUID();
     const result = await propose(key);
     expect(result.statusCode).toBe(200);
@@ -158,7 +159,7 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
       overwriteConfirmed: false,
       selectedProjectId: "project-1",
     });
-    expect(ctx.repo.snapshot("test")).toEqual(before);
+    expect(await ctx.repo.snapshot("test")).toEqual(before);
     expect((await propose(key)).json().proposal.id).toBe(proposal.id);
     expect(mock).toHaveBeenCalledTimes(1);
     const project = before.projects[0]!;
@@ -194,10 +195,11 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
       ).statusCode,
     ).toBe(200);
     expect(
-      ctx.repo.snapshot("test").projects.find((p) => p.id === project.id)!
-        .latestUpdate,
+      (await ctx.repo.snapshot("test")).projects.find(
+        (p) => p.id === project.id,
+      )!.latestUpdate,
     ).toBe("Reviewed completion");
-    expect(ctx.repo.snapshot("test").activities[0]!.source).toContain(
+    expect((await ctx.repo.snapshot("test")).activities[0]!.source).toContain(
       "acceptance completed",
     );
     expect(
@@ -214,7 +216,7 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
       await new Promise<void>((resolve) => {
         finish = resolve;
       });
-      return reply(ctx.repo.snapshot("test").projects[0]!.id);
+      return reply((await ctx.repo.snapshot("test")).projects[0]!.id);
     });
     const key = randomUUID();
     const pending = propose(key).then((r) => r);
@@ -237,7 +239,7 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
     expect(mock).toHaveBeenCalledTimes(1);
     await ctx.app.close();
     ctx = await buildApp({
-      databasePath: join(dir, "db.sqlite"),
+      database: testDatabaseConfig(join(dir, "db.sqlite")),
       origin,
       qwen: config,
       aiFetch: mock,
@@ -256,18 +258,19 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
     );
   });
   it("rejects hallucinated project IDs and confirmation injection with no proposal or project writes", async () => {
-    const before: Snapshot = ctx.repo.snapshot("test");
+    const before: Snapshot = await ctx.repo.snapshot("test");
     mock.mockResolvedValueOnce(reply("foreign-workspace-project"));
     expect((await propose()).json().code).toBe("AI_INVALID_OUTPUT");
-    expect(ctx.repo.snapshot("test")).toEqual(before);
+    expect(await ctx.repo.snapshot("test")).toEqual(before);
     expect(
-      ctx.repo.db.prepare("SELECT count(*) AS n FROM proposals").get()!.n,
+      (await ctx.repo.db.prepare("SELECT count(*) AS n FROM proposals").get())!
+        .n,
     ).toBe(0);
   });
   it("default server keeps AI disabled even when a Qwen route is requested", async () => {
     await ctx.app.close();
     ctx = await buildApp({
-      databasePath: join(dir, "db.sqlite"),
+      database: testDatabaseConfig(join(dir, "db.sqlite")),
       origin,
       aiFetch: mock,
     });
@@ -283,11 +286,13 @@ describe("Qwen HTTP integration using synthetic fetch only", () => {
 });
 
 it("records safe actual usage metadata and workspace settings can disable future calls", async () => {
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
     .run();
   mock.mockImplementation(async () => {
-    const body = await reply(ctx.repo.snapshot("test").projects[0]!.id).json();
+    const body = await reply(
+      (await ctx.repo.snapshot("test")).projects[0]!.id,
+    ).json();
     return Response.json({
       ...body,
       usage: { prompt_tokens: 120, completion_tokens: 45 },
@@ -332,7 +337,7 @@ it("records safe actual usage metadata and workspace settings can disable future
   expect(mock).toHaveBeenCalledTimes(1);
 });
 it("records failed provider status without source data, generated text or fabricated usage", async () => {
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
     .run();
   mock.mockResolvedValue(
@@ -353,7 +358,7 @@ it("records failed provider status without source data, generated text or fabric
 
 describe("saved-task background review", () => {
   async function savedTask() {
-    const project = ctx.repo.snapshot("test").projects[0]!;
+    const project = (await ctx.repo.snapshot("test")).projects[0]!;
     const response = await request("POST", "/api/tasks", {
       projectId: project.id,
       parentId: null,
@@ -416,7 +421,7 @@ describe("saved-task background review", () => {
       version: task.version,
     });
     expect(
-      ctx.repo.snapshot("test").tasks.find((t) => t.id === task.id),
+      (await ctx.repo.snapshot("test")).tasks.find((t) => t.id === task.id),
     ).toEqual(task);
     expect(
       (
@@ -464,7 +469,7 @@ describe("saved-task background review", () => {
       ).statusCode,
     ).toBe(504);
     expect(
-      ctx.repo.snapshot("test").tasks.find((t) => t.id === task.id),
+      (await ctx.repo.snapshot("test")).tasks.find((t) => t.id === task.id),
     ).toEqual(task);
     mock.mockClear();
     expect(
@@ -479,7 +484,11 @@ describe("saved-task background review", () => {
   it("discards results when the task is edited during provider processing", async () => {
     const task = await savedTask();
     mock.mockImplementation(async () => {
-      ctx.repo.putTask("test", { ...task, title: "更新后的原文", version: 2 });
+      await ctx.repo.putTask("test", {
+        ...task,
+        title: "更新后的原文",
+        version: 2,
+      });
       return reviewReply();
     });
     const result = await request("POST", `/api/tasks/${task.id}/review`, {
@@ -488,13 +497,14 @@ describe("saved-task background review", () => {
     expect(result.statusCode).toBe(409);
     expect(result.json().code).toBe("AI_STALE");
     expect(
-      ctx.repo.snapshot("test").tasks.find((t) => t.id === task.id)?.title,
+      (await ctx.repo.snapshot("test")).tasks.find((t) => t.id === task.id)
+        ?.title,
     ).toBe("更新后的原文");
   });
 });
 
 it("retains reported usage for truncated output while recording failure and exactly one paid attempt", async () => {
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
     .run();
   mock.mockResolvedValue(
@@ -531,7 +541,7 @@ it("retains reported usage for truncated output while recording failure and exac
 });
 
 it("counts failed attempts toward exhaustion without inventing a provider log for a blocked request", async () => {
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
     .run();
   mock.mockImplementation(async () => Response.json({}, { status: 503 }));
@@ -568,12 +578,12 @@ it("counts failed attempts toward exhaustion without inventing a provider log fo
 });
 
 it("reports an expired allowance consistently without sending a provider request", async () => {
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
     .run();
   await ctx.app.close();
   ctx = await buildApp({
-    databasePath: join(dir, "db.sqlite"),
+    database: testDatabaseConfig(join(dir, "db.sqlite")),
     origin,
     qwen: { ...config, expiresAt: Date.now() - 1000 },
     aiFetch: mock,
@@ -593,7 +603,7 @@ it("reports an expired allowance consistently without sending a provider request
   expect((await request("GET", "/api/admin/model/logs")).json()).toEqual([]);
 });
 it("lets an administrator select a Qwen model while preserving credentials and request allowance", async () => {
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email='ai@example.test'")
     .run();
   const before = (await request("GET", "/api/admin/model")).json();

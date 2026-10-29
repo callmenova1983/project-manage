@@ -1,3 +1,4 @@
+import { readDatabaseConfig } from "../../apps/api/src/database-config.js";
 import { scenarioLogin } from "./scenario-login";
 import { test, expect } from "@playwright/test";
 import { readFileSync, mkdirSync } from "node:fs";
@@ -20,12 +21,15 @@ for (const width of [1536, 390]) {
       page,
       "data/e2e-admin-login.json",
     );
-    const repo = new Repository("data/e2e.sqlite"),
+    const repo = await Repository.open({
+        ...readDatabaseConfig(),
+        schema: JSON.parse(readFileSync("data/e2e-login.json", "utf8")).schema,
+      }),
       prefix = `tz-${randomUUID()}`;
-    const original = repo.settings(actor.workspaceId);
-    const base = repo.snapshot(actor.workspaceId).projects[0]!;
-    const record = (id: string, at: string) =>
-      repo.audit(actor.workspaceId, {
+    const original = await repo.settings(actor.workspaceId);
+    const base = (await repo.snapshot(actor.workspaceId)).projects[0]!;
+    const record = async (id: string, at: string) =>
+      await repo.audit(actor.workspaceId, {
         id: prefix + id,
         projectId: base.id,
         entityId: base.id,
@@ -42,11 +46,11 @@ for (const width of [1536, 390]) {
         },
       });
     try {
-      repo.transaction(() => {
-        record("before", "2020-10-04T15:59:59.999Z");
+      await repo.transaction(async () => {
+        await record("before", "2020-10-04T15:59:59.999Z");
         for (let i = 0; i < 31; i++)
-          record(String(i).padStart(2, "0"), "2020-10-04T16:00:00.000Z");
-        record("next", "2020-10-11T16:00:00Z");
+          await record(String(i).padStart(2, "0"), "2020-10-04T16:00:00.000Z");
+        await record("next", "2020-10-11T16:00:00Z");
       });
       await page.goto("/settings");
       await expect(
@@ -112,8 +116,8 @@ for (const width of [1536, 390]) {
         .getByRole("button", { name: "Load more changes", exact: true })
         .dblclick();
       await expect(page.locator(".activity-event")).toHaveCount(31);
-      record("late", "2020-10-06T00:00:00Z");
-      const downloadPromise = page.waitForEvent("download");
+      await record("late", "2020-10-06T00:00:00Z");
+      const downloadPromise = await page.waitForEvent("download");
       await page
         .getByRole("button", { name: "Export filtered history", exact: true })
         .click();
@@ -141,7 +145,7 @@ for (const width of [1536, 390]) {
       ).toBe(true);
       expect(errors).toEqual([]);
     } finally {
-      const current = repo.settings(actor.workspaceId);
+      const current = await repo.settings(actor.workspaceId);
       const reset = await page.request.put("/api/admin/workspace-settings", {
         headers: { "x-csrf-token": csrf, "idempotency-key": randomUUID() },
         data: {
@@ -154,7 +158,7 @@ for (const width of [1536, 390]) {
         reset.ok(),
         `Timezone cleanup returned HTTP ${reset.status()}`,
       ).toBe(true);
-      repo.db
+      await repo.db
         .prepare("DELETE FROM activities WHERE workspace_id=? AND id LIKE ?")
         .run(actor.workspaceId, prefix + "%");
       repo.close();
@@ -187,7 +191,7 @@ test("local timezone preserves a dirty draft on conflict, reloads explicitly and
   await page
     .getByRole("button", { name: "Toggle sidebar", exact: true })
     .click();
-  page.once("dialog", (d) => d.dismiss());
+  page.once("dialog", async (d) => await d.dismiss());
   await page
     .getByRole("navigation", { name: "Main navigation", exact: true })
     .getByRole("link", { name: "Projects", exact: true })

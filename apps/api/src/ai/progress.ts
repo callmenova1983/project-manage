@@ -1,4 +1,4 @@
-import { progressInstruction } from './instructions.js';
+import { progressInstruction } from "./instructions.js";
 import type { Project } from "../../../../packages/domain/types.js";
 import { progressAnalysisOutput } from "../../../../packages/domain/progress-material.js";
 import { AiError } from "./provider.js";
@@ -32,8 +32,7 @@ export function makeProgressRequest(
     messages: [
       {
         role: "system",
-        content:
-          progressInstruction(recognitionDepth),
+        content: progressInstruction(recognitionDepth),
       },
       {
         role: "user",

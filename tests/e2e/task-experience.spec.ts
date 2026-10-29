@@ -17,7 +17,7 @@ async function fixture(page: Page): Promise<Fixture> {
   });
   await page.goto("/demo/projects");
   await expect(page.locator(".project-record").first()).toBeVisible();
-  return page.evaluate(async () => {
+  return (await page.evaluate(async () => {
     const localPath = "/src/services/local.ts";
     const calendarPath = "/src/composables/calendar.ts";
     const { createLocalApi } = (await import(localPath)) as {
@@ -65,7 +65,7 @@ async function fixture(page: Page): Promise<Fixture> {
       title: first.title,
       taskIds,
     };
-  });
+  }));
 }
 
 async function openTasks(page: Page, data: Fixture) {
@@ -185,7 +185,7 @@ async function dragTask(
 }
 
 async function placement(page: Page, id: string) {
-  return page.evaluate(async (id) => {
+  return (await page.evaluate(async (id) => {
     const localPath = "/src/services/local.ts";
     const { createLocalApi } = (await import(localPath)) as {
       createLocalApi: () => WorkspaceApi;
@@ -198,7 +198,7 @@ async function placement(page: Page, id: string) {
       projectId: task.projectId,
       sortOrder: task.sortOrder,
     };
-  }, id);
+  }, id));
 }
 
 test.describe("global task experience", () => {
@@ -206,7 +206,7 @@ test.describe("global task experience", () => {
 
   test.beforeEach(async ({ page }) => {
     // These tests deliberately exercise the browser demo, never the shared API.
-    await page.route("**/api/**", (route) => route.abort());
+    await page.route("**/api/**", async (route) => (await route.abort()));
   });
 
   test("distinguishes nested tasks and aligns the calendar controls", async ({
@@ -258,9 +258,9 @@ test.describe("global task experience", () => {
       ),
     ).toBeLessThanOrEqual(2);
     const indent = async (row: Locator) =>
-      row
+      (await row
         .locator(".task-name")
-        .evaluate((el) => parseFloat(getComputedStyle(el).paddingLeft));
+        .evaluate((el) => parseFloat(getComputedStyle(el).paddingLeft)));
     expect(await indent(grandchild)).toBeGreaterThan(await indent(child));
     expect(
       await parent.evaluate((el) => getComputedStyle(el).backgroundColor),
@@ -620,7 +620,7 @@ test.describe("global task experience", () => {
     await status.selectOption("in_progress");
     await expect(status).toHaveValue("in_progress");
     await expect
-      .poll(() => status.evaluate((element) => getComputedStyle(element).color))
+      .poll(async () => (await status.evaluate((element) => getComputedStyle(element).color)))
       .not.toBe(originalColor);
     await row
       .getByRole("checkbox", { name: `Complete ${nextTitle}`, exact: true })
@@ -719,7 +719,7 @@ test.describe("global task experience", () => {
     await settings
       .getByRole("button", { name: "Copy view link", exact: true })
       .click();
-    const link = await page.evaluate(() => navigator.clipboard.readText());
+    const link = await page.evaluate(async () => (await navigator.clipboard.readText()));
     const params = new URL(link).searchParams;
     expect(params.get("view")).toBe("list");
     expect(params.get("group")).toBe("project");
@@ -743,7 +743,7 @@ test.describe("global task experience", () => {
           localStorage.setItem(key, value);
       }, snapshot);
       const clean = await other.newPage();
-      await clean.route("**/api/**", (route) => route.abort());
+      await clean.route("**/api/**", async (route) => (await route.abort()));
       await clean.goto(link);
       await expect(clean.locator(".task-row")).toHaveCount(12);
       await clean
@@ -779,10 +779,10 @@ test.describe("global task experience", () => {
     const data = await fixture(page);
     await openTasks(page, data);
     const [sourceId, targetId] = data.taskIds;
-    const order = () =>
-      page
+    const order = async () =>
+      (await page
         .locator(".task-row")
-        .evaluateAll((elements) => elements.map((element) => element.id));
+        .evaluateAll((elements) => elements.map((element) => element.id)));
     await dragTask(page, sourceId!, targetId!, "after");
     await expect(page.locator(".task-move-notice")).toContainText(
       "Task moved. Its subtasks stay with it.",
@@ -1099,7 +1099,7 @@ test.describe("global task experience on a narrow screen", () => {
   test("keeps primary actions, filters, details and creation usable without horizontal overflow", async ({
     page,
   }, info) => {
-    await page.route("**/api/**", (route) => route.abort());
+    await page.route("**/api/**", async (route) => (await route.abort()));
     const data = await fixture(page);
     await openTasks(page, data);
     for (const name of ["New task", "Filter tasks", "View settings"]) {
@@ -1202,7 +1202,7 @@ test.describe("global task experience on a narrow screen", () => {
   test("has no WCAG A or AA violations on the mobile list, detail and creation form", async ({
     page,
   }) => {
-    await page.route("**/api/**", (route) => route.abort());
+    await page.route("**/api/**", async (route) => (await route.abort()));
     const data = await fixture(page);
     await openTasks(page, data);
     await accessible(page);

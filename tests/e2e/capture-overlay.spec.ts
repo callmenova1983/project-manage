@@ -32,14 +32,14 @@ async function fitsViewport(page: Page) {
   ).toBeInViewport();
 }
 async function draftSnapshot(page: Page) {
-  return page.evaluate(() => {
+  return (await page.evaluate(() => {
     const state = JSON.parse(localStorage.getItem("project-manage-demo-v1")!);
     return {
       projects: state.projects.length,
       tasks: state.tasks.length,
       activities: state.activities.length,
     };
-  });
+  }));
 }
 for (const viewport of viewports) {
   test.describe(`Global AI sidebar ${viewport.width}x${viewport.height}`, () => {

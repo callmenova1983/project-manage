@@ -28,12 +28,14 @@ async function config(extra = {}) {
     },
   });
 }
-function directory(edit: (d: ReturnType<typeof ctx.repo.directory>) => void) {
-  const d = ctx.repo.directory("a");
+async function directory(
+  edit: (d: Awaited<ReturnType<typeof ctx.repo.directory>>) => void,
+) {
+  const d = await ctx.repo.directory("a");
   edit(d);
-  ctx.repo.db
+  await ctx.repo.db
     .prepare(
-      "INSERT INTO workspace_directory VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
+      "INSERT INTO workspace_directory(workspace_id,data) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET data=excluded.data",
     )
     .run("a", JSON.stringify(d));
 }
@@ -67,18 +69,18 @@ beforeEach(async () => {
     );
   });
   ctx = await buildApp({
-    databasePath: ":memory:",
+    isolatedDatabase: true,
     origin,
     wecomFetch: fetcher,
   });
-  ctx.repo.seed("a");
+  await ctx.repo.seed("a");
   await createUser(ctx.repo, {
     workspaceId: "a",
     email: "admin@example.test",
     name: "Admin",
     password,
   });
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email='admin@example.test'")
     .run();
   await createUser(ctx.repo, {
@@ -88,9 +90,9 @@ beforeEach(async () => {
     password,
   });
   userId = String(
-    ctx.repo.db
+    (await ctx.repo.db
       .prepare("SELECT id FROM users WHERE email='member@example.test'")
-      .get()!.id,
+      .get())!.id,
   );
   const login = await ctx.app.inject({
     method: "POST",
@@ -100,7 +102,7 @@ beforeEach(async () => {
   });
   cookie = `pm_session=${login.cookies[0]!.value}`;
   csrf = login.json().csrf;
-  directory((d) => {
+  await directory((d) => {
     d.employees.push({
       id: "e",
       employeeNo: "",
@@ -137,7 +139,7 @@ it("logs in the bound account, preserves deep links and prevents replay", async 
     "wecom_error=expired",
   );
   expect(fetcher).toHaveBeenCalledTimes(3);
-  directory((d) => {
+  await directory((d) => {
     d.employees[0]!.active = false;
   });
   expect(
@@ -160,7 +162,7 @@ it("binds the authorization request to the originating browser", async () => {
 });
 it("rejects expired requests and config changes during authorization", async () => {
   const flow = await start();
-  ctx.repo.db.prepare("UPDATE wecom_login_states SET expires_at=0").run();
+  await ctx.repo.db.prepare("UPDATE wecom_login_states SET expires_at=0").run();
   expect((await finish(flow)).headers.location).toContain(
     "wecom_error=expired",
   );
@@ -173,13 +175,13 @@ it("rejects expired requests and config changes during authorization", async () 
 it.each(["wrong-corp", "inactive", "unlinked", "disabled", "pending"])(
   "rejects %s identities",
   async (kind) => {
-    directory((d) => {
+    await directory((d) => {
       if (kind === "wrong-corp") d.employees[0]!.wecomCorpId = "corp-b";
       if (kind === "inactive") d.employees[0]!.active = false;
       if (kind === "unlinked") d.employees[0]!.userId = null;
     });
     if (kind === "disabled" || kind === "pending")
-      ctx.repo.db
+      await ctx.repo.db
         .prepare("UPDATE users SET status=? WHERE id=?")
         .run(kind, userId);
     const response = await finish(await start());
@@ -189,31 +191,31 @@ it.each(["wrong-corp", "inactive", "unlinked", "disabled", "pending"])(
 );
 it("creates only one ordinary member and does not merge by email", async () => {
   await config({ autoProvision: true });
-  directory((d) => {
+  await directory((d) => {
     d.employees[0]!.userId = null;
   });
   expect((await finish(await start())).headers.location).toContain(
     "wecom_error=unlinked",
   );
-  directory((d) => {
+  await directory((d) => {
     d.employees[0]!.email = "new@example.test";
   });
   expect((await finish(await start())).headers.location).not.toContain(
     "wecom_error",
   );
-  const id = ctx.repo.directory("a").employees[0]!.userId;
+  const id = (await ctx.repo.directory("a")).employees[0]!.userId;
   expect(id).not.toBe(userId);
   expect(
-    ctx.repo.db
+    await ctx.repo.db
       .prepare("SELECT role,password_hash FROM users WHERE id=?")
       .get(id!),
   ).toMatchObject({ role: "member", password_hash: "!wecom-only" });
   await finish(await start());
-  expect(ctx.repo.directory("a").employees[0]!.userId).toBe(id);
+  expect((await ctx.repo.directory("a")).employees[0]!.userId).toBe(id);
 });
 it("rejects another workspace's linked account", async () => {
-  ctx.repo.workspace("b");
-  ctx.repo.db
+  await ctx.repo.workspace("b");
+  await ctx.repo.db
     .prepare("UPDATE users SET workspace_id='b' WHERE id=?")
     .run(userId);
   expect((await finish(await start())).headers.location).toContain(
@@ -233,9 +235,9 @@ it("handles upstream failures without exposing secrets", async () => {
   expect(state.json().lastEvent.outcome).toContain("企微身份验证失败");
 });
 it("encrypts credentials and requires admin, CSRF and version checks", async () => {
-  const row = ctx.repo.db
+  const row = (await ctx.repo.db
     .prepare("SELECT encrypted_config FROM wecom_login_config")
-    .get()!;
+    .get())!;
   expect(String(row.encrypted_config)).not.toContain("synthetic-secret");
   expect(
     (await ctx.app.inject({ url: "/api/admin/wecom-login" })).statusCode,
@@ -269,7 +271,7 @@ it("does not reuse a revoked or different-workspace session", async () => {
     headers: { cookie },
   });
   expect(response.headers.location).toBe("/tasks");
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("DELETE FROM sessions WHERE token_hash=?")
     .run(hashToken(cookie.split("=")[1]!));
   expect(

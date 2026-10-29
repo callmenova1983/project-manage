@@ -1,3 +1,4 @@
+import "dotenv/config";
 import {
   cpSync,
   existsSync,
@@ -13,9 +14,8 @@ const directory = process.env.PM_MULTI_VIEW_TEST_DIR;
 if (!directory)
   throw new Error("An isolated temporary test directory is required.");
 const root = resolve(directory);
-// Never remove/reuse an existing database or mutate the ordinary e2e data folder.
-const databasePath = resolve(root, "multi-view.sqlite");
-if (existsSync(databasePath))
+// Never reuse fixture files or mutate the ordinary e2e data folder.
+if (existsSync(resolve(root, "credentials.json")))
   throw new Error("Use a fresh isolated test directory for each run.");
 mkdirSync(root, { recursive: true });
 cpSync(resolve("dist/web"), resolve(root, "web"), { recursive: true });
@@ -30,13 +30,16 @@ const { createUser } = (await import(
 const port = Number(process.env.PM_MULTI_VIEW_E2E_PORT ?? 4189);
 const origin = `http://127.0.0.1:${port}`;
 const { app, repo } = await buildApp({
-  databasePath,
+  isolatedDatabase: true,
   origin,
   staticPath: resolve(root, "web"),
 });
+if (!/^pm_test_[a-f0-9]{32}$/.test(repo.db.schema))
+  throw new Error("Refusing test writes outside an isolated PostgreSQL schema");
+
 const workspaceId = "multi-view-acceptance";
-repo.seed(workspaceId);
-const credentials = [];
+await repo.seed(workspaceId);
+const credentials: { email: string; password: string }[] = [];
 for (let index = 0; index < 5; index++) {
   const credential = {
     email: `multi-view-${index}@example.test`,
@@ -49,9 +52,9 @@ for (let index = 0; index < 5; index++) {
   });
   credentials.push(credential);
 }
-const initial = repo.snapshot(workspaceId);
+const initial = await repo.snapshot(workspaceId);
 const project = initial.projects.find((project) => project.id === "project-1")!;
-repo.putProject(workspaceId, {
+await repo.putProject(workspaceId, {
   ...project,
   name: "上海工厂项目",
   aliases: ["Atlas"],
@@ -59,12 +62,10 @@ repo.putProject(workspaceId, {
 });
 for (const id of ["task-1", "task-2"]) {
   const task = initial.tasks.find((task) => task.id === id)!;
-  const member = repo
-    .snapshot(workspaceId)
-    .members!.find(
-      (member) => member.email === credentials[id === "task-1" ? 0 : 1]!.email,
-    )!;
-  repo.putTask(
+  const member = (await repo.snapshot(workspaceId)).members!.find(
+    (member) => member.email === credentials[id === "task-1" ? 0 : 1]!.email,
+  )!;
+  await repo.putTask(
     workspaceId,
     { ...task, assigneeId: member.id, assignee: member.name },
     undefined,
@@ -76,7 +77,7 @@ for (const [id, start, end, milestone] of [
   ["task-4", "2026-10-22", "2026-10-22", true],
 ] as const) {
   const task = initial.tasks.find((task) => task.id === id)!;
-  repo.putTask(
+  await repo.putTask(
     workspaceId,
     {
       ...task,
@@ -91,7 +92,7 @@ for (const [id, start, end, milestone] of [
   );
 }
 const longTask = initial.tasks.find((task) => task.id === "task-8")!;
-repo.putTask(
+await repo.putTask(
   workspaceId,
   {
     ...longTask,
@@ -110,7 +111,7 @@ writeFileSync(resolve(root, "credentials.json"), JSON.stringify(credentials), {
 });
 writeFileSync(
   resolve(root, "snapshot.json"),
-  JSON.stringify(repo.snapshot(workspaceId)),
+  JSON.stringify(await repo.snapshot(workspaceId)),
   { mode: 0o600 },
 );
 await app.listen({ host: "127.0.0.1", port });

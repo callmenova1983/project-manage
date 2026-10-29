@@ -78,8 +78,8 @@ test.afterEach(async () => {
 });
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/ai/capabilities", (route) =>
-    route.fulfill({
+  await page.route("**/api/ai/capabilities", async (route) =>
+    (await route.fulfill({
       json: {
         enabled: true,
         provider: "qwen",
@@ -88,7 +88,7 @@ test.beforeEach(async ({ page }) => {
         connectionVerified: false,
         remainingAttempts: 3,
       },
-    }),
+    })),
   );
 });
 test("configured AI records unambiguous progress with one click and no replacement form", async ({

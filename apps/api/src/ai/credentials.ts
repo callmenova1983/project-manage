@@ -12,19 +12,23 @@ import type {
   ModelCredentialInput,
 } from "../../../../packages/domain/admin.js";
 
-/** Workspace credentials are encrypted in SQLite; the key stays beside the private database. */
+/** Workspace credentials are encrypted in PostgreSQL; the key is a private server file. */
 export class QwenCredentialStore {
   private memoryKey = randomBytes(32);
   constructor(
     private repo: Repository,
-    private databasePath: string,
+    private credentialKeyPath: string,
   ) {}
-  private key(): Buffer {
-    return workspaceCredentialKey(this.repo, this.databasePath, this.memoryKey);
+  private async key(): Promise<Buffer> {
+    return await workspaceCredentialKey(
+      this.repo,
+      this.credentialKeyPath,
+      this.memoryKey,
+    );
   }
 
-  read(workspaceId: string): QwenConfig | undefined {
-    const row = this.repo.db
+  async read(workspaceId: string): Promise<QwenConfig | undefined> {
+    const row = await this.repo.db
       .prepare(
         "SELECT encrypted_config FROM workspace_ai_credentials WHERE workspace_id=?",
       )
@@ -33,7 +37,7 @@ export class QwenCredentialStore {
     const [iv, tag, data] = String(row.encrypted_config).split(".");
     const cipher = createDecipheriv(
       "aes-256-gcm",
-      this.key(),
+      await this.key(),
       Buffer.from(iv!, "base64"),
     );
     cipher.setAAD(Buffer.from(workspaceId));
@@ -45,7 +49,10 @@ export class QwenCredentialStore {
       ]).toString(),
     ) as QwenConfig;
   }
-  save(workspaceId: string, input: ModelCredentialInput): QwenConfig {
+  async save(
+    workspaceId: string,
+    input: ModelCredentialInput,
+  ): Promise<QwenConfig> {
     const shared = {
       "cn-beijing": "https://dashscope.aliyuncs.com/compatible-mode/v1",
       "ap-southeast-1":
@@ -68,11 +75,14 @@ export class QwenCredentialStore {
       AI_MAX_OUTPUT_TOKENS: "4096",
       AI_MAX_RETRIES: "0",
     })!;
-    this.write(workspaceId, config);
+    await this.write(workspaceId, config);
     return config;
   }
-  updateAllowance(workspaceId: string, input: ModelAllowanceInput): QwenConfig {
-    const current = this.read(workspaceId);
+  async updateAllowance(
+    workspaceId: string,
+    input: ModelAllowanceInput,
+  ): Promise<QwenConfig> {
+    const current = await this.read(workspaceId);
     if (!current)
       throw new Error("Workspace model credential is not configured");
     const next = {
@@ -82,12 +92,12 @@ export class QwenCredentialStore {
     };
     // Keep the same ledger identity: approval changes the total ceiling, never
     // resets already billed attempts or rotates credentials behind the form.
-    this.write(workspaceId, next);
+    await this.write(workspaceId, next);
     return next;
   }
-  private write(workspaceId: string, config: QwenConfig) {
+  private async write(workspaceId: string, config: QwenConfig) {
     const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", this.key(), iv);
+    const cipher = createCipheriv("aes-256-gcm", await this.key(), iv);
     cipher.setAAD(Buffer.from(workspaceId));
     const data = Buffer.concat([
       cipher.update(JSON.stringify(config)),
@@ -96,7 +106,7 @@ export class QwenCredentialStore {
     const encrypted = [iv, cipher.getAuthTag(), data]
       .map((b) => b.toString("base64"))
       .join(".");
-    this.repo.db
+    await this.repo.db
       .prepare(
         "INSERT INTO workspace_ai_credentials(workspace_id,encrypted_config) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET encrypted_config=excluded.encrypted_config",
       )

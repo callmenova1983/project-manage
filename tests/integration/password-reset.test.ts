@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { readDatabaseConfig } from "../../apps/api/src/database-config.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { buildApp } from "../../apps/api/src/app.js";
 import * as auth from "../../apps/api/src/auth.js";
@@ -27,11 +28,11 @@ const session = (value: string) =>
   context.app.inject({ url: "/api/auth/session", headers: { cookie: value } });
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "pm-reset-synthetic-"));
-  database = join(dir, "test.sqlite");
   context = await buildApp({
-    databasePath: database,
+    isolatedDatabase: true,
     origin: "http://localhost:4173",
   });
+  database = context.repo.db.schema;
   await auth.createUser(context.repo, {
     email,
     name: "Synthetic Test",
@@ -55,8 +56,8 @@ describe("local reset transaction and authenticated API", () => {
     const first = cookie(await login()),
       second = cookie(await login()),
       other = cookie(await login(oldPassword, "other@example.test"));
-    const snapshot = context.repo.snapshot("synthetic");
-    const target = findResetAccount(context.repo.db, email.toUpperCase());
+    const snapshot = await context.repo.snapshot("synthetic");
+    const target = await findResetAccount(context.repo.db, email.toUpperCase());
     expect(
       await resetAccountPassword(context.repo.db, target, newPassword),
     ).toBe(2);
@@ -65,38 +66,38 @@ describe("local reset transaction and authenticated API", () => {
     expect((await session(other)).statusCode).toBe(200);
     expect((await login()).statusCode).toBe(401);
     expect((await login(newPassword)).statusCode).toBe(200);
-    expect(context.repo.snapshot("synthetic")).toEqual(snapshot);
+    expect(await context.repo.snapshot("synthetic")).toEqual(snapshot);
   });
   it("rejects missing accounts and passwords outside the existing 14–500 rule without mutation", async () => {
-    const target = findResetAccount(context.repo.db, email);
-    expect(() =>
+    const target = await findResetAccount(context.repo.db, email);
+    await expect(
       findResetAccount(context.repo.db, "missing@example.test"),
-    ).toThrow("Account not found");
+    ).rejects.toThrow("Account not found");
     for (const password of ["short", "x".repeat(501)])
       await expect(
         resetAccountPassword(context.repo.db, target, password),
       ).rejects.toThrow("14–500");
-    expect(findResetAccount(context.repo.db, email).previousHash).toBe(
+    expect((await findResetAccount(context.repo.db, email)).previousHash).toBe(
       target.previousHash,
     );
     expect((await login()).statusCode).toBe(200);
   });
   it("rolls back the hash update if session revocation fails", async () => {
     const oldSession = cookie(await login());
-    const target = findResetAccount(context.repo.db, email);
-    context.repo.db.exec(
-      "CREATE TRIGGER reject_revoke BEFORE DELETE ON sessions BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END;",
-    );
+    const target = await findResetAccount(context.repo.db, email);
+    await context.repo.db
+      .exec(`CREATE FUNCTION reject_revoke() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic failure'; END $$;
+      CREATE TRIGGER reject_revoke BEFORE DELETE ON sessions FOR EACH ROW EXECUTE FUNCTION reject_revoke();`);
     await expect(
       resetAccountPassword(context.repo.db, target, newPassword),
     ).rejects.toThrow();
-    expect(findResetAccount(context.repo.db, email).previousHash).toBe(
+    expect((await findResetAccount(context.repo.db, email)).previousHash).toBe(
       target.previousHash,
     );
     expect((await session(oldSession)).statusCode).toBe(200);
   });
   it("rejects a stale reset target without overwriting a newer reset or revoking its new session", async () => {
-    const target = findResetAccount(context.repo.db, email);
+    const target = await findResetAccount(context.repo.db, email);
     await resetAccountPassword(context.repo.db, target, newPassword);
     const currentSession = cookie(await login(newPassword));
     await expect(
@@ -128,17 +129,35 @@ describe("local reset transaction and authenticated API", () => {
     await started;
     await resetAccountPassword(
       context.repo.db,
-      findResetAccount(context.repo.db, email),
+      await findResetAccount(context.repo.db, email),
       newPassword,
     );
     release();
     expect((await pending).statusCode).toBe(401);
     expect(
-      context.repo.db.prepare("SELECT count(*) AS n FROM sessions").get()!.n,
+      (await context.repo.db
+        .prepare("SELECT count(*) AS n FROM sessions")
+        .get())!.n,
     ).toBe(0);
     expect((await login(newPassword)).statusCode).toBe(200);
   });
 });
+function databaseEnvironment() {
+  const config = readDatabaseConfig();
+  return {
+    DB_TYPE: "postgres",
+    DB_HOST: config.host,
+    DB_PORT: String(config.port),
+    DB_DATABASE: config.database,
+    DB_USERNAME: config.user,
+    DB_PASSWORD: config.password,
+    DB_SCHEMA: database,
+    DB_SSL: config.ssl ? "true" : "false",
+    ...(process.env.DB_SSL_CA_FILE
+      ? { DB_SSL_CA_FILE: process.env.DB_SSL_CA_FILE }
+      : {}),
+  };
+}
 function runPty(steps: [string, string][]) {
   // A clean environment: do not read the workspace's .env or any real credentials.
   const result = execFileSync(
@@ -159,7 +178,7 @@ function runPty(steps: [string, string][]) {
       }),
       env: {
         PATH: process.env.PATH,
-        DATABASE_PATH: database,
+        ...databaseEnvironment(),
         DOTENV_CONFIG_PATH: join(dir, "no-env-file"),
         TERM: "xterm",
       },
@@ -187,7 +206,7 @@ describe.skipIf(process.platform === "win32")(
       expect(result.output).not.toContain(newPassword);
       expect(result.output).not.toContain(oldPassword);
       expect(result.output).not.toContain(
-        findResetAccount(context.repo.db, email).previousHash,
+        (await findResetAccount(context.repo.db, email)).previousHash,
       );
       expect(existsSync(join(dir, "local-login.txt"))).toBe(false);
       expect((await session(oldSession)).statusCode).toBe(401);
@@ -225,25 +244,25 @@ describe.skipIf(process.platform === "win32")(
       "$label preserves the original credential and session",
       async ({ steps, exit }) => {
         const oldSession = cookie(await login());
-        const target = findResetAccount(context.repo.db, email);
+        const target = await findResetAccount(context.repo.db, email);
         const result = runPty(steps as [string, string][]);
         expect(result.exitCode).toBe(exit);
         expect(result.output).not.toContain(newPassword);
         expect(result.output).not.toContain("different-synthetic-passphrase");
-        expect(findResetAccount(context.repo.db, email).previousHash).toBe(
-          target.previousHash,
-        );
+        expect(
+          (await findResetAccount(context.repo.db, email)).previousHash,
+        ).toBe(target.previousHash);
         expect((await session(oldSession)).statusCode).toBe(200);
       },
     );
-    it("refuses piped password input and extra command-line arguments", () => {
-      const target = findResetAccount(context.repo.db, email);
+    it("refuses piped password input and extra command-line arguments", async () => {
+      const target = await findResetAccount(context.repo.db, email);
       const options = {
         encoding: "utf8" as const,
         input: newPassword + "\n",
         env: {
           PATH: process.env.PATH,
-          DATABASE_PATH: database,
+          ...databaseEnvironment(),
           DOTENV_CONFIG_PATH: join(dir, "no-env-file"),
         },
       };
@@ -268,10 +287,10 @@ describe.skipIf(process.platform === "win32")(
       );
       expect(extra.status).toBe(1);
       expect(extra.stderr).toContain("no password arguments");
-      expect(findResetAccount(context.repo.db, email).previousHash).toBe(
-        target.previousHash,
-      );
-      expect(resolve(database)).toContain("pm-reset-synthetic-");
+      expect(
+        (await findResetAccount(context.repo.db, email)).previousHash,
+      ).toBe(target.previousHash);
+      expect(database).toMatch(/^pm_test_/);
     });
   },
 );

@@ -101,7 +101,7 @@ test("copies usable instructions, discovers all projects, regenerates and revoke
     .getByRole("button", { name: "生成并复制接入指令", exact: true })
     .click();
   await expect(dialog.getByRole("status")).toContainText("接入说明已复制");
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  const copied = await page.evaluate(async () => (await navigator.clipboard.readText()));
   expect(copied).toContain(`${new URL(baseURL!).origin}/api/ai-access/context`);
   expect(copied).not.toContain("项目 ID：");
   const token = /Authorization: Bearer (pm_ai_[A-Za-z0-9_-]+)/.exec(
@@ -134,7 +134,7 @@ test("copies usable instructions, discovers all projects, regenerates and revoke
     .click();
   await expect(dialog.getByRole("status")).toContainText("接入说明已复制");
   const replacement = /Bearer (pm_ai_[A-Za-z0-9_-]+)/.exec(
-    await page.evaluate(() => navigator.clipboard.readText()),
+    await page.evaluate(async () => (await navigator.clipboard.readText())),
   )![1]!;
   expect(replacement).not.toBe(token);
   expect(

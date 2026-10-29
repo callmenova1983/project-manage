@@ -13,7 +13,7 @@ it.each([false, true])(
       workspaceId = "sdk-report";
     const fetcher = vi.fn<typeof fetch>();
     const { app, repo } = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin,
       aiRuntime: "sdk",
       aiFetch: fetcher,
@@ -31,7 +31,7 @@ it.each([false, true])(
       },
     });
     try {
-      repo.seed(workspaceId);
+      await repo.seed(workspaceId);
       await createUser(repo, {
         email: "sdk@example.test",
         name: "录入员",
@@ -55,7 +55,7 @@ it.each([false, true])(
           headers: { ...headers, "idempotency-key": key },
           payload,
         });
-      const project = repo.snapshot(workspaceId).projects[0]!;
+      const project = (await repo.snapshot(workspaceId)).projects[0]!;
       const first = `${project.name}${explicit ? "由李强完成点位复核" : "已核对设备清单"}`,
         second = explicit ? "下周安排王敏检查水表" : "约好周五到场联调";
       const sourceLine = explicit ? 4 : 3;
@@ -105,7 +105,7 @@ it.each([false, true])(
           usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
         }),
       );
-      const before = repo.snapshot(workspaceId);
+      const before = await repo.snapshot(workspaceId);
       const proposed = await post("/api/assistant/interpret", {
         source: `林甲\n${explicit ? "2026年10月12日\n" : ""}今日工作总结\n1. ${first}，${second}`,
         externalProcessingConfirmed: true,
@@ -138,7 +138,7 @@ it.each([false, true])(
       expect(
         (await post(`/api/proposals/${proposal.id}/apply`, body, key)).body,
       ).toBe(applied.body);
-      const after = repo.snapshot(workspaceId, true);
+      const after = await repo.snapshot(workspaceId, true);
       const added = after.tasks.filter(
         (task) => !before.tasks.some((old) => old.id === task.id),
       );

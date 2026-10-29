@@ -61,8 +61,8 @@ function input() {
   };
 }
 beforeEach(async () => {
-  context = await buildApp({ databasePath: ":memory:", origin });
-  context.repo.seed("team");
+  context = await buildApp({ isolatedDatabase: true, origin });
+  await context.repo.seed("team");
   await createUser(context.repo, {
     name: "Member",
     email: "member@example.test",
@@ -83,10 +83,10 @@ beforeEach(async () => {
 });
 afterEach(() => context.app.close());
 it("atomically archives progress with original/date/reporter and prevents repeated imports", async () => {
-  const before = context.repo.snapshot("team");
+  const before = await context.repo.snapshot("team");
   const res = await request("/api/daily-logs", input());
   expect(res.statusCode, res.body).toBe(200);
-  const after = context.repo.snapshot("team");
+  const after = await context.repo.snapshot("team");
   expect(after.projects.length).toBe(before.projects.length + 5);
   expect(after.tasks).toEqual(before.tasks);
   const project = after.projects.find((p) => p.name === "重儿")!;
@@ -94,7 +94,7 @@ it("atomically archives progress with original/date/reporter and prevents repeat
   expect(project.stage).toBe("unclassified");
   const entries = progressHistory(
     project,
-    context.repo.snapshot("team", true).activities,
+    (await context.repo.snapshot("team", true)).activities,
   );
   expect(entries[0]!.originalSource).toEqual({
     text: source,
@@ -103,8 +103,8 @@ it("atomically archives progress with original/date/reporter and prevents repeat
   });
   const repeat = await request("/api/daily-logs", input());
   expect(repeat.json().id).toBe(res.json().id);
-  expect(context.repo.snapshot("team").revision).toBe(after.revision);
-  expect(context.repo.snapshot("team").projects.length).toBe(
+  expect((await context.repo.snapshot("team")).revision).toBe(after.revision);
+  expect((await context.repo.snapshot("team")).projects.length).toBe(
     after.projects.length,
   );
   const list = await context.app.inject({
@@ -135,11 +135,13 @@ it("persists pending rows and resumes only pending rows once", async () => {
   const third = await request("/api/daily-logs", next);
   expect(third.statusCode).toBe(409);
   expect(
-    context.repo.snapshot("team").projects.filter((p) => p.name === "重儿"),
+    (await context.repo.snapshot("team")).projects.filter(
+      (p) => p.name === "重儿",
+    ),
   ).toHaveLength(1);
 });
 it("rolls back the whole batch on a stale project or foreign batch", async () => {
-  const before = context.repo.snapshot("team");
+  const before = await context.repo.snapshot("team");
   const data = input();
   data.rows[4] = {
     ...data.rows[4]!,
@@ -148,7 +150,7 @@ it("rolls back the whole batch on a stale project or foreign batch", async () =>
   } as (typeof data.rows)[number];
   const failed = await request("/api/daily-logs", data);
   expect(failed.statusCode).toBe(409);
-  expect(context.repo.snapshot("team")).toEqual(before);
+  expect(await context.repo.snapshot("team")).toEqual(before);
   expect(
     (await request("/api/daily-logs", { ...input(), batchId: randomUUID() }))
       .statusCode,
@@ -156,7 +158,7 @@ it("rolls back the whole batch on a stale project or foreign batch", async () =>
 });
 it("bulk fills details without changing progress and rejects conflicts atomically", async () => {
   await request("/api/daily-logs", input());
-  const before = context.repo.snapshot("team");
+  const before = await context.repo.snapshot("team");
   const projects = before.projects.filter((p) =>
     ["国鑫", "重儿"].includes(p.name),
   );
@@ -175,26 +177,26 @@ it("bulk fills details without changing progress and rejects conflicts atomicall
   const res = await request("/api/projects/bulk-fill", payload);
   expect(res.statusCode, res.body).toBe(200);
   for (const original of projects) {
-    const saved = context.repo
-      .snapshot("team")
-      .projects.find((p) => p.id === original.id)!;
+    const saved = (await context.repo.snapshot("team")).projects.find(
+      (p) => p.id === original.id,
+    )!;
     expect(saved.owner).toBe("张同事");
     expect(saved.latestUpdate).toBe(original.latestUpdate);
     expect(saved.reportedAt).toBe(original.reportedAt);
   }
-  const snapshot = context.repo.snapshot("team");
+  const snapshot = await context.repo.snapshot("team");
   expect((await request("/api/projects/bulk-fill", payload)).statusCode).toBe(
     409,
   );
-  expect(context.repo.snapshot("team")).toEqual(snapshot);
+  expect(await context.repo.snapshot("team")).toEqual(snapshot);
 });
 it("groups multiple lines under one project and retains equal text on separate dates", async () => {
   const data = input();
   data.rows[1]!.newProjectName = "国鑫";
   expect((await request("/api/daily-logs", data)).statusCode).toBe(200);
-  const first = context.repo
-    .snapshot("team")
-    .projects.find((p) => p.name === "国鑫")!;
+  const first = (await context.repo.snapshot("team")).projects.find(
+    (p) => p.name === "国鑫",
+  )!;
   expect(first.latestUpdate).toContain("\n");
   const next = {
     ...data,
@@ -210,7 +212,7 @@ it("groups multiple lines under one project and retains equal text on separate d
     ],
   };
   expect((await request("/api/daily-logs", next)).statusCode).toBe(200);
-  const snapshot = context.repo.snapshot("team", true),
+  const snapshot = await context.repo.snapshot("team", true),
     project = snapshot.projects.find((p) => p.id === first.id)!;
   expect(
     progressHistory(project, snapshot.activities).filter(

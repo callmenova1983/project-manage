@@ -7,7 +7,7 @@ import {
   origin,
 } from "./support";
 
-test.beforeEach(async ({ page }) => resetWorkspace(page));
+test.beforeEach(async ({ page }) => (await resetWorkspace(page)));
 
 test("project search accepts full pinyin and initials on a real authenticated workspace", async ({
   page,
@@ -118,11 +118,11 @@ test("bulk conflict writes no partial result, retains selection and requires exp
       },
     });
     expect(competitor.status()).toBe(200);
-    const conflict = page.waitForResponse(
+    const conflict = (await page.waitForResponse(
       (response) =>
         response.url().endsWith("/api/tasks/bulk-update") &&
         response.request().method() === "POST",
-    );
+    ));
     await dialog
       .getByRole("button", { name: "Apply selected changes", exact: true })
       .click();

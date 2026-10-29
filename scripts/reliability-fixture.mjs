@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:net";
@@ -7,6 +8,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { chromium, expect } from "@playwright/test";
 import { Repository } from "../dist/server/apps/api/src/database.js";
+import { readDatabaseConfig } from "../dist/server/apps/api/src/database-config.js";
 import { createUser } from "../dist/server/apps/api/src/auth.js";
 import { createSeed } from "../dist/server/packages/domain/seed.js";
 import {
@@ -24,11 +26,15 @@ export async function fixture(projectCount = 20, tasksPerProject = 0) {
   await once(probe, "listening");
   const port = probe.address().port;
   await new Promise((resolve) => probe.close(resolve));
-  const origin = `http://127.0.0.1:${port}`,
-    path = join(dir, "synthetic.sqlite");
-  const repo = new Repository(path),
+  const origin = `http://127.0.0.1:${port}`;
+  const repo = await Repository.open(readDatabaseConfig(), { isolated: true }),
     seed = createSeed();
-  repo.workspace("reliability", "Synthetic reliability workspace");
+  if (!/^pm_test_[a-f0-9]{32}$/.test(repo.db.schema))
+    throw new Error(
+      "Refusing test writes outside an isolated PostgreSQL schema",
+    );
+
+  await repo.workspace("reliability", "Synthetic reliability workspace");
   const projects = Array.from({ length: projectCount }, (_, i) => ({
     ...seed.projects[i % seed.projects.length],
     id: `scale-${i + 1}`,
@@ -50,9 +56,9 @@ export async function fixture(projectCount = 20, tasksPerProject = 0) {
   for (const p of projects) projectInput.strip().parse(p);
   for (const t of tasks) taskInput.strip().parse(t);
   validateGraph(projects, tasks);
-  repo.transaction(() => {
-    for (const p of projects) repo.putProject("reliability", p);
-    for (const t of tasks) repo.putTask("reliability", t);
+  await repo.transaction(async () => {
+    for (const p of projects) await repo.putProject("reliability", p);
+    for (const t of tasks) await repo.putTask("reliability", t);
   });
   const credentials = [];
   for (let i = 0; i < 5; i++) {
@@ -67,7 +73,6 @@ export async function fixture(projectCount = 20, tasksPerProject = 0) {
     });
     credentials.push(credential);
   }
-  repo.close();
   const child = spawn(process.execPath, ["dist/server/apps/api/src/index.js"], {
     env: {
       ...process.env,
@@ -75,7 +80,8 @@ export async function fixture(projectCount = 20, tasksPerProject = 0) {
       HOST: "127.0.0.1",
       PORT: String(port),
       APP_ORIGIN: origin,
-      DATABASE_PATH: path,
+      DB_SCHEMA: repo.db.schema,
+      CREDENTIAL_KEY_PATH: join(dir, "credentials.key"),
       AI_PROVIDER: "disabled",
       AI_CALLS_ENABLED: "false",
     },
@@ -88,6 +94,7 @@ export async function fixture(projectCount = 20, tasksPerProject = 0) {
       child.kill("SIGTERM");
       await once(child, "exit");
     }
+    await repo.close();
     rmSync(dir, { recursive: true, force: true });
   };
   try {
@@ -116,7 +123,7 @@ export async function fixture(projectCount = 20, tasksPerProject = 0) {
     return {
       browser,
       origin,
-      path,
+      databaseSchema: repo.db.schema,
       projects,
       tasks,
       close,
@@ -129,7 +136,7 @@ export async function fixture(projectCount = 20, tasksPerProject = 0) {
         memoryGiB: +(totalmem() / 2 ** 30).toFixed(2),
         viewport: "1536x1024",
         network: "loopback, no throttling",
-        build: "compiled Vite + Node/Fastify/SQLite, local HTTP",
+        build: "compiled Vite + Node/Fastify/PostgreSQL, local HTTP",
       },
       async session(index, width = 1536) {
         const context = await browser.newContext({

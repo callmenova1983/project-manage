@@ -27,25 +27,25 @@ export function proposalFixture(
     })),
   };
 }
-export function storedProposal(
+export async function storedProposal(
   repo: Repository,
   workspaceId: string,
   source: string,
   items: SuggestionFixture[],
 ) {
   const proposal = proposalFixture(source, items);
-  repo.db
+  await repo.db
     .prepare("INSERT INTO proposals(id,workspace_id,data) VALUES(?,?,?)")
     .run(proposal.id, workspaceId, JSON.stringify(proposal));
   return proposal;
 }
-export function storedProposalResponse(
+export async function storedProposalResponse(
   repo: Repository,
   workspaceId: string,
   payload: { source: string },
   items?: SuggestionFixture[],
 ) {
-  const proposal = storedProposal(
+  const proposal = await storedProposal(
     repo,
     workspaceId,
     payload.source,

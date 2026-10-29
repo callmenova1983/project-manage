@@ -24,7 +24,7 @@ it.each([
       Response.json({ errcode, errmsg: "private remote diagnostics" }),
     );
     const { app, repo } = await buildApp({
-      databasePath: ":memory:",
+      isolatedDatabase: true,
       origin,
       wecom: {
         corpId: "test-corp",
@@ -34,14 +34,14 @@ it.each([
       wecomFetch: fetcher,
     });
     try {
-      repo.seed("a");
+      await repo.seed("a");
       await createUser(repo, {
         name: "Admin",
         email: "admin@example.test",
         password: "synthetic-password-for-test",
         workspaceId: "a",
       });
-      repo.db.prepare("UPDATE users SET role='admin'").run();
+      await repo.db.prepare("UPDATE users SET role='admin'").run();
       const login = await app.inject({
         method: "POST",
         url: "/api/auth/login",
@@ -51,7 +51,7 @@ it.each([
           password: "synthetic-password-for-test",
         },
       });
-      const before = repo.directory("a");
+      const before = await repo.directory("a");
       const response = await app.inject({
         method: "POST",
         url: "/api/directory/wecom/sync",
@@ -70,7 +70,7 @@ it.each([
       });
       expect(response.body).not.toContain("private");
       expect(fetcher).toHaveBeenCalledTimes(stage === "gettoken" ? 1 : 2);
-      expect(repo.directory("a")).toEqual(before);
+      expect(await repo.directory("a")).toEqual(before);
     } finally {
       await app.close();
     }

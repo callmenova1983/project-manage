@@ -1,3 +1,4 @@
+import { testDatabaseConfig } from "../pg-helpers.js";
 import { storedProposalResponse } from "../fixtures/proposals";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -34,13 +35,13 @@ async function login(email = "first@example.test") {
     csrf: r.json().csrf as string,
   };
 }
-function request(
+async function request(
   method: "GET" | "POST" | "PUT",
   url: string,
   payload?: unknown,
   key = randomUUID(),
 ) {
-  return context.app.inject({
+  return await context.app.inject({
     method,
     url,
     payload: payload as Record<string, unknown>,
@@ -53,8 +54,8 @@ async function snapshot() {
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "pm-test-"));
   db = join(dir, "db.sqlite");
-  context = await buildApp({ databasePath: db, origin });
-  context.repo.seed("team-a");
+  context = await buildApp({ database: testDatabaseConfig(db), origin });
+  await context.repo.seed("team-a");
   password = randomBytes(24).toString("hex");
   await createUser(context.repo, {
     email: "first@example.test",
@@ -155,7 +156,7 @@ describe("authenticated workspace API", () => {
       ).statusCode,
     ).toBe(200);
     await context.app.close();
-    context = await buildApp({ databasePath: db, origin });
+    context = await buildApp({ database: testDatabaseConfig(db), origin });
     const s = await snapshot();
     expect(s.projects.find((x) => x.id === p.id)!.latestUpdate).toBe(
       "Persistent update",
@@ -371,7 +372,7 @@ describe("additional boundary checks", () => {
     );
     expect((await request("GET", "/api/workspace")).statusCode).toBe(401);
     ({ cookie, csrf } = await login());
-    context.repo.db.prepare("UPDATE sessions SET expires_at=0").run();
+    await context.repo.db.prepare("UPDATE sessions SET expires_at=0").run();
     expect((await request("GET", "/api/workspace")).statusCode).toBe(401);
   });
   it("rolls back a pasted batch when any relationship is invalid", async () => {
@@ -431,19 +432,23 @@ describe("additional boundary checks", () => {
   });
   it("migrates only once and leaves data intact", async () => {
     expect(
-      context.repo.db.prepare("SELECT count(*) AS n FROM migrations").get()!.n,
+      (await context.repo.db
+        .prepare("SELECT count(*) AS n FROM pm_schema_migrations")
+        .get())!.n,
     ).toBe(
-      readdirSync("apps/api/migrations").filter((name) =>
+      readdirSync("apps/api/migrations-postgres").filter((name) =>
         /^\d+_.+\.sql$/.test(name),
       ).length,
     );
     const s = await snapshot();
     await context.app.close();
-    context = await buildApp({ databasePath: db, origin });
+    context = await buildApp({ database: testDatabaseConfig(db), origin });
     expect(
-      context.repo.db.prepare("SELECT count(*) AS n FROM migrations").get()!.n,
+      (await context.repo.db
+        .prepare("SELECT count(*) AS n FROM pm_schema_migrations")
+        .get())!.n,
     ).toBe(
-      readdirSync("apps/api/migrations").filter((name) =>
+      readdirSync("apps/api/migrations-postgres").filter((name) =>
         /^\d+_.+\.sql$/.test(name),
       ).length,
     );
@@ -533,9 +538,9 @@ describe("reported facts and exact provenance", () => {
     });
     const stored = JSON.parse(
       String(
-        context.repo.db
+        (await context.repo.db
           .prepare("SELECT data FROM proposals WHERE id=?")
-          .get(proposal.id)!.data,
+          .get(proposal.id))!.data,
       ),
     );
     expect(stored.source).toBe(source);

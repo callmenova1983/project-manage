@@ -1,3 +1,4 @@
+import { testDatabaseConfig } from "../pg-helpers.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,8 +25,8 @@ async function login(email = "admin@example.test") {
   cookie = `pm_session=${r.cookies[0]!.value}`;
   csrf = r.json().csrf;
 }
-const request = (method: "GET" | "PUT", url: string, payload?: unknown) =>
-  context.app.inject({
+const request = async (method: "GET" | "PUT", url: string, payload?: unknown) =>
+  await context.app.inject({
     method,
     url,
     payload: payload as Record<string, unknown>,
@@ -60,7 +61,7 @@ it.each(["sdk", "legacy"] as const)(
     ).toBe(200);
     await context.app.close();
     context = await buildApp({
-      databasePath,
+      database: testDatabaseConfig(databasePath),
       origin,
       aiFetch: fetcher,
       aiRuntime: runtime,
@@ -85,8 +86,8 @@ it.each(["sdk", "legacy"] as const)(
       });
     });
     const key = randomUUID();
-    const propose = () =>
-      context.app.inject({
+    const propose = async () =>
+      await context.app.inject({
         method: "POST",
         url: "/api/assistant/interpret",
         headers: {
@@ -101,7 +102,7 @@ it.each(["sdk", "legacy"] as const)(
     expect(result.statusCode).toBe(200);
     expect((await propose()).body).toBe(result.body);
     expect(fetcher).toHaveBeenCalledTimes(1);
-    const logs = context.repo.db
+    const logs = await context.repo.db
       .prepare("SELECT data FROM model_logs WHERE workspace_id=?")
       .all("a");
     expect(logs).toHaveLength(1);
@@ -112,7 +113,10 @@ it.each(["sdk", "legacy"] as const)(
       outputTokens: 3,
     });
     expect(
-      new QwenCredentialStore(context.repo, databasePath).read("a")!.runtime,
+      (await new QwenCredentialStore(
+        context.repo,
+        databasePath + ".credentials-key",
+      ).read("a"))!.runtime,
     ).toBe("legacy");
   },
 );
@@ -120,8 +124,12 @@ beforeEach(async () => {
   folder = mkdtempSync(join(tmpdir(), "pm-credentials-"));
   databasePath = join(folder, "test.sqlite");
   fetcher.mockReset();
-  context = await buildApp({ databasePath, origin, aiFetch: fetcher });
-  context.repo.seed("a");
+  context = await buildApp({
+    database: testDatabaseConfig(databasePath),
+    origin,
+    aiFetch: fetcher,
+  });
+  await context.repo.seed("a");
   for (const [email, workspaceId] of [
     ["admin@example.test", "a"],
     ["member@example.test", "a"],
@@ -133,7 +141,7 @@ beforeEach(async () => {
       name: email!,
       password,
     });
-  context.repo.db
+  await context.repo.db
     .prepare("UPDATE users SET role='admin' WHERE email!='member@example.test'")
     .run();
   await login();
@@ -153,19 +161,27 @@ it("encrypts a saved key, survives restart, stays disabled and never exposes the
   });
   expect(
     JSON.stringify(
-      context.repo.db.prepare("SELECT * FROM workspace_ai_credentials").all(),
+      await context.repo.db
+        .prepare("SELECT * FROM workspace_ai_credentials")
+        .all(),
     ),
   ).not.toContain(syntheticKey);
   for (const table of ["idempotency", "admin_audit", "model_settings"])
     expect(
-      JSON.stringify(context.repo.db.prepare(`SELECT * FROM ${table}`).all()),
+      JSON.stringify(
+        await context.repo.db.prepare(`SELECT * FROM ${table}`).all(),
+      ),
     ).not.toContain(syntheticKey);
   expect(saved.body).not.toContain(syntheticKey);
   expect(statSync(databasePath + ".credentials-key").mode & 0o777).toBe(0o600);
   expect(readFileSync(databasePath + ".credentials-key")).toHaveLength(32);
   expect(fetcher).not.toHaveBeenCalled();
   await context.app.close();
-  context = await buildApp({ databasePath, origin, aiFetch: fetcher });
+  context = await buildApp({
+    database: testDatabaseConfig(databasePath),
+    origin,
+    aiFetch: fetcher,
+  });
   await login();
   const state = (await request("GET", "/api/admin/model")).json();
   expect(state.credentialAvailable).toBe(true);
@@ -218,30 +234,35 @@ it("enables an existing key in one save and renews limits while keeping its usag
   const saved = (
     await request("PUT", "/api/admin/model/credential", input())
   ).json();
-  const vault = new QwenCredentialStore(context.repo, databasePath);
-  const original = vault.read("a")!;
+  const vault = new QwenCredentialStore(
+    context.repo,
+    databasePath + ".credentials-key",
+  );
+  const original = (await vault.read("a"))!;
   const enabled = await request("PUT", "/api/admin/model/configuration", {
     settings: { ...saved.settings, enabled: true },
   });
   expect(enabled.statusCode, enabled.body).toBe(200);
   expect(enabled.json().runtimeEnabled).toBe(true);
-  expect(vault.read("a")).toEqual(original);
-  const userId = context.repo.db
+  expect(await vault.read("a")).toEqual(original);
+  const userId = (await context.repo.db
     .prepare("SELECT id FROM users WHERE email=?")
-    .get("admin@example.test")!.id;
-  context.repo.db
+    .get("admin@example.test"))!.id;
+  await context.repo.db
     .prepare(
       "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
     )
     .run(randomUUID(), original.budgetId, userId, Date.now());
-  const ledger = context.repo.db.prepare("SELECT * FROM ai_attempts").all();
+  const ledger = await context.repo.db
+    .prepare("SELECT * FROM ai_attempts")
+    .all();
   const expiresAt = new Date(Date.now() + 3 * 86400000).toISOString();
   const exhausted = await request("PUT", "/api/admin/model/configuration", {
     settings: { ...enabled.json().settings, enabled: true },
     allowance: { maxRequests: 1, expiresAt },
   });
   expect(exhausted.statusCode).toBe(400);
-  expect(vault.read("a")).toEqual(original);
+  expect(await vault.read("a")).toEqual(original);
   expect((await request("GET", "/api/admin/model")).json().settings).toEqual(
     enabled.json().settings,
   );
@@ -255,20 +276,20 @@ it("enables an existing key in one save and renews limits while keeping its usag
     usedAttempts: 1,
     remainingAttempts: 29,
   });
-  expect(vault.read("a")).toEqual({
+  expect(await vault.read("a")).toEqual({
     ...original,
     maxRequests: 30,
     expiresAt: Date.parse(expiresAt),
   });
-  expect(context.repo.db.prepare("SELECT * FROM ai_attempts").all()).toEqual(
-    ledger,
-  );
+  expect(
+    await context.repo.db.prepare("SELECT * FROM ai_attempts").all(),
+  ).toEqual(ledger);
   const paused = await request("PUT", "/api/admin/model/configuration", {
     settings: { ...renewed.json().settings, enabled: false },
   });
   expect(paused.statusCode).toBe(200);
   expect(paused.json().runtimeEnabled).toBe(false);
-  expect(vault.read("a")).toEqual({
+  expect(await vault.read("a")).toEqual({
     ...original,
     maxRequests: 30,
     expiresAt: Date.parse(expiresAt),
@@ -280,8 +301,11 @@ it("rejects enabling expired credentials without changing their key or allowance
   const saved = (
     await request("PUT", "/api/admin/model/credential", input())
   ).json();
-  const vault = new QwenCredentialStore(context.repo, databasePath);
-  const expired = vault.updateAllowance("a", {
+  const vault = new QwenCredentialStore(
+    context.repo,
+    databasePath + ".credentials-key",
+  );
+  const expired = await vault.updateAllowance("a", {
     version: saved.settings.version,
     maxRequests: 20,
     expiresAt: new Date(Date.now() - 60000).toISOString(),
@@ -291,7 +315,7 @@ it("rejects enabling expired credentials without changing their key or allowance
   });
   expect(enabled.statusCode).toBe(400);
   expect(enabled.json().message).toContain("已到期");
-  expect(vault.read("a")).toEqual(expired);
+  expect(await vault.read("a")).toEqual(expired);
   expect((await request("GET", "/api/admin/model")).json().settings).toEqual(
     saved.settings,
   );
@@ -329,7 +353,9 @@ it("rolls back the complete setup on invalid settings and rejects non-admin setu
   ).toBe(400);
   expect((await request("GET", "/api/admin/model")).json()).toEqual(state);
   expect(
-    context.repo.db.prepare("SELECT * FROM workspace_ai_credentials").all(),
+    await context.repo.db
+      .prepare("SELECT * FROM workspace_ai_credentials")
+      .all(),
   ).toHaveLength(0);
   expect(
     (
@@ -385,10 +411,10 @@ it("preserves consumed attempts when replacing a key and does not silently re-en
       .update("a")
       .digest("hex")
       .slice(0, 32);
-  const user = context.repo.db
+  const user = (await context.repo.db
     .prepare("SELECT id FROM users WHERE email='admin@example.test'")
-    .get()!;
-  context.repo.db
+    .get())!;
+  await context.repo.db
     .prepare(
       "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
     )
@@ -414,18 +440,21 @@ it("renews an allowance without re-entering or changing the key, clearing histor
       enabled: true,
     })
   ).json();
-  const store = new QwenCredentialStore(context.repo, databasePath);
-  const before = store.read("a")!;
-  const userId = context.repo.db
+  const store = new QwenCredentialStore(
+    context.repo,
+    databasePath + ".credentials-key",
+  );
+  const before = (await store.read("a"))!;
+  const userId = (await context.repo.db
     .prepare("SELECT id FROM users WHERE email=?")
-    .get("admin@example.test")!.id;
+    .get("admin@example.test"))!.id;
   for (let i = 0; i < 2; i++)
-    context.repo.db
+    await context.repo.db
       .prepare(
         "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
       )
       .run(randomUUID(), before.budgetId, userId, Date.now());
-  const ledger = context.repo.db
+  const ledger = await context.repo.db
     .prepare("SELECT * FROM ai_attempts ORDER BY id")
     .all();
   const expiresAt = new Date(Date.now() + 3 * 86400000).toISOString();
@@ -444,18 +473,24 @@ it("renews an allowance without re-entering or changing the key, clearing histor
     runtimeEnabled: true,
     settings: { ...enabled.settings, version: enabled.settings.version + 1 },
   });
-  expect(store.read("a")).toEqual({
+  expect(await store.read("a")).toEqual({
     ...before,
     maxRequests: 25,
     expiresAt: Date.parse(expiresAt),
   });
   expect(
-    context.repo.db.prepare("SELECT * FROM ai_attempts ORDER BY id").all(),
+    await context.repo.db
+      .prepare("SELECT * FROM ai_attempts ORDER BY id")
+      .all(),
   ).toEqual(ledger);
   expect(saved.body).not.toContain(syntheticKey);
   expect(fetcher).not.toHaveBeenCalled();
   await context.app.close();
-  context = await buildApp({ databasePath, origin, aiFetch: fetcher });
+  context = await buildApp({
+    database: testDatabaseConfig(databasePath),
+    origin,
+    aiFetch: fetcher,
+  });
   await login();
   expect((await request("GET", "/api/admin/model")).json()).toMatchObject({
     usedAttempts: 2,
@@ -476,7 +511,7 @@ it("rejects unauthorized, stale, expired and invalid allowance changes atomicall
     maxRequests: 30,
     expiresAt: input().expiresAt,
   };
-  const before = context.repo.db
+  const before = await context.repo.db
     .prepare("SELECT * FROM workspace_ai_credentials")
     .all();
   await login("member@example.test");
@@ -514,7 +549,9 @@ it("rejects unauthorized, stale, expired and invalid allowance changes atomicall
     ).toBe(status);
   }
   expect(
-    context.repo.db.prepare("SELECT * FROM workspace_ai_credentials").all(),
+    await context.repo.db
+      .prepare("SELECT * FROM workspace_ai_credentials")
+      .all(),
   ).toEqual(before);
   expect((await request("GET", "/api/admin/model")).json()).toEqual(state);
   expect(fetcher).not.toHaveBeenCalled();
@@ -522,10 +559,13 @@ it("rejects unauthorized, stale, expired and invalid allowance changes atomicall
 
 it("keeps operator-provisioned limits read-only", async () => {
   await request("PUT", "/api/admin/model/credential", input());
-  const config = new QwenCredentialStore(context.repo, databasePath).read("a")!;
+  const config = (await new QwenCredentialStore(
+    context.repo,
+    databasePath + ".credentials-key",
+  ).read("a"))!;
   await context.app.close();
   context = await buildApp({
-    databasePath,
+    database: testDatabaseConfig(databasePath),
     origin,
     qwen: config,
     aiFetch: fetcher,

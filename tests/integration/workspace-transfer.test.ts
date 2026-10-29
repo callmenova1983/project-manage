@@ -32,9 +32,9 @@ const request = (method: "GET" | "POST", url: string, payload?: unknown) =>
     },
   });
 beforeEach(async () => {
-  ctx = await buildApp({ databasePath: ":memory:", origin });
-  ctx.repo.seed("source");
-  ctx.repo.workspace("target");
+  ctx = await buildApp({ isolatedDatabase: true, origin });
+  await ctx.repo.seed("source");
+  await ctx.repo.workspace("target");
   for (const workspace of ["source", "target"])
     await createUser(ctx.repo, {
       workspaceId: workspace,
@@ -42,22 +42,22 @@ beforeEach(async () => {
       name: workspace,
       password,
     });
-  ctx.repo.db.prepare("UPDATE users SET role='admin'").run();
+  await ctx.repo.db.prepare("UPDATE users SET role='admin'").run();
   await login();
 });
 afterEach(() => ctx.app.close());
 
 it("exports all history and original text without attachment bytes or broken references, then imports without duplicating records", async () => {
-  const project = ctx.repo.snapshot("source").projects[0]!;
-  const sourceUser = ctx.repo.members("source")[0]!;
-  ctx.repo.putProject("source", {
+  const project = (await ctx.repo.snapshot("source")).projects[0]!;
+  const sourceUser = (await ctx.repo.members("source"))[0]!;
+  await ctx.repo.putProject("source", {
     ...project,
     owner: sourceUser.name,
     ownerId: sourceUser.id,
     notes: "项目跟进笔记",
   });
   const fileId = randomUUID();
-  ctx.repo.db
+  await ctx.repo.db
     .prepare(
       "INSERT INTO progress_materials(id,workspace_id,project_id,created_at,metadata,bytes,images) VALUES(?,?,?,?,?,?,?)",
     )
@@ -101,7 +101,7 @@ it("exports all history and original text without attachment bytes or broken ref
         recognizedText: "文字识别结果",
       },
     };
-    ctx.repo.audit("source", event);
+    await ctx.repo.audit("source", event);
   }
   const daily = {
     id: randomUUID(),
@@ -119,7 +119,7 @@ it("exports all history and original text without attachment bytes or broken ref
       },
     ],
   };
-  ctx.repo.db
+  await ctx.repo.db
     .prepare(
       "INSERT INTO daily_logs(id,workspace_id,fingerprint,created_at,data) VALUES(?,?,?,?,?)",
     )
@@ -151,15 +151,15 @@ it("exports all history and original text without attachment bytes or broken ref
   await login("target");
   const imported = await request("POST", "/api/workspace-data", {
     archive,
-    revision: ctx.repo.snapshot("target").revision,
+    revision: (await ctx.repo.snapshot("target")).revision,
     confirmed: true,
   });
   expect(imported.statusCode, imported.body).toBe(200);
   expect(imported.json().receipt.projects.added).toBe(archive.projects.length);
   expect(imported.json().receipt.unlinkedAssignments).toBeGreaterThan(0);
-  const targetProject = ctx.repo
-    .snapshot("target")
-    .projects.find((p) => p.id === project.id)!;
+  const targetProject = (await ctx.repo.snapshot("target")).projects.find(
+    (p) => p.id === project.id,
+  )!;
   expect(targetProject).toMatchObject({
     owner: "source",
     ownerId: null,
@@ -183,15 +183,15 @@ it("exports all history and original text without attachment bytes or broken ref
   });
   expect(importedCorrection.author).toBe("历史记录人");
   expect(
-    ctx.repo.db
+    (await ctx.repo.db
       .prepare(
         "SELECT count(*) AS n FROM progress_materials WHERE workspace_id=?",
       )
-      .get("target")!.n,
+      .get("target"))!.n,
   ).toBe(0);
   const repeated = await request("POST", "/api/workspace-data", {
     archive,
-    revision: ctx.repo.snapshot("target").revision,
+    revision: (await ctx.repo.snapshot("target")).revision,
     confirmed: true,
   });
   expect(repeated.statusCode, repeated.body).toBe(200);
@@ -202,37 +202,37 @@ it("exports all history and original text without attachment bytes or broken ref
     dailyLogsImported: 0,
   });
   expect(
-    ctx.repo.db
+    (await ctx.repo.db
       .prepare("SELECT count(*) AS n FROM daily_logs WHERE workspace_id=?")
-      .get("target")!.n,
+      .get("target"))!.n,
   ).toBe(1);
   // Imported history can be exported and brought back without adding a second copy.
   const againResponse = await request("GET", "/api/workspace-data");
   expect(againResponse.statusCode, againResponse.body).toBe(200);
   const again = againResponse.json();
   await login();
-  const before = ctx.repo.db
+  const before = (await ctx.repo.db
     .prepare("SELECT count(*) AS n FROM activities WHERE workspace_id=?")
-    .get("source")!.n;
+    .get("source"))!.n;
   const back = await request("POST", "/api/workspace-data", {
     archive: again,
-    revision: ctx.repo.snapshot("source").revision,
+    revision: (await ctx.repo.snapshot("source")).revision,
     confirmed: true,
   });
   expect(back.statusCode, back.body).toBe(200);
   expect(back.json().receipt.activitiesAdded).toBe(2); // Only the two import receipts, never the 505 progress entries.
   expect(
     Number(
-      ctx.repo.db
+      (await ctx.repo.db
         .prepare("SELECT count(*) AS n FROM activities WHERE workspace_id=?")
-        .get("source")!.n,
+        .get("source"))!.n,
     ),
   ).toBe(Number(before) + 3);
 });
 
 it("merges incoming updates while retaining unrelated projects and preserves version checks and atomic validation", async () => {
   const archive = (await request("GET", "/api/workspace-data")).json();
-  const original = ctx.repo.snapshot("source");
+  const original = await ctx.repo.snapshot("source");
   archive.projects[0].notes = "导入的跟进笔记";
   archive.projects = archive.projects.slice(0, 1);
   archive.tasks = archive.tasks.filter(
@@ -246,7 +246,7 @@ it("merges incoming updates while retaining unrelated projects and preserves ver
     confirmed: true,
   });
   expect(failed.statusCode).toBe(400);
-  expect(ctx.repo.snapshot("source")).toEqual(original);
+  expect(await ctx.repo.snapshot("source")).toEqual(original);
   const stale = await request("POST", "/api/workspace-data", {
     archive,
     revision: original.revision + 1,
@@ -259,7 +259,7 @@ it("merges incoming updates while retaining unrelated projects and preserves ver
     confirmed: true,
   });
   expect(saved.statusCode, saved.body).toBe(200);
-  const after = ctx.repo.snapshot("source");
+  const after = await ctx.repo.snapshot("source");
   expect(after.projects).toHaveLength(original.projects.length);
   expect(after.tasks).toHaveLength(original.tasks.length);
   expect(

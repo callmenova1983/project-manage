@@ -12,9 +12,9 @@ import { filePreviewKind } from "../../packages/domain/project-file";
 const origin = "http://localhost:4173";
 let ctx: Awaited<ReturnType<typeof buildApp>>, cookie: string, csrf: string;
 beforeEach(async () => {
-  ctx = await buildApp({ databasePath: ":memory:", origin });
-  ctx.repo.seed("files");
-  ctx.repo.seed("other");
+  ctx = await buildApp({ isolatedDatabase: true, origin });
+  await ctx.repo.seed("files");
+  await ctx.repo.seed("other");
   await createUser(ctx.repo, {
     workspaceId: "files",
     name: "Uploader",
@@ -47,7 +47,7 @@ function request(
   });
 }
 it("persists raw attachments once, lists source materials too, and returns only authenticated project-scoped downloads", async () => {
-  const [project, second] = ctx.repo.snapshot("files").projects;
+  const [project, second] = (await ctx.repo.snapshot("files")).projects;
   const before = { ...project! };
   const body = {
     name: "方案.pdf",
@@ -81,7 +81,7 @@ it("persists raw attachments once, lists source materials too, and returns only 
   );
   expect(source.statusCode).toBe(200);
   const foreignId = randomUUID();
-  ctx.repo.db
+  await ctx.repo.db
     .prepare(
       "INSERT INTO progress_materials(id,workspace_id,project_id,created_at,metadata,bytes,images) VALUES(?,?,?,?,?,?,?)",
     )
@@ -130,7 +130,9 @@ it("persists raw attachments once, lists source materials too, and returns only 
     ).statusCode,
   ).toBe(404);
   expect(
-    ctx.repo.snapshot("files").projects.find((p) => p.id === project!.id),
+    (await ctx.repo.snapshot("files")).projects.find(
+      (p) => p.id === project!.id,
+    ),
   ).toMatchObject({
     name: before.name,
     latestUpdate: before.latestUpdate,
@@ -138,20 +140,22 @@ it("persists raw attachments once, lists source materials too, and returns only 
   });
 });
 it("exports unlinked project files and restores their bytes, uploader and upload time", async () => {
-  const project = ctx.repo.snapshot("files").projects[0]!;
+  const project = (await ctx.repo.snapshot("files")).projects[0]!;
   const file = (
     await request("POST", `/api/projects/${project.id}/files`, {
       name: "drawing.dwg",
       data: Buffer.from("unlinked drawing").toString("base64"),
     })
   ).json();
-  const archive = progressArchiveInput.parse(exportProgress(ctx.repo, "files"));
+  const archive = progressArchiveInput.parse(
+    await exportProgress(ctx.repo, "files"),
+  );
   expect(archive.progressFiles).toHaveLength(1);
   expect(archive.progressFiles![0]!.metadata.id).toBe(file.id);
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("DELETE FROM progress_materials WHERE workspace_id=?")
     .run("files");
-  importProgress(ctx.repo, "files", archive);
+  await importProgress(ctx.repo, "files", archive);
   const listing = (
     await request("GET", `/api/projects/${project.id}/files`)
   ).json();
@@ -167,7 +171,7 @@ it("exports unlinked project files and restores their bytes, uploader and upload
   expect(filePreviewKind("drawing.dwg")).toBe("download");
 });
 it("accepts exactly 50 MB and retains the file through archive restore", async () => {
-  const project = ctx.repo.snapshot("files").projects[0]!;
+  const project = (await ctx.repo.snapshot("files")).projects[0]!;
   const bytes = Buffer.alloc(50 * 1024 * 1024, 0x5a);
   const response = await request("POST", `/api/projects/${project.id}/files`, {
     name: "large-contract.zip",
@@ -176,20 +180,22 @@ it("accepts exactly 50 MB and retains the file through archive restore", async (
   expect(response.statusCode, response.body).toBe(200);
   const file = response.json();
   expect(file.size).toBe(50 * 1024 * 1024);
-  const archive = progressArchiveInput.parse(exportProgress(ctx.repo, "files"));
+  const archive = progressArchiveInput.parse(
+    await exportProgress(ctx.repo, "files"),
+  );
   expect(archive.progressFiles![0]!.metadata.size).toBe(file.size);
-  ctx.repo.db
+  await ctx.repo.db
     .prepare("DELETE FROM progress_materials WHERE workspace_id=?")
     .run("files");
-  importProgress(ctx.repo, "files", archive);
+  await importProgress(ctx.repo, "files", archive);
   const restored = await request(
     "GET",
     `/api/projects/${project.id}/materials/${file.id}`,
   );
-    expect(restored.rawPayload.equals(bytes)).toBe(true);
-}, 30000);
+  expect(restored.rawPayload.equals(bytes)).toBe(true);
+}, 90000);
 it("rejects empty, oversized, malformed and unsafe-name uploads without saving a file", async () => {
-  const project = ctx.repo.snapshot("files").projects[0]!;
+  const project = (await ctx.repo.snapshot("files")).projects[0]!;
   for (const body of [
     { name: "../contract.docx", data: "YWJj" },
     { name: "zero.txt", data: "" },

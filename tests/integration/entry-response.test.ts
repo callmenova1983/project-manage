@@ -17,7 +17,7 @@ beforeAll(async () => {
     "export const synthetic = true;",
   );
   ({ app } = await buildApp({
-    databasePath: ":memory:",
+    isolatedDatabase: true,
     origin: "https://workspace.example.test",
     production: true,
     staticPath: dir,
@@ -109,7 +109,7 @@ it("rejects an empty or incomplete web build before opening the database", async
     if (empty) writeFileSync(join(bad, "index.html"), "");
     await expect(
       buildApp({
-        databasePath: ":memory:",
+        isolatedDatabase: true,
         origin: "http://localhost",
         staticPath: bad,
       }),

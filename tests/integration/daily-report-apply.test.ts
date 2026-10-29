@@ -4,9 +4,9 @@ import { createUser } from "../../apps/api/src/auth";
 import { storedProposal } from "../fixtures/proposals";
 it("retains saved report attribution and history when applying a legacy pending draft", async () => {
   const origin = "http://localhost:4173";
-  const { app, repo } = await buildApp({ databasePath: ":memory:", origin });
+  const { app, repo } = await buildApp({ isolatedDatabase: true, origin });
   try {
-    repo.seed("reports");
+    await repo.seed("reports");
     await createUser(repo, {
       workspaceId: "reports",
       name: "录入员",
@@ -21,9 +21,9 @@ it("retains saved report attribution and history when applying a legacy pending 
         password: "Synthetic-Report@2026",
       },
     });
-    const project = repo.snapshot("reports").projects[0]!;
-    const before = repo.snapshot("reports");
-    const proposal = storedProposal(
+    const project = (await repo.snapshot("reports")).projects[0]!;
+    const before = await repo.snapshot("reports");
+    const proposal = await storedProposal(
       repo,
       "reports",
       "李明：现场核对设备；后续复核",
@@ -75,7 +75,7 @@ it("retains saved report attribution and history when applying a legacy pending 
       },
     });
     expect(response.statusCode, response.body).toBe(200);
-    const after = repo.snapshot("reports", true);
+    const after = await repo.snapshot("reports", true);
     expect(
       after.projects.find((item) => item.id === project.id)?.reportedBy,
     ).toBe("李明");

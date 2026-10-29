@@ -12,7 +12,7 @@ const remoteFetch = vi.fn<typeof fetch>();
 beforeEach(async () => {
   remoteFetch.mockReset();
   ctx = await buildApp({
-    databasePath: ":memory:",
+    isolatedDatabase: true,
     origin,
     wecomFetch: remoteFetch,
   });
@@ -22,7 +22,7 @@ beforeEach(async () => {
     name: "Synthetic administrator",
     password: "synthetic-integration-password",
   });
-  ctx.repo.db.prepare("UPDATE users SET role='admin'").run();
+  await ctx.repo.db.prepare("UPDATE users SET role='admin'").run();
 });
 
 afterEach(async () => {
@@ -44,14 +44,14 @@ it("recovers a rotated WeCom request token only after the server rejects the unc
   const cookie = `pm_session=${login.cookies[0]!.value}`;
   const initialToken = login.json().csrf as string;
   const rotatedToken = "synthetic-rotated-request-token";
-  const writes = () =>
-    ctx.repo.db
+  const writes = async () =>
+    await ctx.repo.db
       .prepare(
         "SELECT (SELECT COUNT(*) FROM workspace_wecom_credentials) AS configurations, (SELECT COUNT(*) FROM admin_audit) AS audit, (SELECT COUNT(*) FROM idempotency) AS mutations",
       )
       .get();
   const beforeWrites = { configurations: 0, audit: 0, mutations: 0 };
-  expect(writes()).toEqual(beforeWrites);
+  expect(await writes()).toEqual(beforeWrites);
 
   const calls: {
     url: string;
@@ -87,7 +87,7 @@ it("recovers a rotated WeCom request token only after the server rejects the unc
       expect(response.json()).toMatchObject({
         message: "Invalid request token",
       });
-      expect(writes()).toEqual(beforeWrites);
+      expect(await writes()).toEqual(beforeWrites);
       const unchanged = await ctx.app.inject({
         method: "GET",
         url: "/api/directory/wecom/config",
@@ -105,7 +105,7 @@ it("recovers a rotated WeCom request token only after the server rejects the unc
 
   const api = new HttpApi();
   await api.session();
-  ctx.repo.db.prepare("UPDATE sessions SET csrf=?").run(rotatedToken);
+  await ctx.repo.db.prepare("UPDATE sessions SET csrf=?").run(rotatedToken);
   const input = {
     version: 0,
     corpId: "synthetic-corp",
@@ -133,7 +133,7 @@ it("recovers a rotated WeCom request token only after the server rejects the unc
   );
   expect(mutations[0]!.body).toBe(JSON.stringify(input));
   expect(mutations[1]!.body).toBe(mutations[0]!.body);
-  expect(writes()).toEqual({ configurations: 1, audit: 1, mutations: 1 });
+  expect(await writes()).toEqual({ configurations: 1, audit: 1, mutations: 1 });
 
   // A duplicate delivery with the accepted key is also safe at the real API.
   const repeated = await ctx.app.inject({
@@ -144,6 +144,6 @@ it("recovers a rotated WeCom request token only after the server rejects the unc
   });
   expect(repeated.statusCode).toBe(200);
   expect(repeated.json()).toEqual(saved);
-  expect(writes()).toEqual({ configurations: 1, audit: 1, mutations: 1 });
+  expect(await writes()).toEqual({ configurations: 1, audit: 1, mutations: 1 });
   expect(remoteFetch).not.toHaveBeenCalled();
 });

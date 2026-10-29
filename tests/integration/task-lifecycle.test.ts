@@ -13,8 +13,8 @@ const post = (url: string, payload: unknown, key = randomUUID()) =>
     payload: payload as Record<string, unknown>,
   });
 beforeEach(async () => {
-  context = await buildApp({ databasePath: ":memory:", origin });
-  context.repo.seed("team");
+  context = await buildApp({ isolatedDatabase: true, origin });
+  await context.repo.seed("team");
   await createUser(context.repo, {
     name: "Member",
     email: "member@example.test",
@@ -35,7 +35,7 @@ beforeEach(async () => {
 });
 afterEach(() => context.app.close());
 it("voids a task tree without deleting data, excludes it from work totals, and restores the batch with audit and replay protection", async () => {
-  const snapshot = context.repo.snapshot("team"),
+  const snapshot = await context.repo.snapshot("team"),
     root = snapshot.tasks.find((t) =>
       snapshot.tasks.some((c) => c.parentId === t.id),
     )!;
@@ -51,7 +51,7 @@ it("voids a task tree without deleting data, excludes it from work totals, and r
   expect(response.statusCode).toBe(200);
   const changed = response.json<Task[]>();
   expect(changed.length).toBeGreaterThan(1);
-  const after = context.repo.snapshot("team");
+  const after = await context.repo.snapshot("team");
   expect(after.tasks).toHaveLength(snapshot.tasks.length);
   for (const task of changed) {
     const before = snapshot.tasks.find((t) => t.id === task.id)!;
@@ -73,7 +73,7 @@ it("voids a task tree without deleting data, excludes it from work totals, and r
   expect(statistics(after.tasks).total).toBeLessThan(total);
   const replay = await post(`/api/tasks/${root.id}/lifecycle`, input, key);
   expect(replay.json()).toEqual(changed);
-  expect(context.repo.snapshot("team").revision).toBe(after.revision);
+  expect((await context.repo.snapshot("team")).revision).toBe(after.revision);
   // Ordinary edits cannot silently resurrect a voided task or erase the audit marker.
   const update = await context.app.inject({
     method: "PUT",
@@ -95,7 +95,7 @@ it("voids a task tree without deleting data, excludes it from work totals, and r
   });
   expect(restored.statusCode).toBe(200);
   expect(restored.json<Task[]>()).toHaveLength(changed.length);
-  const final = context.repo.snapshot("team");
+  const final = await context.repo.snapshot("team");
   expect(statistics(final.tasks).total).toBe(total);
   expect(final.tasks.every((t) => !t.voided)).toBe(true);
   expect(
@@ -110,7 +110,7 @@ it("voids a task tree without deleting data, excludes it from work totals, and r
   ).toBe(true);
 });
 it("rejects empty reasons and stale or foreign targets without any partial writes", async () => {
-  const before = context.repo.snapshot("team"),
+  const before = await context.repo.snapshot("team"),
     root = before.tasks[0]!;
   const input = {
     version: root.version,
@@ -126,10 +126,10 @@ it("rejects empty reasons and stale or foreign targets without any partial write
     expect(
       (await post(`/api/tasks/${root.id}/lifecycle`, payload)).statusCode,
     ).toBeGreaterThanOrEqual(400);
-  context.repo.seed("foreign");
-  context.repo.putTask("foreign", { ...root, id: "foreign-task" });
+  await context.repo.seed("foreign");
+  await context.repo.putTask("foreign", { ...root, id: "foreign-task" });
   expect(
     (await post("/api/tasks/foreign-task/lifecycle", input)).statusCode,
   ).toBe(409);
-  expect(context.repo.snapshot("team")).toEqual(before);
+  expect(await context.repo.snapshot("team")).toEqual(before);
 });

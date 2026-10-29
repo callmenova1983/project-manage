@@ -79,22 +79,24 @@ export function registerAiRoutes(
   actor: (r: FastifyRequest) => Actor,
   config?: QwenConfig,
   fetchImpl?: typeof fetch,
-  resolveConfig?: (actor: Actor) => QwenConfig | undefined,
+  resolveConfig?: (
+    actor: Actor,
+  ) => QwenConfig | undefined | Promise<QwenConfig | undefined>,
 ) {
   const configFallback = config;
   const active = new Set<string>();
-  const attempts = (config?: QwenConfig) =>
+  const attempts = async (config?: QwenConfig) =>
     config
       ? Number(
-          repo.db
+          (await repo.db
             .prepare(
               "SELECT count(*) AS total FROM ai_attempts WHERE budget_id=?",
             )
-            .get(config.budgetId)!.total,
+            .get(config.budgetId))!.total,
         )
       : 0;
-  const assertAllowance = (config: QwenConfig) => {
-    const reason = allowanceReason(config, attempts(config));
+  const assertAllowance = async (config: QwenConfig) => {
+    const reason = allowanceReason(config, await attempts(config));
     if (reason === "expired")
       throw new AiError(
         429,
@@ -108,9 +110,9 @@ export function registerAiRoutes(
         "The approved AI allowance has been used up. Ask an administrator to review the total request limit.",
       );
   };
-  app.get("/api/ai/capabilities", (req) => {
-    const current = resolveConfig ? resolveConfig(actor(req)) : config;
-    const used = attempts(current);
+  app.get("/api/ai/capabilities", async (req) => {
+    const current = resolveConfig ? await resolveConfig(actor(req)) : config;
+    const used = await attempts(current);
     const reason = allowanceReason(current, used);
     return {
       enabled: reason === null,
@@ -153,7 +155,7 @@ export function registerAiRoutes(
       { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } },
       async (req) => {
         const config = resolveConfig
-          ? resolveConfig(actor(req))
+          ? await resolveConfig(actor(req))
           : configFallback;
         const a = actor(req);
         const interpreting = path === "/api/assistant/interpret";
@@ -161,8 +163,8 @@ export function registerAiRoutes(
           ? assistantTurnInput.parse(req.body)
           : undefined;
         const turnPending = turnInput?.pendingProposalId
-          ? (() => {
-              const row = repo.db
+          ? await (async () => {
+              const row = await repo.db
                 .prepare(
                   "SELECT data FROM proposals WHERE workspace_id=? AND id=?",
                 )
@@ -173,7 +175,7 @@ export function registerAiRoutes(
             })()
           : undefined;
         if (turnInput?.contextProjectId)
-          repo.get<Project>(
+          await repo.get<Project>(
             "projects",
             a.workspaceId,
             turnInput.contextProjectId,
@@ -188,7 +190,7 @@ export function registerAiRoutes(
         let project: Project | undefined;
         if (locating) {
           const input = projectLocationAnalysisInput.parse(req.body);
-          project = repo.get<Project>(
+          project = await repo.get<Project>(
             "projects",
             a.workspaceId,
             (req.params as { id: string }).id,
@@ -207,25 +209,27 @@ export function registerAiRoutes(
           source = turnInput!.source;
           originalSource = turnInput!.originalSource;
           for (const id of originalSource?.materialIds ?? [])
-            readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, id);
+            await readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, id);
         } else if (translating) {
           source = JSON.stringify(translationTexts);
         } else if (classifying) {
           const input = referenceClassifyInput.parse(req.body);
           materialIds = input.materialIds;
-          referenceFiles = materialIds.map((id) => {
-            const row = repo.db
-              .prepare(
-                "SELECT metadata FROM progress_materials WHERE id=? AND workspace_id=? AND project_id=?",
-              )
-              .get(id, a.workspaceId, CAPTURE_SCOPE);
-            if (!row) throw new HttpError(404, "Source file not found");
-            const metadata = JSON.parse(String(row.metadata)) as {
-              name: string;
-            };
-            return { id, name: metadata.name };
-          });
-          const projects = repo.snapshot(a.workspaceId).projects;
+          referenceFiles = await Promise.all(
+            materialIds.map(async (id) => {
+              const row = await repo.db
+                .prepare(
+                  "SELECT metadata FROM progress_materials WHERE id=? AND workspace_id=? AND project_id=?",
+                )
+                .get(id, a.workspaceId, CAPTURE_SCOPE);
+              if (!row) throw new HttpError(404, "Source file not found");
+              const metadata = JSON.parse(String(row.metadata)) as {
+                name: string;
+              };
+              return { id, name: metadata.name };
+            }),
+          );
+          const projects = (await repo.snapshot(a.workspaceId)).projects;
           source = JSON.stringify(
             referenceContext(referenceFiles, input.notes, projects),
           );
@@ -236,13 +240,20 @@ export function registerAiRoutes(
           source = input.text;
           materialIds = input.materialIds;
           recognitionDepth = input.recognitionDepth ?? "text";
-          materials = materialIds.map((id) => {
-            const m = readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, id);
-            return { ...m.metadata, images: m.images };
-          });
+          materials = await Promise.all(
+            materialIds.map(async (id) => {
+              const m = await readMaterial(
+                repo,
+                a.workspaceId,
+                CAPTURE_SCOPE,
+                id,
+              );
+              return { ...m.metadata, images: m.images };
+            }),
+          );
         } else if (path.endsWith("/analyze")) {
           const input = progressAnalysisInput.parse(req.body);
-          project = repo.get<Project>(
+          project = await repo.get<Project>(
             "projects",
             a.workspaceId,
             (req.params as { id: string }).id,
@@ -251,16 +262,23 @@ export function registerAiRoutes(
           source = input.text;
           materialIds = input.materialIds;
           recognitionDepth = input.recognitionDepth ?? "text";
-          materials = materialIds.map((id) => {
-            const m = readMaterial(repo, a.workspaceId, project!.id, id);
-            return { ...m.metadata, images: m.images };
-          });
+          materials = await Promise.all(
+            materialIds.map(async (id) => {
+              const m = await readMaterial(
+                repo,
+                a.workspaceId,
+                project!.id,
+                id,
+              );
+              return { ...m.metadata, images: m.images };
+            }),
+          );
         } else if (reviewing) {
           const input = z
             .object({ version: z.number().int().positive() })
             .strict()
             .parse(req.body);
-          task = repo.get<Task>(
+          task = await repo.get<Task>(
             "tasks",
             a.workspaceId,
             (req.params as { id: string }).id,
@@ -273,7 +291,7 @@ export function registerAiRoutes(
 
         const reviewTimeZone =
           task || interpreting
-            ? repo.settings(a.workspaceId).timeZone
+            ? (await repo.settings(a.workspaceId)).timeZone
             : undefined;
         const key = z.string().uuid().parse(req.headers["idempotency-key"]);
         const hash = createHash("sha256")
@@ -294,7 +312,7 @@ export function registerAiRoutes(
             }),
           )
           .digest("hex");
-        const old = repo.db
+        const old = await repo.db
           .prepare(
             "SELECT request_hash,status,response FROM ai_requests WHERE user_id=? AND key=?",
           )
@@ -322,7 +340,7 @@ export function registerAiRoutes(
           );
         }
         if (translating) {
-          const cached = repo.db
+          const cached = await repo.db
             .prepare(
               "SELECT response FROM ai_requests WHERE user_id=? AND request_hash=? AND status='succeeded' LIMIT 1",
             )
@@ -332,24 +350,29 @@ export function registerAiRoutes(
         }
         if (capturing && recognitionDepth === "text") {
           const result = localCaptureAnalysis(source, materials);
-          repo.db
+          await repo.db
             .prepare(
               "INSERT INTO ai_requests(user_id,key,request_hash,status,response,created_at) VALUES(?,?,?,'succeeded',?,?)",
             )
             .run(a.id, key, hash, JSON.stringify(result), Date.now());
           return result;
         }
-        const validateTemporaryMaterials = () => {
+        const validateTemporaryMaterials = async () => {
           for (const id of turnInput?.temporaryMaterialIds ?? []) {
-            const file = readMaterial(repo, a.workspaceId, CAPTURE_SCOPE, id);
+            const file = await readMaterial(
+              repo,
+              a.workspaceId,
+              CAPTURE_SCOPE,
+              id,
+            );
             if (file.metadata.uploadedById !== a.id)
               throw new HttpError(403, "只能清理自己尚未归档的临时附件。");
             if (originalSource?.materialIds.includes(id))
               throw new HttpError(400, "不能同时保留并清理同一附件。");
             if (
-              repo.db
+              await repo.db
                 .prepare(
-                  "SELECT 1 FROM proposals,json_each(proposals.data,'$.originalSource.materialIds') AS source_file WHERE proposals.workspace_id=? AND source_file.value=? LIMIT 1",
+                  "SELECT 1 FROM proposals, jsonb_array_elements_text(proposals.data::jsonb #> '{originalSource,materialIds}') AS source_file(value) WHERE proposals.workspace_id=? AND source_file.value=? LIMIT 1",
                 )
                 .get(a.workspaceId, id)
             )
@@ -359,19 +382,19 @@ export function registerAiRoutes(
               );
           }
         };
-        validateTemporaryMaterials();
+        await validateTemporaryMaterials();
         if (!config)
           throw new AiError(
             503,
             "AI_DISABLED",
             "AI 尚未启用，请管理员配置大模型；本次未执行，也不会转为规则识别。",
           );
-        const projects = repo.snapshot(a.workspaceId).projects;
+        const projects = (await repo.snapshot(a.workspaceId)).projects;
         const modelRequest = interpreting
           ? makeAssistantRequest(
               turnInput!,
               projects,
-              repo.catalogs(a.workspaceId),
+              await repo.catalogs(a.workspaceId),
               turnPending,
               config,
               reviewTimeZone,
@@ -408,13 +431,26 @@ export function registerAiRoutes(
             "AI_BUSY",
             "Another AI review is running in this workspace. Wait for it to finish.",
           );
-        assertAllowance(config);
-        repo.db
-          .prepare(
-            "INSERT INTO ai_requests(user_id,key,request_hash,status,created_at) VALUES(?,?,?,'started',?)",
-          )
-          .run(a.id, key, hash, Date.now());
         active.add(a.workspaceId);
+        try {
+          await repo.transaction(async () => {
+            await assertAllowance(config);
+            const claim = await repo.db
+              .prepare(
+                "INSERT INTO ai_requests(user_id,key,request_hash,status,created_at) VALUES(?,?,?,'started',?) ON CONFLICT(user_id,key) DO NOTHING",
+              )
+              .run(a.id, key, hash, Date.now());
+            if (!claim.changes)
+              throw new AiError(
+                409,
+                "AI_PENDING",
+                "This AI request was already submitted. No duplicate call was sent.",
+              );
+          });
+        } catch (error) {
+          active.delete(a.workspaceId);
+          throw error;
+        }
         const started = performance.now();
         const instructionId: AiInstructionId = interpreting
           ? "assistant-turn"
@@ -450,16 +486,16 @@ export function registerAiRoutes(
           attempts: 0,
         };
         try {
-          writeModelLog(repo, a.workspaceId, log);
+          await writeModelLog(repo, a.workspaceId, log);
           const result = await generateJson(
             modelRequest,
             config,
-            () =>
-              repo.transaction(() => {
-                assertAllowance(config);
+            async () =>
+              await repo.transaction(async () => {
+                await assertAllowance(config);
                 log.attempts++;
-                writeModelLog(repo, a.workspaceId, log);
-                repo.db
+                await writeModelLog(repo, a.workspaceId, log);
+                await repo.db
                   .prepare(
                     "INSERT INTO ai_attempts(id,budget_id,user_id,created_at) VALUES(?,?,?,?)",
                   )
@@ -502,7 +538,7 @@ export function registerAiRoutes(
           );
           if (
             task &&
-            repo.get<Task>("tasks", a.workspaceId, task.id).version !==
+            (await repo.get<Task>("tasks", a.workspaceId, task.id)).version !==
               task.version
           )
             throw new AiError(
@@ -512,7 +548,7 @@ export function registerAiRoutes(
             );
           if (
             (task || interpreting) &&
-            repo.settings(a.workspaceId).timeZone !== reviewTimeZone
+            (await repo.settings(a.workspaceId)).timeZone !== reviewTimeZone
           )
             throw new AiError(
               409,
@@ -521,8 +557,8 @@ export function registerAiRoutes(
             );
           if (
             project &&
-            repo.get<Project>("projects", a.workspaceId, project.id).version !==
-              project.version
+            (await repo.get<Project>("projects", a.workspaceId, project.id))
+              .version !== project.version
           )
             throw new AiError(
               409,
@@ -556,7 +592,7 @@ export function registerAiRoutes(
                           AssistantTurn["plan"],
                           { kind: "query" }
                         >,
-                        repo.snapshot(a.workspaceId),
+                        await repo.snapshot(a.workspaceId),
                         a,
                       ),
                     }
@@ -596,17 +632,17 @@ export function registerAiRoutes(
                         : (() => {
                             throw new HttpError(404, "Unknown AI operation");
                           })();
-          repo.transaction(() => {
-            validateTemporaryMaterials();
+          await repo.transaction(async () => {
+            await validateTemporaryMaterials();
             for (const id of turnInput?.temporaryMaterialIds ?? [])
-              repo.db
+              await repo.db
                 .prepare(
                   "DELETE FROM progress_materials WHERE id=? AND workspace_id=? AND project_id=?",
                 )
                 .run(id, a.workspaceId, CAPTURE_SCOPE);
 
             if (workProposal)
-              repo.db
+              await repo.db
                 .prepare(
                   "INSERT INTO proposals(id,workspace_id,data) VALUES(?,?,?)",
                 )
@@ -615,7 +651,7 @@ export function registerAiRoutes(
                   a.workspaceId,
                   JSON.stringify(workProposal),
                 );
-            repo.db
+            await repo.db
               .prepare(
                 "UPDATE ai_requests SET status='succeeded',response=? WHERE user_id=? AND key=?",
               )
@@ -632,7 +668,7 @@ export function registerAiRoutes(
                   "AI_INTERNAL",
                   "AI review failed. Nothing was applied; check the attempt budget before starting another request.",
                 );
-          repo.db
+          await repo.db
             .prepare(
               "UPDATE ai_requests SET status='failed',response=? WHERE user_id=? AND key=?",
             )
@@ -653,7 +689,7 @@ export function registerAiRoutes(
         } finally {
           active.delete(a.workspaceId);
           log.durationMs = Math.round(performance.now() - started);
-          writeModelLog(repo, a.workspaceId, log);
+          await writeModelLog(repo, a.workspaceId, log);
         }
       },
     );

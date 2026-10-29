@@ -1,3 +1,4 @@
+import { testDatabaseConfig } from "../pg-helpers.js";
 import { beforeEach, afterEach, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -13,16 +14,16 @@ let context: Awaited<ReturnType<typeof buildApp>>,
   cookie: string,
   csrf: string;
 const origin = "http://localhost:4173";
-const request = (id: string, body: unknown, key = randomUUID()) =>
-  context.app.inject({
+const request = async (id: string, body: unknown, key = randomUUID()) =>
+  await context.app.inject({
     method: "POST",
     url: `/api/tasks/${id}/move`,
     headers: { origin, cookie, "x-csrf-token": csrf, "idempotency-key": key },
     payload: body as Record<string, unknown>,
   });
 beforeEach(async () => {
-  context = await buildApp({ databasePath: ":memory:", origin });
-  context.repo.seed("team");
+  context = await buildApp({ isolatedDatabase: true, origin });
+  await context.repo.seed("team");
   await createUser(context.repo, {
     email: "move@example.test",
     name: "Mover",
@@ -40,9 +41,9 @@ beforeEach(async () => {
   });
   cookie = `pm_session=${login.cookies[0]!.value}`;
   csrf = login.json().csrf;
-  const initial = context.repo.snapshot("team"),
+  const initial = await context.repo.snapshot("team"),
     project = { ...initial.projects[0]!, id: "move-project" };
-  context.repo.putProject("team", project);
+  await context.repo.putProject("team", project);
   tasks = ["a", "b", "c"].map((id, sortOrder) => ({
     ...initial.tasks[0]!,
     id: `move-${id}`,
@@ -58,9 +59,9 @@ beforeEach(async () => {
     milestone: false,
     dependencies: [],
   }));
-  for (const task of tasks) context.repo.putTask("team", task);
+  for (const task of tasks) await context.repo.putTask("team", task);
 });
-afterEach(() => context.app.close());
+afterEach(async () => await context.app.close());
 it("atomically saves order, preserves it in normal updates and exports, and replays a move once", async () => {
   const source = tasks[2]!,
     anchor = tasks[0]!,
@@ -74,14 +75,14 @@ it("atomically saves order, preserves it in normal updates and exports, and repl
   };
   const first = await request(source.id, input, key);
   expect(first.statusCode).toBe(200);
-  const after = context.repo.snapshot("team");
+  const after = await context.repo.snapshot("team");
   expect(
     manualTaskOrder(after.tasks)
       .filter((task) => task.projectId === source.projectId)
       .map((task) => task.id),
   ).toEqual([source.id, tasks[0]!.id, tasks[1]!.id]);
   expect((await request(source.id, input, key)).json()).toEqual(first.json());
-  expect(context.repo.snapshot("team")).toEqual(after);
+  expect(await context.repo.snapshot("team")).toEqual(after);
   const current = after.tasks.find((task) => task.id === source.id)!;
   const edited = await context.app.inject({
     method: "PUT",
@@ -148,7 +149,7 @@ it("moves descendants together and rejects cycles/stale parents without partial 
   const source = tasks[0]!,
     parent = tasks[1]!,
     child = { ...tasks[2]!, parentId: source.id };
-  context.repo.putTask("team", child);
+  await context.repo.putTask("team", child);
   const result = await request(source.id, {
     version: source.version,
     parentId: parent.id,
@@ -156,7 +157,7 @@ it("moves descendants together and rejects cycles/stale parents without partial 
     placement: "last",
   });
   expect(result.statusCode).toBe(200);
-  const moved = context.repo.snapshot("team");
+  const moved = await context.repo.snapshot("team");
   expect(moved.tasks.find((task) => task.id === source.id)!.parentId).toBe(
     parent.id,
   );
@@ -172,7 +173,7 @@ it("moves descendants together and rejects cycles/stale parents without partial 
     placement: "last",
   });
   expect(cycle.statusCode).toBe(400);
-  expect(context.repo.snapshot("team")).toEqual(moved);
+  expect(await context.repo.snapshot("team")).toEqual(moved);
   const stale = await request(child.id, {
     version: child.version,
     parentId: parent.id,
@@ -180,7 +181,7 @@ it("moves descendants together and rejects cycles/stale parents without partial 
     placement: "last",
   });
   expect(stale.statusCode).toBe(409);
-  expect(context.repo.snapshot("team")).toEqual(moved);
+  expect(await context.repo.snapshot("team")).toEqual(moved);
 });
 it("rejects scheduled parents, cross-project anchors and stale source rows atomically", async () => {
   const source = tasks[0]!,
@@ -189,8 +190,8 @@ it("rejects scheduled parents, cross-project anchors and stale source rows atomi
       scheduleStart: "2026-10-19",
       scheduleEnd: "2026-10-20",
     };
-  context.repo.putTask("team", parent);
-  const before = context.repo.snapshot("team"),
+  await context.repo.putTask("team", parent);
+  const before = await context.repo.snapshot("team"),
     foreign = before.tasks.find((task) => task.projectId !== source.projectId)!;
   for (const [body, status] of [
     [
@@ -215,32 +216,29 @@ it("rejects scheduled parents, cross-project anchors and stale source rows atomi
     [{ version: source.version + 1, parentId: null, placement: "last" }, 409],
   ] as const) {
     expect((await request(source.id, body)).statusCode).toBe(status);
-    expect(context.repo.snapshot("team")).toEqual(before);
+    expect(await context.repo.snapshot("team")).toEqual(before);
   }
 });
-it("migrates old rows to the exact existing sibling order without changing task versions", () => {
+it("preserves the exact sibling order and task versions when PostgreSQL is reopened", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pm-task-order-"));
   let repo: Repository | undefined;
   try {
     const path = join(directory, "tasks.sqlite");
-    repo = new Repository(path);
-    repo.seed("legacy");
-    repo.db.exec(
-      "UPDATE tasks SET data=json_remove(data, '$.sortOrder'); DELETE FROM migrations WHERE version=19;",
-    );
-    const before = repo.snapshot("legacy").tasks;
-    repo.close();
-    repo = new Repository(path);
-    const after = repo.snapshot("legacy").tasks;
+    repo = await Repository.open(testDatabaseConfig(path));
+    await repo.seed("legacy");
+    const before = (await repo.snapshot("legacy")).tasks;
+    await repo.close();
+    repo = await Repository.open(testDatabaseConfig(path));
+    const after = (await repo.snapshot("legacy")).tasks;
     expect(manualTaskOrder(after).map((task) => task.id)).toEqual(
-      before.map((task) => task.id),
+      manualTaskOrder(before).map((task) => task.id),
     );
     expect(after.map((task) => task.version)).toEqual(
       before.map((task) => task.version),
     );
     expect(after.every((task) => Number.isInteger(task.sortOrder))).toBe(true);
   } finally {
-    repo?.close();
+    await repo?.close();
     rmSync(directory, { recursive: true, force: true });
   }
 });
