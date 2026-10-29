@@ -227,7 +227,7 @@ export function registerProgressMaterials(
         };
         return mutate(req, () => {
           if (id !== CAPTURE_SCOPE)
-            repo.get<Project>("projects", a.workspaceId, id);
+            repo.assertProjectWritable(a.workspaceId, id);
           const total = Number(
             repo.db
               .prepare(

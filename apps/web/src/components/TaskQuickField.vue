@@ -37,6 +37,7 @@ let suppressClickUntil = 0;
 const canDrag = computed(
   () =>
     props.field === "assignee" &&
+    store.projectWritable(props.task.projectId) &&
     !editing.value &&
     !store.busy &&
     !props.task.voided &&
@@ -52,6 +53,7 @@ function canDrop() {
   const drag = assigneeDrag.value;
   return (
     props.field === "assignee" &&
+    store.projectWritable(props.task.projectId) &&
     !editing.value &&
     !store.busy &&
     !props.task.voided &&
@@ -151,7 +153,13 @@ onBeforeUnmount(() => {
 });
 async function open() {
   if (Date.now() < suppressClickUntil) return;
-  if (store.busy || props.task.voided || !confirmDiscard()) return;
+  if (
+    !store.projectWritable(props.task.projectId) ||
+    store.busy ||
+    props.task.voided ||
+    !confirmDiscard()
+  )
+    return;
   original.value = { ...props.task };
   draftMemberId.value = props.task.assigneeId ?? null;
   draft.value =
@@ -293,7 +301,9 @@ async function save() {
       ref="trigger"
       class="text-button field-value"
       :class="{ 'icon-button title-edit-trigger': titleIcon }"
-      :disabled="store.busy || !!task.voided"
+      :disabled="
+        store.busy || !!task.voided || !store.projectWritable(task.projectId)
+      "
       :draggable="canDrag"
       @dragstart="startDrag"
       @dragend="endDrag"

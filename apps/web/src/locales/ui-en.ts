@@ -1,6 +1,8 @@
 /** Explicit interface translations; user-entered content is never translated. */
 import { statisticsEnglish } from "./statistics-en";
 export const uiEnglish: Record<string, string> = {
+  "待确认内容过多，请缩小本次处理范围；原输入仍保留。":
+    "Too much content is awaiting clarification. Narrow the scope; your original input is retained.",
   企业微信免登: "WeCom sign-in",
   "从企业微信工作台打开 PM，自动识别员工并使用现有账号和项目权限。":
     "Open PM from the WeCom workplace to sign in with your existing account and project permissions.",

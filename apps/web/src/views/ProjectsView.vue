@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import { assistantPanel, openAssistant } from "../composables/assistant-panel";
+import {
+  projectLifecycle,
+  projectLifecycleLabels,
+} from "../../../../packages/domain/project-lifecycle";
+import ProjectLifecycleControl from "../components/ProjectLifecycleControl.vue";
 
 import { useViewPreferences } from "../composables/view-preferences";
 import {
@@ -100,6 +105,7 @@ function selectProjectLayout(layout: string) {
 
 const {
   query,
+  lifecycle,
   followedOnly,
   stage,
   owner,
@@ -319,10 +325,15 @@ const scopeDate = computed(() => {
   return `${format(start)}–${format(end)}, ${end.slice(0, 4)} · ${store.timeZone}`;
 });
 const scopeStats = computed(() =>
-  statistics(store.data.tasks, scope.value, new Date(), store.timeZone),
+  statistics(
+    selectedProjectTasks.value,
+    scope.value,
+    new Date(),
+    store.timeZone,
+  ),
 );
 const overviewTasks = computed(() => {
-  const tasks = leafTasks(store.data.tasks),
+  const tasks = leafTasks(selectedProjectTasks.value),
     day = currentDay(),
     week = currentWeek();
   return tasks.filter((task) =>
@@ -356,6 +367,7 @@ const projects = computed(() =>
     store.data.members,
     {
       query: query.value,
+      lifecycle: lifecycle.value,
       stage: stage.value,
       owner: owner.value,
       discipline: discipline.value,
@@ -368,6 +380,10 @@ const projects = computed(() =>
     store.data.projectOrder,
   ),
 );
+const selectedProjectTasks = computed(() => {
+  const ids = new Set(projects.value.map((p) => p.id));
+  return store.data.tasks.filter((t) => ids.has(t.projectId));
+});
 const filtersOpen = ref(false);
 const activeFilters = computed(() =>
   [
@@ -406,6 +422,7 @@ const filtered = computed(
   () =>
     !!(
       query.value ||
+      lifecycle.value !== "active" ||
       followedOnly.value ||
       stage.value ||
       owner.value ||
@@ -415,6 +432,7 @@ const filtered = computed(
     ),
 );
 function clear() {
+  lifecycle.value = "active";
   query.value = "";
   followedOnly.value = false;
   stage.value = "";
@@ -471,7 +489,22 @@ function saved(p: Project) {
   expanded.value = p.id;
 }
 const portfolioProjects = computed(() =>
-  store.data.projects.filter((p) => !p.intakeInbox),
+  store.data.projects.filter(
+    (p) =>
+      !p.intakeInbox &&
+      (lifecycle.value === "all" || projectLifecycle(p) === lifecycle.value),
+  ),
+);
+const portfolioTasks = computed(() => {
+  const ids = new Set(portfolioProjects.value.map((p) => p.id));
+  return store.data.tasks.filter((task) => ids.has(task.projectId));
+});
+const portfolioStats = computed(() => statistics(portfolioTasks.value));
+const portfolioToday = computed(() =>
+  statistics(portfolioTasks.value, "today", new Date(), store.timeZone),
+);
+const portfolioWeek = computed(() =>
+  statistics(portfolioTasks.value, "week", new Date(), store.timeZone),
 );
 const inbox = computed(() => store.data.projects.find((p) => p.intakeInbox));
 async function toggle(id: string) {
@@ -499,10 +532,11 @@ function edit(id: string) {
           }}</span>
         </h1>
         <span class="workspace-totals"
-          >{{ t("{count} tasks", { count: store.total.total }) }} <span>·</span>
-          {{ t("{count} completed", { count: store.total.done }) }}
+          >{{ t("{count} tasks", { count: portfolioStats.total }) }}
           <span>·</span>
-          {{ t("{count} open", { count: store.total.unfinished }) }}</span
+          {{ t("{count} completed", { count: portfolioStats.done }) }}
+          <span>·</span>
+          {{ t("{count} open", { count: portfolioStats.unfinished }) }}</span
         >
       </div>
       <div class="heading-actions">
@@ -535,13 +569,14 @@ function edit(id: string) {
           @click="scope = 'today'"
         >
           {{ t("Today")
-          }}<span>{{ formatNumber(store.today.total) }}</span></button
+          }}<span>{{ formatNumber(portfolioToday.total) }}</span></button
         ><button
           :aria-pressed="scope === 'week'"
           :class="{ active: scope === 'week' }"
           @click="scope = 'week'"
         >
-          {{ t("This week") }}<span>{{ formatNumber(store.week.total) }}</span>
+          {{ t("This week")
+          }}<span>{{ formatNumber(portfolioWeek.total) }}</span>
         </button>
       </div>
       <span class="scope-date" aria-live="polite">{{ scopeDate }}</span>
@@ -590,6 +625,12 @@ function edit(id: string) {
             /><kbd>/</kbd></label
           >
           <div class="filter-controls">
+            <select v-model="lifecycle" :aria-label="t('Project status')">
+              <option value="active">{{ t("Active projects") }}</option>
+              <option value="closed">{{ t("Closed projects") }}</option>
+              <option value="archived">{{ t("Archived projects") }}</option>
+              <option value="all">{{ t("All project statuses") }}</option>
+            </select>
             <button
               class="following-filter"
               :aria-pressed="followedOnly"
@@ -806,8 +847,19 @@ function edit(id: string) {
               </button>
               <ProjectFollow :id="project.id" :name="project.name" />
               <div class="project-name">
-                <ProjectQuickActions :project="project" showName />
+                <ProjectQuickActions :project="project" showName>
+                  <template #actions
+                    ><ProjectLifecycleControl :project="project" compact
+                  /></template>
+                </ProjectQuickActions>
                 <div class="project-metadata">
+                  <span
+                    v-if="projectLifecycle(project) !== 'active'"
+                    class="project-state-label muted"
+                    >{{
+                      t(projectLifecycleLabels[projectLifecycle(project)])
+                    }}</span
+                  >
                   <ClientLabel :client="project.client" />
                   <span class="project-channel">
                     {{ t("渠道：")
@@ -1140,7 +1192,14 @@ function edit(id: string) {
   background: var(--surface-hover);
 }
 .project-row .project-name :deep(.quick-action:first-of-type) {
+  inset-inline-end: 56px;
+}
+.project-row .project-name :deep(.quick-action:nth-of-type(2)) {
   inset-inline-end: 28px;
+}
+.project-state-label {
+  white-space: nowrap;
+  font-size: 12px;
 }
 .project-metadata {
   display: flex;
@@ -1179,12 +1238,12 @@ function edit(id: string) {
   }
   .project-record:hover :deep(.quick-project-name),
   .project-record:focus-within :deep(.quick-project-name) {
-    padding-inline-end: 60px;
+    padding-inline-end: 88px;
   }
 }
 @media (hover: none), (pointer: coarse) {
   .project-row .project-name :deep(.quick-project-name) {
-    padding-inline-end: 60px;
+    padding-inline-end: 88px;
   }
 }
 @media (min-width: 761px) {
@@ -1214,6 +1273,25 @@ function edit(id: string) {
   }
 }
 @media (max-width: 760px) {
+  .project-row > .project-cell {
+    grid-column: 1 / -1;
+  }
+  .project-row > .badge {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: center;
+    margin-left: 0;
+  }
+  .project-row :deep(.project-owner-cell) {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .project-row > .latest-update {
+    grid-row: 3;
+  }
+  .project-row > .project-week {
+    grid-row: 4;
+  }
   .project-row .project-name :deep(.project-quick-actions) {
     flex-wrap: wrap;
   }

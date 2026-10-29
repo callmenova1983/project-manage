@@ -46,7 +46,12 @@ const dirty = computed(
 );
 useUnsaved(dirty);
 async function open() {
-  if (store.busy || !confirmDiscard()) return;
+  if (
+    !store.projectWritable(props.project.id) ||
+    store.busy ||
+    !confirmDiscard()
+  )
+    return;
   original.value = { ...props.project };
   draft.value = value(props.project);
   error.value = "";
@@ -129,7 +134,7 @@ async function save() {
     <button
       v-else
       class="text-button metadata-value"
-      :disabled="store.busy"
+      :disabled="store.busy || !store.projectWritable(project.id)"
       :aria-label="t('Edit') + ' ' + label"
       @click="open"
     >

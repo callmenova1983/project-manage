@@ -8,6 +8,10 @@ import {
   type AssistantTurn,
 } from "../../packages/domain/assistant-plan";
 import { intakeCandidates, parseDelimited } from "../../packages/domain/intake";
+import {
+  projectListRows,
+  projectListSource,
+} from "../fixtures/assistant-project-list";
 let ctx: Awaited<ReturnType<typeof buildApp>>, cookie: string, csrf: string;
 const origin = "http://localhost:4173",
   fetcher = vi.fn<typeof fetch>();
@@ -105,6 +109,96 @@ describe.each(["legacy", "sdk"] as const)(
       ).toBe(0);
     });
     const userSource = "客户名字 重庆市市院， 数字城市项目，地址是重庆";
+    it("uses the full unsubmitted list after a short clarification reply, while unrelated history remains invalid evidence", async () => {
+      const before = ctx.repo.snapshot("turn");
+      const plan = {
+        kind: "project",
+        rows: projectListRows.map((row) => ({
+          projectId: null,
+          name: row.name,
+          client: row.client,
+          quote: `${row.number}\t${row.name}\t${row.client}`,
+        })),
+      };
+      const followup = {
+        source: "批量新建项目建档",
+        externalProcessingConfirmed: true,
+        recentMessages: [
+          { role: "user", text: projectListSource, projectIds: [] },
+          { role: "assistant", text: "这份清单要做什么操作？", projectIds: [] },
+        ],
+      };
+      // Merely appearing in chat history must not authorize replaying an old request.
+      model(plan);
+      expect(
+        (await send("/api/assistant/interpret", followup)).statusCode,
+      ).toBe(502);
+      expect(ctx.repo.snapshot("turn")).toEqual(before);
+      model(plan);
+      const result = await send("/api/assistant/interpret", {
+        ...followup,
+        draft: projectListSource,
+      });
+      expect(result.statusCode, result.body).toBe(200);
+      expect(result.json().plan.rows).toHaveLength(11);
+      const table = assistantProjectCsv(
+        result.json().plan.rows,
+        before.projects,
+      );
+      const source = {
+        kind: "csv" as const,
+        name: "clarified project list",
+        sheet: "",
+        text: table,
+        rows: parseDelimited(table),
+        originalSource: { text: projectListSource, materialIds: [] },
+      };
+      const saved = await send("/api/intakes", {
+        source,
+        confirmed: true,
+        rows: intakeCandidates(source, before.projects).map((candidate) => ({
+          sourceRow: candidate.sourceRow,
+          targetProjectId: candidate.targetProjectId,
+          targetProjectVersion: candidate.targetProjectVersion,
+          project: candidate.project,
+          task: candidate.task,
+          duplicateConfirmed: false,
+        })),
+      });
+      expect(saved.statusCode, saved.body).toBe(200);
+      expect(
+        saved.json().projects.map((p: { name: string; client: string }) => ({
+          name: p.name,
+          client: p.client,
+        })),
+      ).toEqual(projectListRows.map(({ name, client }) => ({ name, client })));
+      expect(ctx.repo.snapshot("turn").tasks).toEqual(before.tasks);
+    });
+    it("keeps original report evidence and line locations when a later turn confirms how to record it", async () => {
+      const before = ctx.repo.snapshot("turn");
+      const draft = "日报原文\n项目接口联调完成，等待客户确认。";
+      model({
+        kind: "work",
+        items: [
+          {
+            quote: "项目接口联调完成，等待客户确认。",
+            title: "接口联调完成，等待确认",
+            projectIds: [before.projects[0]!.id],
+            action: "update",
+            status: "in_progress",
+          },
+        ],
+      });
+      const result = await send("/api/assistant/interpret", {
+        source: "记为该项目的进展日志",
+        draft,
+        externalProcessingConfirmed: true,
+      });
+      expect(result.statusCode, result.body).toBe(200);
+      expect(result.json().proposal.source).toContain(draft);
+      expect(result.json().proposal.suggestions[0].sourceLine).toBe(2);
+      expect(ctx.repo.snapshot("turn")).toEqual(before);
+    });
     it("sends unformatted text to Qwen, applies structured fields once, and reuses the existing project on a second turn", async () => {
       const before = ctx.repo.snapshot("turn");
       model({

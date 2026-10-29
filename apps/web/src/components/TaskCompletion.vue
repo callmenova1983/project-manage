@@ -9,7 +9,7 @@ const emit = defineEmits<{ error: [message: string] }>();
 const store = useWorkspace();
 const button = ref<HTMLButtonElement | null>(null);
 async function toggle() {
-  if (store.busy) return;
+  if (store.busy || !store.projectWritable(props.task.projectId)) return;
   const focused = document.activeElement === button.value;
   emit("error", "");
   try {
@@ -33,7 +33,7 @@ async function toggle() {
     class="completion-toggle"
     role="checkbox"
     :aria-checked="task.status === 'done'"
-    :disabled="store.busy"
+    :disabled="store.busy || !store.projectWritable(task.projectId)"
     :aria-label="t('Complete {title}', { title: task.title })"
     :aria-busy="store.changingTaskId === task.id"
     :class="{ completed: task.status === 'done', compact }"

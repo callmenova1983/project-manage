@@ -1,4 +1,9 @@
 import type { TaskDependency } from "../../../../packages/domain/task-dependencies";
+import {
+  isActiveProject,
+  projectLifecycleActions,
+  type ProjectLifecycleInput,
+} from "../../../../packages/domain/project-lifecycle";
 import type { TaskMoveInput } from "../../../../packages/domain/task-move";
 import type { TaskBulkUpdate } from "../../../../packages/domain/task-bulk-update";
 import type {
@@ -336,13 +341,24 @@ export const useWorkspace = defineStore("workspace", () => {
     error.value = "";
     loading.value = false;
   }
-  const total = computed(() => statistics(data.value.tasks)),
+  const activeTasks = computed(() => {
+    const ids = new Set(
+      data.value.projects.filter(isActiveProject).map((p) => p.id),
+    );
+    return data.value.tasks.filter((t) => ids.has(t.projectId));
+  });
+  const total = computed(() => statistics(activeTasks.value)),
     week = computed(() =>
-      statistics(data.value.tasks, "week", new Date(), workspaceTimeZone.value),
+      statistics(
+        activeTasks.value,
+        "week",
+        new Date(),
+        workspaceTimeZone.value,
+      ),
     ),
     today = computed(() =>
       statistics(
-        data.value.tasks,
+        activeTasks.value,
         "today",
         new Date(),
         workspaceTimeZone.value,
@@ -460,6 +476,29 @@ export const useWorkspace = defineStore("workspace", () => {
       },
       p ? "Project updated" : "Project created",
     );
+  }
+  function projectWritable(id: string) {
+    const project = data.value.projects.find((p) => p.id === id);
+    return !!project && project.lifecycle !== "archived";
+  }
+  function changeProjectLifecycle(
+    project: Project,
+    input: Omit<ProjectLifecycleInput, "version">,
+  ) {
+    const generation = sessionGeneration;
+    return operation(async () => {
+      const saved = await api.changeProjectLifecycle(project.id, {
+        ...input,
+        version: project.version,
+      });
+      if (generation === sessionGeneration) {
+        snapshotRequest++;
+        data.value.projects = data.value.projects.map((p) =>
+          p.id === saved.id && p.version <= saved.version ? saved : p,
+        );
+      }
+      return saved;
+    }, projectLifecycleActions[input.lifecycle]);
   }
   async function saveTaskDependencies(
     task: Task,
@@ -692,6 +731,8 @@ export const useWorkspace = defineStore("workspace", () => {
     notify,
     operation,
     saveProject,
+    projectWritable,
+    changeProjectLifecycle,
     saveTask,
     moveTask,
     saveTaskSchedule,

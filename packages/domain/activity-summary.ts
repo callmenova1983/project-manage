@@ -88,6 +88,8 @@ export function describeActivity(activity: Activity): ActivityDescription {
         : isProject(before)
           ? before.name
           : null;
+  if (activity.source === "Project lifecycle")
+    return { key: activity.action, tone: "project", subject };
   if (isHistoryRestore(activity))
     return { key: "Previous version restored", tone: "restored", subject };
   if (activity.kind === "import")

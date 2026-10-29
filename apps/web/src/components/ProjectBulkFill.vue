@@ -86,7 +86,9 @@ const scope = ref<"missing" | "all">("missing");
 const projects = computed(() =>
   store.data.projects.filter(
     (p) =>
-      !p.intakeInbox && (!props.projectIds || props.projectIds.includes(p.id)),
+      !p.intakeInbox &&
+      store.projectWritable(p.id) &&
+      (!props.projectIds || props.projectIds.includes(p.id)),
   ),
 );
 const missingCount = computed(

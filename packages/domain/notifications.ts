@@ -1,4 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill";
+import { isActiveProject } from "./project-lifecycle.js";
 import { z } from "zod";
 import { dayKey, type Project, type Snapshot, type Task } from "./types.js";
 import { timeZoneInput } from "./time-zone.js";
@@ -203,6 +204,7 @@ export function deriveTaskNotifications(
     const project = projects.get(task.projectId);
     if (
       !project ||
+      !isActiveProject(project) ||
       project.intakeInbox ||
       task.voided ||
       task.status === "done" ||
@@ -269,7 +271,7 @@ export function deriveProjectNotifications(
   void _now;
   if (!activeRecipient(snapshot, recipientId)) return [];
   return snapshot.projects.flatMap((project) => {
-    if (project.intakeInbox) return [];
+    if (project.intakeInbox || !isActiveProject(project)) return [];
     const related =
       project.ownerId === recipientId ||
       project.participantIds?.includes(recipientId) ||

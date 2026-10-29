@@ -31,6 +31,9 @@ const task = computed(() =>
 const project = computed(() =>
   store.data.projects.find((project) => project.id === task.value?.projectId),
 );
+const writable = computed(
+  () => !!task.value && store.projectWritable(task.value.projectId),
+);
 const children = computed(() =>
   store.data.tasks.filter((child) => child.parentId === task.value?.id),
 );
@@ -84,7 +87,7 @@ watch(
   },
 );
 async function changeStatus(event: Event) {
-  if (!task.value) return;
+  if (!task.value || !writable.value) return;
   error.value = "";
   try {
     await store.changeTaskStatus(
@@ -103,15 +106,33 @@ function close() {
   if (confirmDiscard()) emit("close");
 }
 function edit() {
-  if (task.value && !task.value.voided && !store.busy && confirmDiscard())
+  if (
+    writable.value &&
+    task.value &&
+    !task.value.voided &&
+    !store.busy &&
+    confirmDiscard()
+  )
     editing.value = { ...task.value };
 }
 function editDate(basis: "work" | "estimated" | "reminder") {
-  if (task.value && !task.value.voided && !store.busy && confirmDiscard())
+  if (
+    writable.value &&
+    task.value &&
+    !task.value.voided &&
+    !store.busy &&
+    confirmDiscard()
+  )
     dateEditing.value = basis;
 }
 function editSchedule(mode: "schedule" | "dependencies") {
-  if (task.value && !task.value.voided && !store.busy && confirmDiscard())
+  if (
+    writable.value &&
+    task.value &&
+    !task.value.voided &&
+    !store.busy &&
+    confirmDiscard()
+  )
     scheduleEditing.value = mode;
 }
 </script>
@@ -153,7 +174,7 @@ function editSchedule(mode: "schedule" | "dependencies") {
             class="detail-status"
             :value="task.status"
             :aria-label="t('Status for {title}', { title: task.title })"
-            :disabled="store.busy"
+            :disabled="store.busy || !writable"
             @change="changeStatus"
           >
             <option v-for="status in statuses" :key="status" :value="status">
@@ -178,10 +199,10 @@ function editSchedule(mode: "schedule" | "dependencies") {
           <div class="detail-section-heading">
             <h4>{{ t("Work arrangement") }}</h4>
             <button
-              v-if="!task.voided"
+              v-if="!task.voided && writable"
               type="button"
               class="text-button"
-              :disabled="store.busy"
+              :disabled="store.busy || !writable"
               @click="editDate('work')"
             >
               {{ t("Edit work arrangement") }}
@@ -206,7 +227,11 @@ function editSchedule(mode: "schedule" | "dependencies") {
           </p>
           <p v-else class="muted">{{ t("Not scheduled") }}</p>
         </section>
-        <TaskReviewPanel v-if="!task.voided" :task="task" :show-times="false" />
+        <TaskReviewPanel
+          v-if="!task.voided && writable"
+          :task="task"
+          :show-times="false"
+        />
         <details class="detail-disclosure">
           <summary>
             {{ t("More dates") }}
@@ -245,17 +270,17 @@ function editSchedule(mode: "schedule" | "dependencies") {
               </dd>
             </template>
           </dl>
-          <div v-if="!task.voided" class="task-actions">
+          <div v-if="!task.voided && writable" class="task-actions">
             <button
               type="button"
-              :disabled="store.busy"
+              :disabled="store.busy || !writable"
               @click="editDate('estimated')"
             >
               {{ t("Edit estimated date") }}
             </button>
             <button
               type="button"
-              :disabled="store.busy"
+              :disabled="store.busy || !writable"
               @click="editDate('reminder')"
             >
               {{ t("Edit reminder") }}
@@ -325,12 +350,15 @@ function editSchedule(mode: "schedule" | "dependencies") {
                 }}<span v-if="successor.voided"> · {{ t("Voided task") }}</span>
               </li>
             </ul>
-            <div v-if="!task.voided" class="task-actions">
-              <button :disabled="store.busy" @click="editSchedule('schedule')">
+            <div v-if="!task.voided && writable" class="task-actions">
+              <button
+                :disabled="store.busy || !writable"
+                @click="editSchedule('schedule')"
+              >
                 {{ t("Edit schedule") }}
               </button>
               <button
-                :disabled="store.busy"
+                :disabled="store.busy || !writable"
                 @click="editSchedule('dependencies')"
               >
                 {{ t("Edit predecessors") }}
@@ -343,7 +371,7 @@ function editSchedule(mode: "schedule" | "dependencies") {
         </p>
         <section v-if="children.length" class="child-context">
           <h4>{{ t("Subtasks") }}</h4>
-          <p v-if="!task.voided" class="muted">
+          <p v-if="!task.voided && writable" class="muted">
             {{ t("Complete the subtasks individually.") }}
           </p>
           <ul>
@@ -376,12 +404,12 @@ function editSchedule(mode: "schedule" | "dependencies") {
       @close="scheduleEditing = null"
     />
     <template v-if="task && !editing" #footer>
-      <TaskVoidAction :task="task" labeled />
+      <TaskVoidAction v-if="writable" :task="task" labeled />
       <button
-        v-if="!task.voided"
+        v-if="!task.voided && writable"
         type="button"
         class="primary"
-        :disabled="store.busy"
+        :disabled="store.busy || !writable"
         @click="edit"
       >
         {{ t("Edit task") }}

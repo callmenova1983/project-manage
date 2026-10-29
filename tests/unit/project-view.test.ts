@@ -121,6 +121,7 @@ describe("shared project collection", () => {
   it("round-trips explicit query filters and refuses malformed or repeated values", () => {
     const filters = {
       query: "Customer review",
+      lifecycle: "active" as const,
       stage: "implementation",
       owner: "member:a",
       channel: "company",

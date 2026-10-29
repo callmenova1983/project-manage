@@ -1,4 +1,8 @@
 import { projectChannel } from "./channels.js";
+import {
+  projectLifecycle,
+  type ProjectLifecycle,
+} from "./project-lifecycle.js";
 import { matchesProjectPinyin } from "./project-search.js";
 import { orderedProjectIds } from "./project-order.js";
 import { stageSummaries } from "./stage-summary.js";
@@ -6,6 +10,7 @@ import { createTaskViewIndex, type TaskViewQuery } from "./task-view.js";
 import type { Member, Project, Snapshot } from "./types.js";
 
 export interface ProjectViewFilters {
+  lifecycle?: ProjectLifecycle | "all";
   query?: string;
   stage?: string;
   owner?: string;
@@ -17,6 +22,7 @@ export interface ProjectViewFilters {
   invalid?: boolean;
 }
 const projectFilterKeys = [
+  "lifecycle",
   "q",
   "stage",
   "owner",
@@ -35,6 +41,11 @@ export function readProjectViewQuery(
   const text = (key: string) =>
     typeof query[key] === "string" ? (query[key] as string) : "";
   return {
+    lifecycle: (["active", "closed", "archived", "all"].includes(
+      text("lifecycle"),
+    )
+      ? text("lifecycle")
+      : "active") as ProjectViewFilters["lifecycle"],
     query: text("q"),
     stage: text("stage"),
     owner: text("owner"),
@@ -46,6 +57,8 @@ export function readProjectViewQuery(
       ? (text("sort") as ProjectViewFilters["sort"])
       : "manual",
     invalid:
+      (query.lifecycle !== undefined &&
+        !["active", "closed", "archived", "all"].includes(text("lifecycle"))) ||
       projectFilterKeys.some(
         (key) => query[key] !== undefined && typeof query[key] !== "string",
       ) ||
@@ -54,6 +67,10 @@ export function readProjectViewQuery(
 }
 export function projectViewQuery(filters: ProjectViewFilters) {
   return {
+    lifecycle:
+      filters.lifecycle && filters.lifecycle !== "active"
+        ? filters.lifecycle
+        : undefined,
     q: filters.query || undefined,
     stage: filters.stage || undefined,
     owner: filters.owner || undefined,
@@ -85,6 +102,8 @@ export function selectProjects(
   return projects
     .filter(
       (project) =>
+        (filters.lifecycle === "all" ||
+          projectLifecycle(project) === (filters.lifecycle ?? "active")) &&
         (!query ||
           `${project.name} ${project.shortName ?? ""} ${project.aliases.join(" ")} ${project.client} ${project.latestUpdate} ${(project.ownerId && names.get(project.ownerId)) || project.owner}`
             .toLocaleLowerCase()

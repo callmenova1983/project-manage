@@ -85,6 +85,8 @@ export const taskInput = z
   })
   .strict();
 export const projectSchema = projectInput.extend({
+  lifecycle: z.enum(["active", "closed", "archived"]).optional(),
+  lifecycleChangedAt: z.string().datetime().optional(),
   reportedAt: z.string().datetime().nullable().default(null),
   reportedBy: z.string().max(80).nullable().default(null),
   id: text(100),

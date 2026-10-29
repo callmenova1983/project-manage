@@ -91,6 +91,11 @@ export function registerWorkspaceTransfer(
             a.workspaceId,
             task,
             current.tasks.find((t) => t.id === task.id),
+            {
+              importArchived: !current.projects.some(
+                (p) => p.id === task.projectId,
+              ),
+            },
           );
         repo.db
           .prepare(

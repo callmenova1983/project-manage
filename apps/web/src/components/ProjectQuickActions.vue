@@ -69,7 +69,10 @@ const channels = computed(() => {
   );
 });
 const eligible = computed(
-  () => preview.value?.projects.filter((p) => !p.intakeInbox) ?? [],
+  () =>
+    preview.value?.projects.filter(
+      (p) => !p.intakeInbox && p.lifecycle !== "archived",
+    ) ?? [],
 );
 const candidates = computed(() =>
   eligible.value.filter(
@@ -140,7 +143,12 @@ watch(targetId, (id) => {
 });
 async function open(value: "rename" | "merge") {
   clearTimeout(navigationTimer);
-  if (!confirmDiscard() || store.busy) return;
+  if (
+    !store.projectWritable(props.project.id) ||
+    !confirmDiscard() ||
+    store.busy
+  )
+    return;
   preview.value = JSON.parse(JSON.stringify(store.data));
   const current = preview.value!.projects.find(
     (p) => p.id === props.project.id,
@@ -264,7 +272,7 @@ async function save() {
       class="icon-button quick-action"
       :aria-label="t('Rename {name}', { name: project.name })"
       :title="t('Edit name, short name and channel')"
-      :disabled="store.busy"
+      :disabled="store.busy || !store.projectWritable(project.id)"
       @click="open('rename')"
     >
       <PhPencilSimple :size="15" /><span v-if="labeled">{{
@@ -278,6 +286,7 @@ async function save() {
       :title="t('Merge projects')"
       :disabled="
         store.busy ||
+        !store.projectWritable(project.id) ||
         store.data.projects.filter((p) => !p.intakeInbox).length < 2
       "
       @click="open('merge')"
@@ -286,6 +295,7 @@ async function save() {
         t("Merge projects")
       }}</span>
     </button>
+    <slot name="actions" />
     <dialog
       v-if="mode"
       ref="dialog"

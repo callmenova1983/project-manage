@@ -315,7 +315,9 @@ function reload() {
             aria-describedby="task-assignment-help"
           >
             <option
-              v-for="project in store.data.projects"
+              v-for="project in store.data.projects.filter((p) =>
+                store.projectWritable(p.id),
+              )"
               :key="project.id"
               :value="project.id"
             >

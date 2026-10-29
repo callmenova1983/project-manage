@@ -85,6 +85,7 @@ async function close() {
 }
 function startDrag(task: Task, event: DragEvent) {
   if (
+    !store.projectWritable(task.projectId) ||
     store.busy ||
     editing.value ||
     (event.target as HTMLElement).closest("button, select, a, input")
@@ -108,7 +109,12 @@ function dragOver(status: Status, event: DragEvent) {
   dropColumn.value = status;
 }
 async function change(task: Task, status: Status) {
-  if (store.busy || task.status === status) return;
+  if (
+    !store.projectWritable(task.projectId) ||
+    store.busy ||
+    task.status === status
+  )
+    return;
   error.value = "";
   try {
     await store.changeTaskStatus(task, status);
@@ -193,7 +199,9 @@ function selectStatus(task: Task, event: Event) {
             :data-task-id="task.id"
             class="board-card"
             :class="{ dragging: dragging?.id === task.id }"
-            :draggable="!store.busy && !editing"
+            :draggable="
+              !store.busy && !editing && store.projectWritable(task.projectId)
+            "
             @dragstart="startDrag(task, $event)"
             @dragend="clearDrag"
           >
@@ -222,7 +230,7 @@ function selectStatus(task: Task, event: Event) {
             </div>
             <select
               :value="task.status"
-              :disabled="store.busy"
+              :disabled="store.busy || !store.projectWritable(task.projectId)"
               :aria-label="t('Status for {title}', { title: task.title })"
               @change="selectStatus(task, $event)"
             >

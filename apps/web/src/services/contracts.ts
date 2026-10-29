@@ -93,6 +93,7 @@ import type {
   IntakeBatch,
 } from "../../../../packages/domain/intake";
 import type { ProjectMergeInput } from "../../../../packages/domain/project-merge";
+import type { ProjectLifecycleInput } from "../../../../packages/domain/project-lifecycle";
 import type {
   CompanyDirectory,
   WecomSyncState,
@@ -191,6 +192,10 @@ export interface WorkspaceApi {
     name: string,
     version: number,
     shortName?: string,
+  ): Promise<Project>;
+  changeProjectLifecycle(
+    id: string,
+    input: ProjectLifecycleInput,
   ): Promise<Project>;
   progressMaterial(
     id: string,

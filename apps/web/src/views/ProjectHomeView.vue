@@ -32,6 +32,7 @@ function hydrate(query: Record<string, unknown>) {
   if (filters.invalid) return;
   hydrating = true;
   Object.assign(store.projectNavigation, {
+    lifecycle: filters.lifecycle ?? "active",
     query: filters.query ?? "",
     stage: filters.stage ?? "",
     owner: filters.owner ?? "",
@@ -89,6 +90,7 @@ function navigate(value: string) {
 }
 function clear() {
   Object.assign(store.projectNavigation, {
+    lifecycle: "active",
     query: "",
     stage: "",
     owner: "",

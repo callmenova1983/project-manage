@@ -79,7 +79,13 @@ const drag = ref<{
 } | null>(null);
 let suppressClick = false;
 function beginDrag(event: PointerEvent, task: Task, aggregate: boolean) {
-  if (aggregate || store.busy || event.button !== 0) return;
+  if (
+    !store.projectWritable(task.projectId) ||
+    aggregate ||
+    store.busy ||
+    event.button !== 0
+  )
+    return;
   const element = event.currentTarget as HTMLElement;
   const mode = (event.target as HTMLElement).closest<HTMLElement>("[data-edge]")
     ?.dataset.edge as GanttGesture | undefined;
@@ -147,7 +153,7 @@ function clickBar(event: MouseEvent, task: Task, aggregate: boolean) {
     return;
   }
   suppressClick = false;
-  if (aggregate) openTask?.(task.id);
+  if (aggregate || !store.projectWritable(task.projectId)) openTask?.(task.id);
   else {
     proposed.value = undefined;
     editing.value = task;

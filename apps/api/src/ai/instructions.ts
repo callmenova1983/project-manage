@@ -3,7 +3,7 @@ import type { CaptureRecognitionDepth } from "../../../../packages/domain/captur
 /** Business instructions only. Authorization, identity and writes remain enforced by services.
  * Increment the scenario version when changing semantics and extend its regression examples. */
 export const instructionVersions = {
-  "assistant-turn": 3,
+  "assistant-turn": 4,
   capture: 1,
   progress: 2,
   "task-review": 1,

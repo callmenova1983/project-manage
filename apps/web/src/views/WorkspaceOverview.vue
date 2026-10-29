@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
+import { isActiveProject } from "../../../../packages/domain/project-lifecycle";
 import { useRoute, useRouter } from "vue-router";
 import {
   PhArrowRight,
@@ -59,7 +60,7 @@ const scope = computed(() =>
 );
 const selectedProjects = computed(() =>
   range.value === "workspace"
-    ? store.data.projects
+    ? store.data.projects.filter(isActiveProject)
     : selectProjects(
         store.data.projects,
         store.data.members,
@@ -252,7 +253,9 @@ async function closeOverlay(kind: "task" | "dates") {
             })
           "
         >
-          <option value="workspace">{{ t("All workspace projects") }}</option>
+          <option value="workspace">
+            {{ t("Active workspace projects") }}
+          </option>
           <option value="filtered">{{ t("Current project filters") }}</option>
         </select></label
       >
@@ -291,7 +294,7 @@ async function closeOverlay(kind: "task" | "dates") {
       <PhFunnelSimple :size="14" />{{ t("Current project filters") }} ·
       {{ t("{count} projects", { count: overview.projects.length })
       }}<button @click="change({ overviewRange: 'workspace' })">
-        {{ t("All workspace projects") }}
+        {{ t("Active workspace projects") }}
       </button>
     </p>
     <p v-if="store.error" class="error-box" role="alert">

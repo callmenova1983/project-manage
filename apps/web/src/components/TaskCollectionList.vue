@@ -210,7 +210,13 @@ function toggle(key: string) {
       </div>
     </Teleport>
     <button
-      v-if="!compactControls && projectId && group !== 'none' && !adding"
+      v-if="
+        !compactControls &&
+        projectId &&
+        group !== 'none' &&
+        !adding &&
+        store.projectWritable(projectId)
+      "
       @click="confirmDiscard() && (adding = true)"
     >
       {{ t("New task") }}

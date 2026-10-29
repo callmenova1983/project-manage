@@ -170,6 +170,8 @@ function canRestore(event: Activity) {
     !("voided" in event.before && event.before.voided) &&
     !(event.after && "voided" in event.after && event.after.voided) &&
     event.source !== "Project merge" &&
+    event.source !== "Project lifecycle" &&
+    (!event.projectId || store.projectWritable(event.projectId)) &&
     (event.kind === "project"
       ? store.data.projects.some((p) => p.id === event.entityId)
       : event.kind === "task" &&

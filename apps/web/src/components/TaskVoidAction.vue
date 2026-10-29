@@ -41,7 +41,12 @@ function place() {
   };
 }
 function show() {
-  if (store.busy || !confirmDiscard()) return;
+  if (
+    !store.projectWritable(props.task.projectId) ||
+    store.busy ||
+    !confirmDiscard()
+  )
+    return;
   version = props.task.version;
   revision = store.data.revision;
   error.value = "";
@@ -93,7 +98,7 @@ onBeforeUnmount(() => {
     <button
       v-if="task.voided"
       class="text-button"
-      :disabled="store.busy"
+      :disabled="store.busy || !store.projectWritable(task.projectId)"
       :aria-label="t('恢复 ') + task.title"
       @click="save('restore')"
     >
@@ -103,7 +108,7 @@ onBeforeUnmount(() => {
       v-else
       ref="button"
       class="icon-button"
-      :disabled="store.busy"
+      :disabled="store.busy || !store.projectWritable(task.projectId)"
       :aria-label="t('作废 ') + task.title"
       :title="t('作废误录任务，保留内容和操作记录')"
       :aria-expanded="open"
@@ -150,7 +155,7 @@ onBeforeUnmount(() => {
             :aria-label="t('作废原因')"
             required
             maxlength="500"
-            :disabled="store.busy"
+            :disabled="store.busy || !store.projectWritable(task.projectId)"
             :placeholder="t('误录、重复、需求取消…')"
         /></label>
         <p v-if="error" class="error-text" role="alert">{{ t(error) }}</p>

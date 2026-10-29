@@ -9,6 +9,11 @@ import { catalogs, catalogLabel } from "../composables/catalogs";
 import { confirmDiscard } from "../composables/unsaved";
 import { t, formatNumber } from "../locales";
 import ProjectFollow from "./ProjectFollow.vue";
+import ProjectLifecycleControl from "./ProjectLifecycleControl.vue";
+import {
+  projectLifecycle,
+  projectLifecycleLabels,
+} from "../../../../packages/domain/project-lifecycle";
 import StatusBadge from "./StatusBadge.vue";
 const props = defineProps<{
   projects: Project[];
@@ -52,7 +57,13 @@ function permitted(stage: string) {
   );
 }
 async function move(project: Project, stage: string) {
-  if (store.busy || !permitted(stage) || project.stage === stage) return;
+  if (
+    !store.projectWritable(project.id) ||
+    store.busy ||
+    !permitted(stage) ||
+    project.stage === stage
+  )
+    return;
   error.value = "";
   try {
     await store.saveProject(
@@ -71,6 +82,7 @@ async function move(project: Project, stage: string) {
 function start(project: Project, event: DragEvent) {
   if (
     props.mode !== "board" ||
+    !store.projectWritable(project.id) ||
     store.busy ||
     (event.target as HTMLElement).closest("button, select, a, input") ||
     !confirmDiscard()
@@ -154,7 +166,11 @@ async function drop(stage: string, event: DragEvent) {
             v-for="project in section.projects"
             :key="project.id"
             class="project-layout-card"
-            :draggable="mode === 'board' && !store.busy"
+            :draggable="
+              mode === 'board' &&
+              !store.busy &&
+              store.projectWritable(project.id)
+            "
             @dragstart="start(project, $event)"
             @dragend="
               dragging = null;
@@ -169,8 +185,16 @@ async function drop(stage: string, event: DragEvent) {
                 }"
                 >{{ project.name }}</RouterLink
               ><ProjectFollow :id="project.id" :name="project.name" />
+              <ProjectLifecycleControl :project="project" compact />
             </header>
             <div class="card-meta">
+              <span
+                v-if="projectLifecycle(project) !== 'active'"
+                class="muted"
+                >{{
+                  t(projectLifecycleLabels[projectLifecycle(project)])
+                }}</span
+              >
               <StatusBadge :stage="project.stage" />
               <p class="card-owner">
                 {{ t("Owner") }} ·

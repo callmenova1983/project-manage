@@ -119,7 +119,12 @@ const moveCandidates = computed(() =>
     : [],
 );
 function startMove(task: Task) {
-  if (!props.canMove || !confirmDiscard()) return;
+  if (
+    !store.projectWritable(task.projectId) ||
+    !props.canMove ||
+    !confirmDiscard()
+  )
+    return;
   moveTask.value = task;
   moveDestination.value = "";
   movePlacement.value = "inside";
@@ -151,20 +156,20 @@ async function detailsFromMenu(task: Task) {
   openDetails(task);
 }
 async function editFromMenu(task: Task) {
-  if (!confirmDiscard()) return;
+  if (!store.projectWritable(task.projectId) || !confirmDiscard()) return;
   actionTask.value = null;
   await nextTick();
   editing.value = task;
 }
 async function addChildFromMenu(task: Task) {
-  if (!confirmDiscard()) return;
+  if (!store.projectWritable(task.projectId) || !confirmDiscard()) return;
   actionTask.value = null;
   await nextTick();
   parentId.value = task.id;
   adding.value = true;
 }
 async function planFromMenu(task: Task) {
-  if (!confirmDiscard()) return;
+  if (!store.projectWritable(task.projectId) || !confirmDiscard()) return;
   actionTask.value = null;
   await nextTick();
   workTask.value = task;
@@ -396,8 +401,12 @@ function close() {
                     : 'Choose no grouping and original order to move tasks.',
                 )
               "
-              :disabled="!canMove || store.busy"
-              :draggable="canMove && !store.busy"
+              :disabled="
+                !canMove || store.busy || !store.projectWritable(task.projectId)
+              "
+              :draggable="
+                canMove && !store.busy && store.projectWritable(task.projectId)
+              "
               @dragstart="moving.start(task, $event)"
               @dragend="moving.clearDrag"
               @keydown="moving.keyboard(task, $event)"
@@ -469,7 +478,7 @@ function close() {
             v-else
             :aria-label="t('Status for {title}', { title: task.title })"
             :value="task.status"
-            :disabled="store.busy"
+            :disabled="store.busy || !store.projectWritable(task.projectId)"
             @change="change(task, $event)"
           >
             <option v-for="s in statuses" :key="s" :value="s">
@@ -514,7 +523,7 @@ function close() {
           <button
             v-else
             class="text-button"
-            :disabled="store.busy"
+            :disabled="store.busy || !store.projectWritable(task.projectId)"
             :aria-label="t('Plan work for {title}', { title: task.title })"
             @click="confirmDiscard() && (workTask = task)"
           >
@@ -636,7 +645,9 @@ function close() {
       :unscheduled="workspace"
       @close="close"
     /><button
-      v-if="projectId && !adding && !hideAdd"
+      v-if="
+        projectId && !adding && !hideAdd && store.projectWritable(projectId)
+      "
       class="text-button add-task"
       @click="confirmDiscard() && (adding = true)"
     >
@@ -654,18 +665,24 @@ function close() {
         <button :disabled="store.busy" @click="detailsFromMenu(actionTask)">
           <PhInfo :size="17" />{{ t("Task details") }}
         </button>
-        <button :disabled="store.busy" @click="editFromMenu(actionTask)">
+        <button
+          :disabled="store.busy || !store.projectWritable(actionTask.projectId)"
+          @click="editFromMenu(actionTask)"
+        >
           <PhPencilSimple :size="17" />{{ t("Edit task") }}
         </button>
         <button
-          v-if="!parents.has(actionTask.id)"
+          v-if="
+            !parents.has(actionTask.id) &&
+            store.projectWritable(actionTask.projectId)
+          "
           :disabled="store.busy"
           @click="planFromMenu(actionTask)"
         >
           <PhCalendarBlank :size="17" />{{ t("Work arrangement") }}
         </button>
         <button
-          v-if="projectId"
+          v-if="projectId && store.projectWritable(actionTask.projectId)"
           :disabled="store.busy"
           @click="addChildFromMenu(actionTask)"
         >

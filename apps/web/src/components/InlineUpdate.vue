@@ -199,7 +199,12 @@ const dirty = computed(
 );
 useUnsaved(dirty);
 async function edit(value: "new" | "correct" = "new") {
-  if (store.busy || processing.value) return;
+  if (
+    !store.projectWritable(props.project.id) ||
+    store.busy ||
+    processing.value
+  )
+    return;
   generation++;
   sourceReady.value = value !== "correct";
   materials.value = [];
@@ -332,6 +337,7 @@ defineExpose({ edit });
     <button
       v-if="!editing"
       class="update-read"
+      :disabled="!store.projectWritable(project.id)"
       :aria-label="t('Add progress for {name}', { name: project.name })"
       :title="project.latestUpdate || t('Click to report progress')"
       @click="edit()"

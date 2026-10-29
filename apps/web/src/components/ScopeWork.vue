@@ -27,7 +27,8 @@ const preview = computed(() =>
 const adding = ref(false),
   error = ref("");
 function add() {
-  if (confirmDiscard()) adding.value = true;
+  if (store.projectWritable(props.projectId) && confirmDiscard())
+    adding.value = true;
 }
 async function change(task: Task, event: Event) {
   error.value = "";
@@ -54,7 +55,7 @@ async function change(task: Task, event: Event) {
           :value="task.status"
           :class="task.status"
           :aria-label="t('Status for {title}', { title: task.title })"
-          :disabled="store.busy"
+          :disabled="store.busy || !store.projectWritable(projectId)"
           @change="change(task, $event)"
         >
           <option v-for="status in statuses" :key="status" :value="status">
@@ -76,7 +77,7 @@ async function change(task: Task, event: Event) {
       v-else
       class="text-button plan-work"
       :class="{ unplanned: !tasks.length }"
-      :disabled="store.busy"
+      :disabled="store.busy || !store.projectWritable(projectId)"
       :aria-label="
         t('Plan work for {name}', {
           name: store.data.projects.find((p) => p.id === projectId)?.name ?? '',

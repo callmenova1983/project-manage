@@ -29,6 +29,7 @@ export function registerProjectFiles(
         input.projectId,
       );
       repo.checkVersion(current, input.version);
+      repo.assertProjectWritable(a.workspaceId, current.id);
       // Validate every source before moving any file. mutate provides rollback and idempotency.
       const sources = input.files.map((file) => {
         if (file.taskId) {
@@ -98,6 +99,7 @@ export function registerProjectFiles(
     (req) =>
       mutate(req, (a) => {
         const { id, current } = project(req);
+        repo.assertProjectWritable(a.workspaceId, id);
         const input = projectFileInput.parse(req.body);
         const bytes = Buffer.from(input.data, "base64");
         if (

@@ -10,6 +10,14 @@ import { createTaskViewIndex } from "./task-view.js";
 import type { AssistantAnswer } from "./assistant.js";
 import { captureSourceSchema } from "./capture.js";
 
+export const assistantClarificationSchema = z.object({
+  source: z.string().trim().min(1).max(12000),
+  originalSource: captureSourceSchema,
+});
+export type AssistantClarification = z.infer<
+  typeof assistantClarificationSchema
+>;
+
 export const assistantTurnInput = z
   .object({
     source: z.string().trim().min(1).max(12000),

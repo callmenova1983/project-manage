@@ -54,7 +54,12 @@ function display(task: Task) {
       : t("No due date");
 }
 async function open() {
-  if (store.busy || !confirmDiscard()) return;
+  if (
+    !store.projectWritable(props.task.projectId) ||
+    store.busy ||
+    !confirmDiscard()
+  )
+    return;
   const current = store.data.tasks.find((task) => task.id === props.task.id);
   if (!current?.[props.field]) return;
   source.value = { ...current };
@@ -122,6 +127,7 @@ async function copy() {
     :title="label"
     :disabled="
       store.busy ||
+      !store.projectWritable(task.projectId) ||
       !task[field] ||
       !tasks.some(
         (candidate) =>

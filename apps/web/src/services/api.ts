@@ -445,6 +445,12 @@ export class HttpApi implements WorkspaceApi {
   addProgress(id: string, input: ProgressInput) {
     return this.call<Project>(`/projects/${id}/progress`, "POST", input);
   }
+  changeProjectLifecycle(
+    id: string,
+    input: import("../../../../packages/domain/project-lifecycle").ProjectLifecycleInput,
+  ) {
+    return this.call<Project>(`/projects/${id}/lifecycle`, "POST", input);
+  }
   progressMaterial(id: string, name: string, data: string) {
     return this.call<ProgressMaterial>(`/projects/${id}/materials`, "POST", {
       name,

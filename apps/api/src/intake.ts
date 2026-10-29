@@ -90,6 +90,10 @@ export function registerIntakeRoutes(
       if (!row) throw new HttpError(404, "Intake not found");
       const batch = JSON.parse(String(row.data)) as IntakeBatch;
       verifyIntakeUndo(batch, repo.snapshot(a.workspaceId));
+      for (const task of batch.tasks)
+        repo.assertProjectWritable(a.workspaceId, task.projectId);
+      for (const project of batch.projects)
+        repo.assertProjectWritable(a.workspaceId, project.id);
       for (const task of batch.tasks) {
         repo.db
           .prepare("DELETE FROM tasks WHERE workspace_id=? AND id=?")

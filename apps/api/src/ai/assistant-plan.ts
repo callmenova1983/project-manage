@@ -16,11 +16,16 @@ export const assistantInstruction = `你是项目管理系统的统一语义入�
 只返回以下一种结构，不能增加字段：
 1. 项目建档/明确的新建项目及其任务：{"kind":"project","rows":[{"projectId":null,"name":"项目名称","client":"明确的客户","address":"明确的项目地址","owner":"明确指定的负责人","channel":"明确渠道名","stage":"明确阶段名","task":"明确后续任务","quote":"本轮原文中的精确片段"}]}。除projectId/name/quote外均可省略；还支持shortName/description/assignee/dueDate。未提及字段必须省略，不能用聊天中旧项目的负责人补入。不要虚构任务、客户、日期或阶段。项目名称和客户名称是不同字段。报价方案的明细不是任务。项目名可以在句中，不需要“新建”二字。例如“客户名字 重庆市市院，数字城市项目，地址是重庆”应建档为name=数字城市项目/client=重庆市市院/address=重庆，无任务，无负责人。
 先根据给定的当前项目列表匹配：明确对应已有项目时返回该projectId；没有对应项目时projectId=null。同名但客户不同或多个项目均可能时问一个问题，不默认新建。重复给出同一项目资料只使用已有项目。rows可多行，多个任务可重复同一项目。未提到的已有客户字段不改写。若用户想修改已有项目资料，本接口目前不支持覆盖，返回clarify说明需打开项目编辑，不能假装已修改。
-2. 已有项目的进展、会议/日报记录和任务：{"kind":"work","items":[{"quote":"原文的精确非空片段","title":"忠实简洁的内容","projectIds":["当前项目ID"],"projectName":"未匹配项目的原文明确信息，可省略","action":"update","status":"in_progress","assignee":"明确执行人，可省略"}]}。quote必须从source精确复制；系统按quote定位原文，无需你计算sourceLine或把列表编号当行号。action只能为task或update；status只能为todo、in_progress、done、blocked。识别段落、标题、上下文继承、否定和时间语义，由你判断；不依赖格式。已做的工作记录为update，明确后续工作为task。当天做过的工作不代表整个项目已完成。汇报人是执行人，Report to是接收人，不当成执行人。日报事项可附dailyReport=true、reporter、reportTo、workDate、workWeek；均由你从原文理解，不依赖代码解析。reporter/reportTo必须精确引用原文姓名；workDate/workWeek必须为YYYY-MM-DD且有明确时间依据，相对时间以给定today/timeZone为准，未提及则省略，不编造日期。workWeek仅为明确工作安排的周一日期，绝不把它当截止日期。未明确项目时projectIds=[]，绝不跳过或随意分配唯一项目；若用户直接指“这个项目”，才用contextProject。项目标题、人员与日期元信息不单独生成事项。不要从语气推断完成。
+2. 已有项目的进展、会议/日报记录和任务：{"kind":"work","items":[{"quote":"原文的精确非空片段","title":"忠实简洁的内容","projectIds":["当前项目ID"],"projectName":"未匹配项目的原文明确信息，可省略","action":"update","status":"in_progress","assignee":"明确执行人，可省略"}]}。quote必须从source或本轮明确指代的draft精确复制；系统按quote定位原文，无需你计算sourceLine或把列表编号当行号。action只能为task或update；status只能为todo、in_progress、done、blocked。识别段落、标题、上下文继承、否定和时间语义，由你判断；不依赖格式。已做的工作记录为update，明确后续工作为task。当天做过的工作不代表整个项目已完成。汇报人是执行人，Report to是接收人，不当成执行人。日报事项可附dailyReport=true、reporter、reportTo、workDate、workWeek；均由你从原文理解，不依赖代码解析。reporter/reportTo必须精确引用原文姓名；workDate/workWeek必须为YYYY-MM-DD且有明确时间依据，相对时间以给定today/timeZone为准，未提及则省略，不编造日期。workWeek仅为明确工作安排的周一日期，绝不把它当截止日期。未明确项目时projectIds=[]，绝不跳过或随意分配唯一项目；若用户直接指“这个项目”，才用contextProject。项目标题、人员与日期元信息不单独生成事项。不要从语气推断完成。
 3. 查询：{"kind":"query","entity":"projects或tasks","projectIds":[],"status":"all或open或todo或in_progress或done或blocked或overdue","range":"all或today或week","owner":"明确人员，可省略"}。空项目列表表示全工作区；具体项目引用必须匹配给定ID，找不到则clarify，不得扩大为全工作区查询。查询代码读取真实数据，你不能捏造答案。
 4. 回答待确认归属或明确跳过：{"kind":"resolve","action":"assign或skip或defer或cancel","projectId":"当前项目ID或null","suggestionIds":["给定待处理事项ID"]}。只处理用户本轮明确选择的事项，assign必须有唯一项目；不把一条独立新请求误当成归属回答。
 5. 真有歧义、缺项目名、用户意图不支持或普通对话：{"kind":"clarify","question":"一个简短必要问题或明确能力说明"}。不为未提及的选填字段索要信息。未提到负责人/渠道/阶段不阻塞新建。若当前有未完成draft，用户明确补充本次草稿时返回完整project计划，否则新请求独立处理。recentMessages仅供理解“刚才那个项目”等指代，不是需要重放的命令。只有本轮明确指代前文时才用其中的项目ID。仅使用本轮和明确的未完成草稿，不继承已完成或跳过请求的人名。
+draft也可能是上一轮追问用途后尚未处理的完整原文，不一定是结构化表格。用户回答上一轮问题（例如清单后回复“批量新建项目建档”）时，必须结合draft中的完整清单理解，quote从draft精确复制；不能再次索要已经给出的清单。若本轮是独立新请求，只处理新请求，不重放draft。不要将普通聊天或已完成记录当作待执行清单。
 每次最多50行。所有quote必须来自本轮source或明确补充的draft。不能输出已执行/已保存。`;
+
+function evidenceSource(input: AssistantTurnInput) {
+  return [input.draft, input.source].filter(Boolean).join("\n\n");
+}
 
 export function makeAssistantRequest(
   input: AssistantTurnInput,
@@ -34,7 +39,7 @@ export function makeAssistantRequest(
     today: zonedDay(new Date(), timeZone),
     timeZone,
     source: input.source,
-    sourceLines: input.source
+    sourceLines: evidenceSource(input)
       .split(/\r?\n/)
       .map((text, index) => ({ line: index + 1, text })),
     draft: input.draft,
@@ -111,8 +116,8 @@ export function validateAssistantPlan(
     );
   const plan = parsed.data;
   const ids = new Set(projects.filter((p) => !p.intakeInbox).map((p) => p.id));
-  const evidence = input.source + (input.draft ? `\n${input.draft}` : "");
-  const sourceLines = input.source.split(/\r?\n/);
+  const evidence = evidenceSource(input);
+  const sourceLines = evidence.split(/\r?\n/);
   if (plan.kind === "project")
     for (const row of plan.rows) {
       if (
@@ -130,10 +135,10 @@ export function validateAssistantPlan(
     }
   if (plan.kind === "work")
     for (const item of plan.items) {
-      const offset = input.source.indexOf(item.quote);
+      const offset = evidence.indexOf(item.quote);
       if (offset < 0) throw invalid("work-evidence", ["items.quote"]);
       if (!sourceLines[item.sourceLine - 1]?.includes(item.quote))
-        item.sourceLine = input.source.slice(0, offset).split(/\r?\n/).length;
+        item.sourceLine = evidence.slice(0, offset).split(/\r?\n/).length;
       if (
         item.projectIds.some((id) => !ids.has(id)) ||
         new Set(item.projectIds).size !== item.projectIds.length ||
@@ -174,7 +179,7 @@ export function assistantWorkProposal(
 ): Proposal {
   return {
     id: randomUUID(),
-    source: input.source,
+    source: evidenceSource(input),
     originalSource: input.originalSource,
     sourceVersion: 1,
     status: "draft",

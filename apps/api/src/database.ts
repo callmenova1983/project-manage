@@ -1,4 +1,5 @@
 import { retainTaskSchedule } from "../../../packages/domain/task-schedule.js";
+import { assertProjectWritable } from "../../../packages/domain/project-lifecycle.js";
 import { nextTaskSortOrder } from "../../../packages/domain/task-move.js";
 import { assignLoginName } from "./login-name.js";
 import { DatabaseSync } from "node:sqlite";
@@ -304,10 +305,29 @@ export class Repository {
         current,
       );
   }
-  putProject(ws: string, p: Project, retained?: Project) {
+  assertProjectWritable(ws: string, id: string) {
+    const project = this.get<Project>("projects", ws, id);
+    assertProjectWritable(project);
+    return project;
+  }
+  putProject(
+    ws: string,
+    p: Project,
+    retained?: Project,
+    lifecycleChange = false,
+  ) {
     const previous = this.db
       .prepare("SELECT data FROM projects WHERE workspace_id=? AND id=?")
       .get(ws, p.id);
+    const old: Project | undefined = previous
+      ? JSON.parse(String(previous.data))
+      : undefined;
+    if (old && !lifecycleChange) {
+      assertProjectWritable(old);
+      // Ordinary editors and history restores cannot change lifecycle metadata.
+      p.lifecycle = old.lifecycle;
+      p.lifecycleChangedAt = old.lifecycleChangedAt;
+    }
     Object.assign(
       p,
       projectMembers(
@@ -326,7 +346,7 @@ export class Repository {
     ws: string,
     t: Task,
     retained?: Task,
-    options: { preserveAssignment?: boolean } = {},
+    options: { preserveAssignment?: boolean; importArchived?: boolean } = {},
   ) {
     const previous = this.db
       .prepare("SELECT data FROM tasks WHERE workspace_id=? AND id=?")
@@ -334,6 +354,11 @@ export class Repository {
     const old: Task | undefined = previous
       ? JSON.parse(String(previous.data))
       : undefined;
+    if (!options.importArchived) {
+      this.assertProjectWritable(ws, t.projectId);
+      if (old && old.projectId !== t.projectId)
+        this.assertProjectWritable(ws, old.projectId);
+    }
     t.sortOrder ??=
       old?.projectId === t.projectId && old.parentId === t.parentId
         ? old.sortOrder

@@ -46,6 +46,7 @@ const props = defineProps<{
 }>();
 const creating = ref<{ date: string; basis: CalendarBasis } | null>(null);
 function createOn(date: string) {
+  if (props.projectId && !store.projectWritable(props.projectId)) return;
   if (confirmDiscard()) creating.value = { date, basis: basis.value };
 }
 const route = useRoute(),
@@ -117,7 +118,13 @@ function open(id: string) {
   else detailId.value = id;
 }
 function editDate(task: Task) {
-  if (store.busy || task.voided || !confirmDiscard()) return;
+  if (
+    !store.projectWritable(task.projectId) ||
+    store.busy ||
+    task.voided ||
+    !confirmDiscard()
+  )
+    return;
   editingDate.value = { task: { ...task }, basis: basis.value };
 }
 function dragStart(taskId: string, event: DragEvent) {
@@ -126,7 +133,7 @@ function dragStart(taskId: string, event: DragEvent) {
     return;
   }
   const task = taskMap.value.get(taskId);
-  if (!task || task.voided) {
+  if (!task || task.voided || !store.projectWritable(task.projectId)) {
     event.preventDefault();
     return;
   }
@@ -318,6 +325,7 @@ const outsideMonth = (day: string) =>
           </h3>
           <button
             class="icon-button create-on-day"
+            v-if="!projectId || store.projectWritable(projectId)"
             :aria-label="t('Create task on {date}', { date: formatDate(day) })"
             :title="t('New task')"
             @click="createOn(day)"
@@ -339,7 +347,13 @@ const outsideMonth = (day: string) =>
           >
             <button
               class="calendar-event"
-              :draggable="basis === 'due' && !store.busy"
+              :draggable="
+                basis === 'due' &&
+                !store.busy &&
+                store.projectWritable(
+                  taskMap.get(event.taskId)?.projectId ?? '',
+                )
+              "
               @dragstart="dragStart(event.taskId, $event)"
               @dragend="
                 dragging = null;

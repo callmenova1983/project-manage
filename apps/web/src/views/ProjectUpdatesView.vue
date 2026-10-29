@@ -26,9 +26,18 @@ const projects = computed(() =>
   ),
 );
 const filtered = computed(() => {
-  const { query, followedOnly, stage, owner, discipline, category, channel } =
-    store.projectNavigation;
+  const {
+    query,
+    followedOnly,
+    stage,
+    owner,
+    discipline,
+    category,
+    channel,
+    lifecycle,
+  } = store.projectNavigation;
   return !!(
+    lifecycle !== "active" ||
     query ||
     followedOnly ||
     stage ||

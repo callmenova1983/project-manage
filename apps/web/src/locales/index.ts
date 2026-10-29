@@ -1,4 +1,5 @@
 import { uiEnglish } from "./ui-en";
+import { projectLifecycleZh } from "./zh-project-lifecycle";
 import { workbenchZh } from "./zh-workbench";
 import { projectDetailZh } from "./zh-project-detail";
 import { taskExperienceZh } from "./zh-task-experience";
@@ -48,6 +49,7 @@ watch(
   { immediate: true },
 );
 const chinese: Record<string, string> = {
+  ...projectLifecycleZh,
   ...commonZh,
   ...personalWorkZh,
   ...timeZoneZh,

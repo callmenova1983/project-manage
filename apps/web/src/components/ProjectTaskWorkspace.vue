@@ -337,12 +337,16 @@ async function closeDetails() {
       </button>
       <span class="toolbar-spacer"></span>
       <button
-        :disabled="store.busy || !projection.matchedLeafTasks.length"
+        :disabled="
+          store.busy ||
+          !projection.matchedLeafTasks.length ||
+          !store.projectWritable(projectId)
+        "
         @click="bulkOpen = true"
       >
         {{ t("Bulk edit tasks") }}
       </button>
-      <div class="create-actions">
+      <div v-if="store.projectWritable(projectId)" class="create-actions">
         <button class="primary new-task" @click="newTask">
           <PhPlus :size="17" />{{ t("New task") }}
         </button>

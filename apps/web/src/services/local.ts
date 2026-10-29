@@ -152,6 +152,12 @@ import {
 } from "./contracts";
 const KEY = "project-manage-demo-v1";
 import {
+  assertProjectWritable,
+  planProjectLifecycle,
+  projectLifecycle,
+  projectLifecycleActions,
+} from "../../../../packages/domain/project-lifecycle";
+import {
   projectRenameInput,
   planProjectMerge,
   ProjectMergeConflict,
@@ -164,6 +170,7 @@ const actor: Actor = {
   role: "admin",
 };
 export function createLocalApi(): WorkspaceApi {
+  let baseline: Snapshot;
   let state: Snapshot & {
     intakes?: IntakeBatch[];
     dailyLogs?: DailyLogBatch[];
@@ -210,9 +217,26 @@ export function createLocalApi(): WorkspaceApi {
     }
     state.tasks = normalizeTaskOrder(state.tasks);
     state.projectOrder = orderedProjectIds(state.projects, state.projectOrder);
+    baseline = structuredClone(state);
     return structuredClone(state);
   };
-  const persist = () => {
+  const persist = (lifecycleId?: string) => {
+    // Enforce archive protection for every local writer, including batch/AI paths.
+    for (const project of baseline.projects) {
+      if (projectLifecycle(project) !== "archived") continue;
+      const next = state.projects.find((p) => p.id === project.id);
+      if (
+        project.id !== lifecycleId &&
+        JSON.stringify(next) !== JSON.stringify(project)
+      )
+        assertProjectWritable(project);
+      const beforeTasks = baseline.tasks.filter(
+        (t) => t.projectId === project.id,
+      );
+      const afterTasks = state.tasks.filter((t) => t.projectId === project.id);
+      if (JSON.stringify(beforeTasks) !== JSON.stringify(afterTasks))
+        assertProjectWritable(project);
+    }
     // Creation paths share task objects with audit/intake receipts. Assign the
     // persisted order before serializing so an untouched receipt still matches.
     normalizeTaskOrder(state.tasks).forEach((task, index) => {
@@ -226,6 +250,7 @@ export function createLocalApi(): WorkspaceApi {
         "Browser storage is full or unavailable. Export your work and free some space.",
       );
     }
+    baseline = structuredClone(state);
   };
   const record = (
     kind: Activity["kind"],
@@ -311,6 +336,8 @@ export function createLocalApi(): WorkspaceApi {
         old,
       );
     const p: Project = {
+      lifecycle: old?.lifecycle,
+      lifecycleChangedAt: old?.lifecycleChangedAt,
       ...projectMembers(data, administration().users, old),
       reportedAt:
         data.latestUpdate === old?.latestUpdate
@@ -984,6 +1011,23 @@ export function createLocalApi(): WorkspaceApi {
       );
     },
     saveProject,
+    async changeProjectLifecycle(id, input) {
+      read();
+      const old = state.projects.find((p) => p.id === id);
+      if (!old) throw new ApiError("Project not found", 404);
+      const project = planProjectLifecycle(old, state.tasks, input);
+      if (project === old) return structuredClone(old);
+      state.projects = state.projects.map((p) => (p.id === id ? project : p));
+      record(
+        "project",
+        old,
+        project,
+        "Project lifecycle",
+        projectLifecycleActions[project.lifecycle!],
+      );
+      persist(id);
+      return structuredClone(project);
+    },
     async progressHistory(id) {
       read();
       const project = state.projects.find((p) => p.id === id);
@@ -1946,6 +1990,10 @@ export function createLocalApi(): WorkspaceApi {
       read();
       const a = state.activities.find((x) => x.id === id);
       if (!a?.before) throw new ApiError("No restorable version");
+      if (a.source === "Project lifecycle")
+        throw new ApiError(
+          "Use project status actions to restore or reactivate a project.",
+        );
       if (
         ("voided" in a.before && a.before.voided) ||
         (a.after && "voided" in a.after && a.after.voided)

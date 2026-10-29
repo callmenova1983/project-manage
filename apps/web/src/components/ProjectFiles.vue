@@ -59,6 +59,7 @@ async function upload(selected: File[]) {
   dragging.value = false;
   if (
     uploading.value ||
+    !store.projectWritable(props.projectId) ||
     loading.value ||
     store.mode === "local" ||
     !selected.length
@@ -133,7 +134,12 @@ function choose(event: Event) {
         <span>{{ files.length }}</span>
       </h2>
       <button
-        :disabled="uploading || loading || store.mode === 'local'"
+        :disabled="
+          uploading ||
+          loading ||
+          store.mode === 'local' ||
+          !store.projectWritable(projectId)
+        "
         @click="picker?.click()"
       >
         <PhUploadSimple :size="16" />{{

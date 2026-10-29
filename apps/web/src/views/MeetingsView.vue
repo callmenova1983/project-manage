@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { assistantProjectCsv } from "../../../../packages/domain/assistant-plan";
+import {
+  assistantProjectCsv,
+  assistantClarificationSchema,
+  type AssistantClarification,
+} from "../../../../packages/domain/assistant-plan";
 import { useAssistantSession } from "../composables/assistant-session";
 import { accountStorageKey } from "../services/account-storage";
 import type { AssistantAnswer } from "../../../../packages/domain/assistant";
@@ -17,7 +21,10 @@ import {
 } from "../services/capture-results";
 import IntakeView from "./IntakeView.vue";
 import ChannelResolve from "../components/ChannelResolve.vue";
-import type { CaptureSource } from "../../../../packages/domain/capture";
+import {
+  captureSourceSchema,
+  type CaptureSource,
+} from "../../../../packages/domain/capture";
 import { t, locale } from "../locales";
 import { catalogs, activeStages, catalogLabel } from "../composables/catalogs";
 import { channelEntries } from "../../../../packages/domain/channels";
@@ -64,6 +71,7 @@ const composerId = `capture-form-${useId()}`;
 const store = useWorkspace();
 const structuredSource = ref<string | null>(null);
 const structuredOriginal = ref<CaptureSource>();
+const clarification = ref<AssistantClarification | null>(null);
 const logMode = ref(false),
   dailySource = ref("");
 const composer = ref(""),
@@ -165,6 +173,7 @@ const persistence = useAssistantSession(
     retryItems: retryItems.value,
     structuredSource: structuredSource.value,
     structuredOriginal: structuredOriginal.value,
+    clarification: clarification.value,
     dailySource: dailySource.value,
     logMode: logMode.value,
     contextProjectId:
@@ -172,6 +181,7 @@ const persistence = useAssistantSession(
       input.value?.hasFiles ||
       pending.value.length ||
       structuredSource.value !== null ||
+      clarification.value !== null ||
       logMode.value
         ? (props.contextProjectId ?? null)
         : undefined,
@@ -223,6 +233,12 @@ const persistence = useAssistantSession(
         : null;
     structuredOriginal.value = state.structuredOriginal as
       CaptureSource | undefined;
+    const restoredClarification = assistantClarificationSchema.safeParse(
+      state.clarification,
+    );
+    clarification.value = restoredClarification.success
+      ? restoredClarification.data
+      : null;
     dailySource.value =
       typeof state.dailySource === "string" ? state.dailySource : "";
     logMode.value = state.logMode === true;
@@ -319,6 +335,7 @@ const canClearHistory = computed(
       !!input.value?.hasFiles ||
       !!pending.value.length ||
       structuredSource.value !== null ||
+      clarification.value !== null ||
       logMode.value),
 );
 async function clearHistory() {
@@ -356,6 +373,7 @@ defineExpose({
       !!input.value?.hasFiles ||
       !!pending.value.length ||
       structuredSource.value !== null ||
+      clarification.value !== null ||
       logMode.value,
   ),
   focusComposer: () => input.value?.focus(),
@@ -509,6 +527,11 @@ async function submitSemanticTurn(
 ) {
   phase.value = t("AI 正在理解本轮请求…");
   await store.refresh();
+  const previous = clarification.value;
+  const draft = previous?.source ?? structuredSource.value;
+  const draftOriginal =
+    previous?.originalSource ??
+    (structuredSource.value ? structuredOriginal.value : undefined);
   const turn = await api.interpretAssistant({
     source,
     externalProcessingConfirmed: true,
@@ -531,12 +554,43 @@ async function submitSemanticTurn(
     ...(proposal.value && pending.value.length
       ? { pendingProposalId: proposal.value.id }
       : {}),
-    ...(structuredSource.value ? { draft: structuredSource.value } : {}),
+    ...(draft ? { draft } : {}),
   });
+  const mergeOriginal = (): CaptureSource => ({
+    ...originalSource,
+    text: [draftOriginal?.text, originalSource.text]
+      .filter(Boolean)
+      .join("\n\n"),
+    materialIds: [
+      ...new Set([
+        ...(draftOriginal?.materialIds ?? []),
+        ...originalSource.materialIds,
+      ]),
+    ],
+  });
+  const plan = turn.plan;
+  let nextClarification: AssistantClarification | null = null;
+  if (plan.kind === "clarify") {
+    const parsed = assistantClarificationSchema.safeParse({
+      source: [draft, source].filter(Boolean).join("\n\n"),
+      originalSource: mergeOriginal(),
+    });
+    if (!parsed.success)
+      throw new Error(t("待确认内容过多，请缩小本次处理范围；原输入仍保留。"));
+    nextClarification = parsed.data;
+  }
+  const usesDraft =
+    plan.kind === "project" &&
+    plan.rows.some((row) => !source.includes(row.quote));
+  const projectOriginal = captureSourceSchema.safeParse(
+    usesDraft ? mergeOriginal() : originalSource,
+  );
+  if (!projectOriginal.success)
+    throw new Error(t("待确认内容过多，请缩小本次处理范围；原输入仍保留。"));
   messages.value.push({ role: "user", text: source });
   composer.value = "";
   input.value?.clearFiles();
-  const plan = turn.plan;
+  clarification.value = nextClarification;
   if (plan.kind === "clarify") {
     say(plan.question);
     return;
@@ -551,7 +605,7 @@ async function submitSemanticTurn(
       plan.rows,
       store.data.projects,
     );
-    structuredOriginal.value = originalSource;
+    structuredOriginal.value = projectOriginal.data;
     logMode.value = false;
     return;
   }

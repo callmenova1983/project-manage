@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertProjectWritable } from "./project-lifecycle.js";
 import {
   DomainError,
   projectInput,
@@ -57,6 +58,7 @@ export function planProjectMerge(
     );
   const incoming = sources.filter((p) => p !== undefined);
   const all = [target, ...incoming];
+  all.forEach(assertProjectWritable);
   if (all.some((p) => p.intakeInbox))
     throw new DomainError("Unassigned work cannot be merged as a project.");
   const aliases = [

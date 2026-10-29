@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import {
+  projectLifecycle,
+  projectLifecycleLabels,
+} from "../../../../packages/domain/project-lifecycle";
+import ProjectLifecycleControl from "../components/ProjectLifecycleControl.vue";
+import {
   projectViewQuery,
   type ProjectViewFilters,
 } from "../../../../packages/domain/project-view";
@@ -159,8 +164,26 @@ watch(
             total: formatNumber(counts.total),
           })
         }}</span>
+        <span class="project-lifecycle-status muted">{{
+          t(projectLifecycleLabels[projectLifecycle(project)])
+        }}</span>
       </div>
     </header>
+    <div
+      v-if="projectLifecycle(project) !== 'active'"
+      class="panel lifecycle-banner"
+    >
+      <p>
+        {{
+          t(
+            projectLifecycle(project) === "archived"
+              ? "Archived projects are read-only. Files and history remain available; restore the project before editing."
+              : "This project is closed. Reactivate it when maintenance is needed.",
+          )
+        }}
+      </p>
+      <ProjectLifecycleControl :project="project" />
+    </div>
     <div class="latest-progress-summary">
       <PhChartLineUp :size="17" aria-hidden="true" />
       <button
@@ -174,7 +197,11 @@ watch(
       <time v-if="project.reportedAt" :datetime="project.reportedAt">{{
         formatDate(project.reportedAt, { month: "short", day: "numeric" })
       }}</time>
-      <button class="text-button report-progress" @click="reportProgress">
+      <button
+        v-if="store.projectWritable(project.id)"
+        class="text-button report-progress"
+        @click="reportProgress"
+      >
         {{ t("Record progress") }}
       </button>
     </div>
@@ -321,6 +348,7 @@ watch(
               <button
                 type="button"
                 class="text-button"
+                :disabled="!store.projectWritable(project.id)"
                 @click="
                   if (confirmDiscard()) {
                     infoOpen = false;
@@ -365,6 +393,7 @@ watch(
           >
         </dl>
         <button
+          :disabled="!store.projectWritable(project.id)"
           @click="
             if (confirmDiscard()) {
               infoOpen = false;
@@ -408,7 +437,9 @@ watch(
       @close="moreOpen = false"
     >
       <div class="project-action-list">
+        <ProjectLifecycleControl :project="project" />
         <button
+          :disabled="!store.projectWritable(project.id)"
           @click="
             moreOpen = false;
             editing = true;
@@ -453,6 +484,21 @@ watch(
 </template>
 
 <style scoped>
+.project-lifecycle-status {
+  white-space: nowrap;
+}
+.lifecycle-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+.lifecycle-banner p {
+  flex: 1 1 240px;
+  margin: 0;
+}
 .project-city-fact {
   display: grid;
   gap: 6px;

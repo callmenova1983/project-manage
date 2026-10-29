@@ -1,5 +1,10 @@
 import { registerWecomLogin, publicWecomLoginPaths } from "./wecom-login.js";
 import { registerSpeechRoutes } from "./ai/speech.js";
+import {
+  planProjectLifecycle,
+  projectLifecycle,
+  projectLifecycleActions,
+} from "../../../packages/domain/project-lifecycle.js";
 import { registerWorkspaceTransfer } from "./workspace-transfer.js";
 import {
   taskBulkUpdateInput,
@@ -565,6 +570,9 @@ export async function buildApp(options: {
     const q = z
       .object({
         search: z.string().optional(),
+        lifecycle: z
+          .enum(["active", "closed", "archived", "all"])
+          .default("active"),
         stage: z.string().optional(),
         owner: z.string().optional(),
         discipline: z.string().optional(),
@@ -574,6 +582,7 @@ export async function buildApp(options: {
       .snapshot(actor(req).workspaceId)
       .projects.filter(
         (p) =>
+          (q.lifecycle === "all" || projectLifecycle(p) === q.lifecycle) &&
           (!q.search ||
             `${p.name} ${p.shortName ?? ""} ${p.aliases.join(" ")} ${p.client} ${p.latestUpdate}`
               .toLowerCase()
@@ -704,6 +713,31 @@ export async function buildApp(options: {
       repo.putProject(a.workspaceId, p);
       repo.record(a, "project", "Updated project", old, p);
       return p;
+    }),
+  );
+  app.post("/api/projects/:id/lifecycle", (req) =>
+    mutate(req, (a) => {
+      const old = repo.get<Project>(
+        "projects",
+        a.workspaceId,
+        (req.params as { id: string }).id,
+      );
+      const project = planProjectLifecycle(
+        old,
+        repo.read<Task>("tasks", a.workspaceId),
+        req.body as import("../../../packages/domain/project-lifecycle.js").ProjectLifecycleInput,
+      );
+      if (project === old) return old;
+      repo.putProject(a.workspaceId, project, undefined, true);
+      repo.record(
+        a,
+        "project",
+        projectLifecycleActions[project.lifecycle!],
+        old,
+        project,
+        "Project lifecycle",
+      );
+      return project;
     }),
   );
   registerProgressMaterials(app, repo, actor, mutate);
@@ -1274,6 +1308,7 @@ export async function buildApp(options: {
             updatedAt: new Date().toISOString(),
           },
           current.tasks.find((x) => x.id === t.id),
+          { importArchived: true },
         );
       repo.db
         .prepare(
@@ -1300,6 +1335,11 @@ export async function buildApp(options: {
         .get(a.workspaceId, (req.params as { id: string }).id);
       if (!row) throw new HttpError(404, "History record not found");
       const event = JSON.parse(String(row.data));
+      if (event.source === "Project lifecycle")
+        throw new HttpError(
+          400,
+          "Use project status actions to restore or reactivate a project.",
+        );
       if (event.source === "Project merge")
         throw new HttpError(
           400,

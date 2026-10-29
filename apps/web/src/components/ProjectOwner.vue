@@ -33,7 +33,12 @@ const dirty = computed(
 );
 useUnsaved(dirty);
 function open() {
-  if (store.busy || !confirmDiscard()) return;
+  if (
+    !store.projectWritable(props.project.id) ||
+    store.busy ||
+    !confirmDiscard()
+  )
+    return;
   original.value = { ...props.project };
   draftMemberId.value = props.project.ownerId ?? null;
   draft.value = assigned.value ? name.value : "";
@@ -90,6 +95,7 @@ async function save() {
     <button
       v-else
       class="owner-value text-button"
+      :disabled="!store.projectWritable(project.id)"
       :class="{ unassigned: !assigned }"
       :aria-label="
         t('项目负责人：') +

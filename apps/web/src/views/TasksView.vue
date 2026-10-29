@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isActiveProject } from "../../../../packages/domain/project-lifecycle";
 import { provideTaskViewMemory } from "../composables/task-view-memory";
 import { accountStorageKey } from "../services/account-storage";
 import {
@@ -76,6 +77,9 @@ const TaskCalendar = defineAsyncComponent(
 const store = useWorkspace(),
   route = useRoute(),
   router = useRouter();
+const writableProjects = computed(() =>
+  store.data.projects.filter((project) => store.projectWritable(project.id)),
+);
 const filters = computed(() => readTaskFilters(route.query));
 provideTaskViewMemory(() =>
   store.user
@@ -122,8 +126,16 @@ const unavailableLayout = computed(() => layoutState.value.unavailable);
 const availableLayouts = taskLayouts(ganttEnabled);
 const showVoided = computed(() => route.query.voided === "1");
 const now = useCalendarNow();
+const dailyTasks = computed(() => {
+  if (filters.value.project || filters.value.projects !== undefined)
+    return store.data.tasks;
+  const ids = new Set(
+    store.data.projects.filter(isActiveProject).map((p) => p.id),
+  );
+  return store.data.tasks.filter((t) => ids.has(t.projectId));
+});
 const taskIndex = computed(() =>
-  createTaskViewIndex(store.data.tasks, {
+  createTaskViewIndex(dailyTasks.value, {
     now: now.value,
     members: store.data.members,
     timeZone: store.timeZone,
@@ -406,17 +418,19 @@ const emptyProps = computed(() => ({
   description: emptyDescription.value,
   unlinkedCount: unlinkedCount.value,
   hasTasks: !!allTasks.value.length,
-  hasProjects: !!store.data.projects.length,
+  hasProjects: !!writableProjects.value.length,
   hasFilters: !!activeFilters.value.length,
   mine: filters.value.assignee === "me",
 }));
 function startCreating() {
-  if (!confirmDiscard()) return;
+  if (!writableProjects.value.length || !confirmDiscard()) return;
   creatingProject.value =
     filters.value.project ||
     (filters.value.projects?.length === 1 ? filters.value.projects[0]! : "");
   if (
-    !store.data.projects.some((project) => project.id === creatingProject.value)
+    !writableProjects.value.some(
+      (project) => project.id === creatingProject.value,
+    )
   )
     creatingProject.value = "";
   savedTask.value = null;
@@ -495,7 +509,7 @@ onBeforeRouteUpdate(() => confirmDiscard());
       </div>
       <button
         class="primary new-task"
-        :disabled="!store.data.projects.length || creating"
+        :disabled="!writableProjects.length || creating"
         @click="startCreating"
       >
         <PhPlus :size="17" />{{ t("New task") }}
@@ -859,7 +873,7 @@ onBeforeRouteUpdate(() => confirmDiscard());
           @change="changeCreationProject"
         >
           <option disabled value="">{{ t("Choose a project") }}</option>
-          <option v-for="p in store.data.projects" :key="p.id" :value="p.id">
+          <option v-for="p in writableProjects" :key="p.id" :value="p.id">
             {{ p.name }}
           </option>
         </select></label

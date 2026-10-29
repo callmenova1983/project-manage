@@ -46,6 +46,7 @@ const dates = computed(() =>
 const ready = computed(
   () =>
     !!selectedProject.value &&
+    store.projectWritable(selectedProject.value) &&
     (props.basis !== "reminder" || !!confirmedTime.value),
 );
 const labels = {
@@ -109,7 +110,9 @@ onBeforeUnmount(() => {
       }}<select :value="selectedProject" @change="chooseProject">
         <option value="">{{ t("Choose a project") }}</option>
         <option
-          v-for="project in store.data.projects"
+          v-for="project in store.data.projects.filter((p) =>
+            store.projectWritable(p.id),
+          )"
           :key="project.id"
           :value="project.id"
         >
