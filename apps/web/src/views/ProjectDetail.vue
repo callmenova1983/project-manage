@@ -37,7 +37,9 @@ import {
   locationLabel,
   locationPrecisionLabel,
 } from "../../../../packages/domain/project-location";
-import ProjectEditor from "../components/ProjectEditor.vue";
+const ProjectEditor = defineAsyncComponent(
+  () => import("../components/ProjectEditor.vue"),
+);
 import ProjectQuickActions from "../components/ProjectQuickActions.vue";
 import ProjectMembers from "../components/ProjectMembers.vue";
 import ProjectTaskWorkspace from "../components/ProjectTaskWorkspace.vue";

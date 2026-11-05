@@ -47,6 +47,9 @@ type ReconcileOptions = { suppress?: boolean };
 const externalKinds = new Set(["task_risk", "assignment", "task_change"]);
 
 export class NotificationService {
+  readonly background = process.env.PM_BACKGROUND_NOTIFICATIONS === "1";
+  private jobTimer?: ReturnType<typeof setInterval>;
+  private jobsRunning?: Promise<void>;
   private sender: NotificationWecomSender;
   private timer?: ReturnType<typeof setInterval>;
   private running?: Promise<void>;
@@ -158,7 +161,7 @@ export class NotificationService {
     };
     await this.repo.db
       .prepare(
-        "INSERT INTO notifications(id,workspace_id,user_id,logical_key,generation,signature,data) VALUES(?,?,?,?,?,?,?) ON CONFLICT(workspace_id,user_id,logical_key) DO UPDATE SET generation=excluded.generation,signature=excluded.signature,data=excluded.data",
+        "INSERT INTO notifications(id,workspace_id,user_id,logical_key,generation,signature,data) VALUES(?,?,?,?,?,?,?) ON CONFLICT(workspace_id,user_id,logical_key) DO UPDATE SET generation=excluded.generation,signature=excluded.signature,data=excluded.data WHERE notifications.data IS DISTINCT FROM excluded.data",
       )
       .run(
         item.id,
@@ -223,15 +226,31 @@ export class NotificationService {
           event: JSON.parse(String(row.data)) as Activity,
         }))
       : [];
+    const suppressed = new Set(
+      (
+        await this.repo.db
+          .prepare(
+            "SELECT activity_id FROM notification_suppressed_activities WHERE activity_id IN (SELECT id FROM activities WHERE workspace_id=? AND rowid>? AND rowid<=?)",
+          )
+          .all(ws, Number(cursor?.activity_row ?? 0), through)
+      ).map((row) => String(row.activity_id)),
+    );
+    const suppressedEvents = events.filter(
+      ({ event }) =>
+        suppressed.has(event.id) ||
+        event.kind === "import" ||
+        /Restored previous version|恢复已作废|Undid intake/.test(event.action),
+    );
     const suppress =
       options.suppress ||
-      events.some(
-        ({ event }) =>
-          event.kind === "import" ||
-          /Restored previous version|恢复已作废|Undid intake/.test(
-            event.action,
-          ),
-      );
+      (!this.background &&
+        events.some(
+          ({ event }) =>
+            event.kind === "import" ||
+            /Restored previous version|恢复已作废|Undid intake/.test(
+              event.action,
+            ),
+        ));
     if (events.some(({ event }) => event.kind === "import")) {
       for (const { item } of await this.rows(ws)) {
         item.resolvedAt = iso(now);
@@ -338,8 +357,31 @@ export class NotificationService {
       }
       const keys = new Set(candidates.map((candidate) => candidate.key));
       for (const candidate of candidates)
-        await this.upsert(ws, id, candidate, !!cursor && !suppress);
+        await this.upsert(
+          ws,
+          id,
+          candidate,
+          !!cursor &&
+            !suppress &&
+            !suppressedEvents.some(
+              ({ event }) =>
+                event.kind === "import" ||
+                (candidate.taskId
+                  ? event.entityId === candidate.taskId
+                  : event.projectId === candidate.projectId),
+            ),
+        );
       for (const { item } of await this.rows(ws, id)) {
+        // Time passing must also advance the notification domain: clients no
+        // longer poll full notification state when versions are unchanged.
+        if (
+          item.snoozedUntil &&
+          Date.parse(item.snoozedUntil) <= now.getTime()
+        ) {
+          item.snoozedUntil = null;
+          item.updatedAt = iso(now);
+          await this.write(item);
+        }
         const derived = [
           "task_risk",
           "project_metadata",
@@ -365,7 +407,12 @@ export class NotificationService {
         "UPDATE notification_outbox SET state='cancelled',error='接收账号已停用或不存在',updated_at=? WHERE workspace_id=? AND state IN ('pending','blocked','failed') AND user_id NOT IN (SELECT id FROM users WHERE workspace_id=? AND status='active' AND requires_activation=0)",
       )
       .run(iso(now), ws, ws);
-    if (cursor && !suppress) await this.processEvents(ws, snapshot, events);
+    if (cursor && !suppress)
+      await this.processEvents(
+        ws,
+        snapshot,
+        events.filter((value) => !suppressedEvents.includes(value)),
+      );
     await this.repo.db
       .prepare(
         "INSERT INTO notification_cursors(workspace_id,activity_row,initialized_at) VALUES(?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET activity_row=excluded.activity_row",
@@ -545,7 +592,7 @@ export class NotificationService {
       await this.upsert(ws, recipient, candidate, true);
     }
   }
-  private async binding(ws: string, userId: string) {
+  private async binding(ws: string, userId: string, readOnly = false) {
     const stored = await this.credentials.read(ws),
       config = stored?.config;
     const directory = await this.repo.directory(ws),
@@ -593,6 +640,7 @@ export class NotificationService {
     )
       reason = "企业微信成员标识无效。";
     if (
+      !readOnly &&
       !reason &&
       employee &&
       config &&
@@ -644,7 +692,7 @@ export class NotificationService {
         (!item.snoozedUntil || Date.parse(item.snoozedUntil) <= now.getTime()),
     ).length;
     const account = await this.account(a.workspaceId, a.id),
-      binding = await this.binding(a.workspaceId, a.id);
+      binding = await this.binding(a.workspaceId, a.id, true);
     return {
       items: all
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -1365,6 +1413,65 @@ export class NotificationService {
         async () => await this.reconcileWorkspace(String(row.id)),
       );
   }
+  async enqueueWorkspace(ws: string) {
+    await this.repo.db
+      .prepare(
+        "INSERT INTO notification_jobs(workspace_id) VALUES(?) ON CONFLICT(workspace_id) DO UPDATE SET target_version=notification_jobs.target_version+1,updated_at=clock_timestamp()",
+      )
+      .run(ws);
+    await this.repo.db.prepare("SELECT pg_notify('pm_workspace_sync', ?)").get(
+      JSON.stringify({
+        schema: this.repo.db.schema,
+        workspaceId: ws,
+        domain: "jobs",
+      }),
+    );
+  }
+  wake() {
+    if (!this.background || this.closed || this.jobsRunning) return;
+    this.jobsRunning = this.processJobs()
+      .catch(() => {
+        // The lease expires after failure; pending work survives process exits.
+      })
+      .finally(() => {
+        this.jobsRunning = undefined;
+      });
+  }
+  async processJobs() {
+    if (!this.background || this.closed) return;
+    for (let count = 0; count < 20 && !this.closed; count++) {
+      const token = randomUUID();
+      const job = await this.repo.transaction(async () => {
+        const row = await this.repo.db
+          .prepare(
+            "SELECT workspace_id,target_version FROM notification_jobs WHERE lease_until IS NULL OR lease_until<clock_timestamp() ORDER BY updated_at LIMIT 1 FOR UPDATE SKIP LOCKED",
+          )
+          .get();
+        if (!row) return;
+        await this.repo.db
+          .prepare(
+            "UPDATE notification_jobs SET lease_token=?,lease_until=clock_timestamp()+interval '30 seconds' WHERE workspace_id=?",
+          )
+          .run(token, row.workspace_id);
+        return row;
+      });
+      if (!job) break;
+      await this.repo.transaction(async () => {
+        const current = await this.repo.db
+          .prepare(
+            "SELECT target_version FROM notification_jobs WHERE workspace_id=? AND lease_token=? FOR UPDATE",
+          )
+          .get(job.workspace_id, token);
+        if (!current) return;
+        await this.reconcileWorkspace(String(job.workspace_id));
+        await this.repo.db
+          .prepare(
+            "DELETE FROM notification_jobs WHERE workspace_id=? AND lease_token=? AND target_version=?",
+          )
+          .run(job.workspace_id, token, current.target_version);
+      });
+    }
+  }
   async tick(): Promise<void> {
     if (this.closed) return await Promise.resolve();
     if (this.running) return this.running;
@@ -1383,6 +1490,11 @@ export class NotificationService {
       )
       .run(iso(this.now()));
     await this.reconcileAll();
+    if (this.background) {
+      this.jobTimer = setInterval(() => this.wake(), 1000);
+      this.jobTimer.unref();
+      this.wake();
+    }
     const interval = this.options.intervalMs ?? 15000;
     if (interval > 0) {
       this.timer = setInterval(() => {
@@ -1396,6 +1508,8 @@ export class NotificationService {
   async close() {
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
+    if (this.jobTimer) clearInterval(this.jobTimer);
+    await this.jobsRunning;
     await this.running;
   }
 }
@@ -1409,12 +1523,7 @@ export function registerNotificationRoutes(
 ) {
   app.get(
     "/api/notifications",
-    async (req) =>
-      await repo.transaction(async () => {
-        const a = actor(req);
-        await service.reconcileWorkspace(a.workspaceId);
-        return await service.state(a);
-      }),
+    async (req) => await repo.db.readSnapshot(() => service.state(actor(req))),
   );
   app.post(
     "/api/notifications/action",

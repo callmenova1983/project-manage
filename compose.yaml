@@ -1,6 +1,10 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_WORKSPACE_CORE: ${VITE_WORKSPACE_CORE:-1}
+        VITE_WORKSPACE_SSE: ${VITE_WORKSPACE_SSE:-1}
     ports:
       - "127.0.0.1:${PM_HTTP_PORT:-3001}:3001"
     # Use a private runtime file. Server deployments set PM_ENV_FILE to an

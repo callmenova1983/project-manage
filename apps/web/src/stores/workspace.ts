@@ -1,3 +1,17 @@
+import {
+  emptyVersions,
+  savedWorkspaceEntities,
+  type WorkspaceCore,
+  type ReceiptInput,
+} from "../../../../packages/domain/workspace-sync";
+import type {
+  CompanyDirectory,
+  ProjectMember,
+} from "../../../../packages/domain/directory";
+import type { Activity } from "../../../../packages/domain/types";
+import type { ModelUsage } from "../../../../packages/domain/admin";
+import { createWorkspaceSync } from "../services/workspace-sync";
+import { useCalendarNow } from "../composables/calendar";
 import type { TaskDependency } from "../../../../packages/domain/task-dependencies";
 import {
   isActiveProject,
@@ -48,6 +62,203 @@ export const useWorkspace = defineStore("workspace", () => {
     tasks: [],
     activities: [],
   });
+  const lightweight = import.meta.env.VITE_WORKSPACE_CORE !== "0";
+  const versions = ref(emptyVersions());
+  let coreLoaded = false,
+    refreshFlight: Promise<boolean> | undefined,
+    refreshAgain = false;
+  const directory = ref<CompanyDirectory>();
+  const projectMembers = ref<ProjectMember[]>([]);
+  const receipts = ref<Activity[]>([]);
+  const usage = ref<ModelUsage>();
+  const resourceErrors = ref<Record<string, string>>({});
+  const loadedProjects = new Set<string>();
+  const resources = new Map<string, Promise<void>>();
+  const resourceAgain = new Set<string>();
+  const now = useCalendarNow();
+  function stableEntities<T extends { id: string }>(
+    previous: T[],
+    incoming: T[],
+  ): T[] {
+    const byId = new Map(previous.map((item) => [item.id, item]));
+    const result = incoming.map((item) => {
+      const old = byId.get(item.id);
+      return old && JSON.stringify(old) === JSON.stringify(item) ? old : item;
+    });
+    return previous.length === result.length &&
+      result.every((item, index) => item === previous[index])
+      ? previous
+      : result;
+  }
+  function applyCore(core: WorkspaceCore) {
+    data.value.projects = stableEntities(data.value.projects, core.projects);
+    data.value.tasks = stableEntities(data.value.tasks, core.tasks);
+    for (const key of [
+      "schemaVersion",
+      "revision",
+      "catalogs",
+      "settings",
+      "members",
+      "projectOrder",
+    ] as const) {
+      if (JSON.stringify(data.value[key]) !== JSON.stringify(core[key]))
+        Object.assign(data.value, { [key]: core[key] });
+    }
+    setCatalogs(data.value.catalogs);
+    workspaceTimeZone.value = data.value.settings?.timeZone ?? "UTC";
+  }
+  function resource(key: string, load: () => Promise<void>, fresh = false) {
+    if (resources.has(key)) {
+      if (fresh) resourceAgain.add(key);
+      return resources.get(key)!;
+    }
+    const generation = sessionGeneration;
+    const flight = (async () => {
+      do {
+        resourceAgain.delete(key);
+        await load();
+      } while (generation === sessionGeneration && resourceAgain.has(key));
+    })()
+      .then(() => {
+        if (generation === sessionGeneration) delete resourceErrors.value[key];
+      })
+      .catch((reason) => {
+        if (generation === sessionGeneration)
+          resourceErrors.value[key] = (reason as Error).message;
+        throw reason;
+      })
+      .finally(() => {
+        if (resources.get(key) === flight) resources.delete(key);
+      });
+    resources.set(key, flight);
+    return flight;
+  }
+  async function loadDirectory(force = false) {
+    if (directory.value && !force) return;
+    const generation = sessionGeneration;
+    return resource(
+      "directory",
+      async () => {
+        const value = await api.companyDirectory();
+        if (generation === sessionGeneration) directory.value = value;
+      },
+      force,
+    );
+  }
+  async function loadProjectMembers(id: string, force = false) {
+    if (loadedProjects.has(id) && !force) return;
+    const generation = sessionGeneration;
+    return resource(
+      `members:${id}`,
+      async () => {
+        const result = await api.projectMembers(id);
+        if (generation !== sessionGeneration) return;
+        projectMembers.value = [
+          ...projectMembers.value.filter((member) => member.projectId !== id),
+          ...result.members,
+        ];
+        loadedProjects.add(id);
+      },
+      force,
+    );
+  }
+  async function loadReceipts(entities: ReceiptInput["entities"]) {
+    const generation = sessionGeneration;
+    // Bounded batches cover large bulk changes without downloading history.
+    for (let offset = 0; offset < entities.length; offset += 200) {
+      const found = await api.receipts({
+        entities: entities.slice(offset, offset + 200),
+      });
+      if (generation !== sessionGeneration) return;
+      receipts.value = stableEntities(
+        receipts.value,
+        [
+          ...found,
+          ...receipts.value.filter(
+            (old) => !found.some((item) => item.id === old.id),
+          ),
+        ].slice(0, 1000),
+      );
+    }
+  }
+  async function refreshTaskReceipt() {
+    const receipt = taskFeedback.value;
+    if (!receipt) return;
+    const generation = sessionGeneration;
+    try {
+      await loadReceipts([
+        { kind: "task", id: receipt.task.id, version: receipt.task.version },
+      ]);
+    } catch (reason) {
+      if (generation === sessionGeneration)
+        taskFeedbackError.value = (reason as Error).message;
+    }
+  }
+  async function loadUsage(fresh = false) {
+    const generation = sessionGeneration;
+    return resource(
+      "usage",
+      async () => {
+        const result = await api.modelUsage();
+        if (generation === sessionGeneration) usage.value = result;
+      },
+      fresh,
+    );
+  }
+  const sync = createWorkspaceSync({
+    local: api.mode === "local",
+    meta: () => api.meta(),
+    applied: () => versions.value,
+    async apply(domain, version) {
+      const generation = sessionGeneration;
+      if (domain === "core") {
+        if (!(await refresh(true)))
+          throw new Error("Core synchronization failed");
+        return;
+      }
+      if (domain === "directory" && directory.value) await loadDirectory(true);
+      if (domain === "projectMembers")
+        await Promise.all(
+          [...loadedProjects].map((id) => loadProjectMembers(id, true)),
+        );
+      if (
+        domain === "notifications" &&
+        !(await refreshNotifications(true, true))
+      )
+        throw new Error("Notifications synchronization failed");
+      if (domain === "usage") await loadUsage(true);
+      if (generation === sessionGeneration) versions.value[domain] = version;
+    },
+    failure(reason) {
+      if (reason instanceof ApiError && reason.status === 401) {
+        clearWorkspace();
+        sessionState.value = "signed_out";
+      }
+    },
+  });
+  let legacyTimer: ReturnType<typeof setInterval> | undefined;
+  function stopSync() {
+    sync.stop();
+    if (legacyTimer) clearInterval(legacyTimer);
+    legacyTimer = undefined;
+  }
+  function resumeSync() {
+    if (!user.value || document.hidden) {
+      stopSync();
+      return;
+    }
+    if (!lightweight) {
+      if (!legacyTimer)
+        legacyTimer = setInterval(() => {
+          void refresh(true);
+          void refreshNotifications(true);
+          void loadUsage().catch(() => {});
+        }, 20000);
+      return;
+    }
+    sync.start();
+    void sync.calibrate();
+  }
   const user = ref<Actor | null>(null),
     sessionState = ref<
       "idle" | "checking" | "authenticated" | "signed_out" | "unavailable"
@@ -100,7 +311,22 @@ export const useWorkspace = defineStore("workspace", () => {
     followedIds.value = result.followingIds;
     notificationError.value = "";
   }
-  async function refreshNotifications(quiet = false) {
+  async function refreshNotifications(quiet = false, fresh = false) {
+    return resource(
+      "notifications",
+      async () => {
+        if (!(await fetchNotifications(quiet)))
+          throw new Error(
+            notificationError.value || "Notification synchronization pending",
+          );
+      },
+      fresh,
+    ).then(
+      () => true,
+      () => false,
+    );
+  }
+  async function fetchNotifications(quiet = false) {
     if (!user.value || notificationBusy.value || followingBusy.value) return;
     const generation = sessionGeneration;
     const request = ++notificationRequest;
@@ -135,6 +361,7 @@ export const useWorkspace = defineStore("workspace", () => {
       legacyFollowingIds = [];
       receiveNotifications(result);
       preferenceError.value = "";
+      return true;
     } catch (reason) {
       if (generation === sessionGeneration && request === notificationRequest)
         notificationError.value = (reason as Error).message;
@@ -231,7 +458,7 @@ export const useWorkspace = defineStore("workspace", () => {
   const undoActivity = computed(() => {
     const receipt = taskFeedback.value;
     return receipt && !receipt.undone
-      ? data.value.activities.find(
+      ? receipts.value.find(
           (event) =>
             event.kind === "task" &&
             event.entityId === receipt.task.id &&
@@ -317,6 +544,19 @@ export const useWorkspace = defineStore("workspace", () => {
   }
 
   function clearWorkspace() {
+    stopSync();
+    versions.value = emptyVersions();
+    coreLoaded = false;
+    refreshFlight = undefined;
+    refreshAgain = false;
+    directory.value = undefined;
+    projectMembers.value = [];
+    receipts.value = [];
+    usage.value = undefined;
+    loadedProjects.clear();
+    resources.clear();
+    resourceAgain.clear();
+    resourceErrors.value = {};
     sessionGeneration++;
     snapshotRequest++;
     busy.value = false;
@@ -349,18 +589,13 @@ export const useWorkspace = defineStore("workspace", () => {
   });
   const total = computed(() => statistics(activeTasks.value)),
     week = computed(() =>
-      statistics(
-        activeTasks.value,
-        "week",
-        new Date(),
-        workspaceTimeZone.value,
-      ),
+      statistics(activeTasks.value, "week", now.value, workspaceTimeZone.value),
     ),
     today = computed(() =>
       statistics(
         activeTasks.value,
         "today",
-        new Date(),
+        now.value,
         workspaceTimeZone.value,
       ),
     );
@@ -370,44 +605,89 @@ export const useWorkspace = defineStore("workspace", () => {
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => (toast.value = ""), 4500);
   };
-  async function refresh(quiet = false) {
-    const generation = sessionGeneration;
-    const request = ++snapshotRequest;
-    if (!quiet) loading.value = true;
-    try {
-      const snapshot = await api.snapshot();
-      if (generation !== sessionGeneration || request !== snapshotRequest)
-        return false;
-      data.value = snapshot;
-      setCatalogs(snapshot.catalogs);
-      workspaceTimeZone.value = snapshot.settings?.timeZone ?? "UTC";
-      void refreshNotifications(true);
-      lastSynced.value = new Date();
-      error.value = "";
-      return true;
-    } catch (e) {
-      if (generation !== sessionGeneration || request !== snapshotRequest)
-        return false;
-      if (e instanceof ApiError && e.status === 401) {
-        clearWorkspace();
-        sessionState.value = "signed_out";
-      } else error.value = (e as Error).message;
-      return false;
-    } finally {
-      if (generation === sessionGeneration && request === snapshotRequest)
-        loading.value = false;
+  function refresh(quiet = false): Promise<boolean> {
+    if (refreshFlight) {
+      refreshAgain = true;
+      return refreshFlight;
     }
+    const generation = sessionGeneration;
+    if (!quiet) loading.value = true;
+    const flight = Promise.resolve().then(async () => {
+      try {
+        do {
+          refreshAgain = false;
+          const request = ++snapshotRequest;
+          if (lightweight) {
+            const result = await api.core(
+              coreLoaded ? versions.value.core : undefined,
+            );
+            if (generation !== sessionGeneration) return false;
+            if (request !== snapshotRequest) {
+              refreshAgain = true;
+              continue;
+            }
+            if (!result.unchanged) applyCore(result.core);
+            versions.value.core = result.version;
+            coreLoaded = true;
+          } else {
+            const snapshot = await api.snapshot();
+            if (generation !== sessionGeneration) return false;
+            if (request !== snapshotRequest) {
+              refreshAgain = true;
+              continue;
+            }
+            applyCore(snapshot);
+            data.value.activities = snapshot.activities;
+            receipts.value = snapshot.activities;
+            directory.value = snapshot.directory;
+            projectMembers.value = snapshot.projectMembers ?? [];
+            versions.value.core = String(snapshot.revision);
+          }
+          lastSynced.value = new Date();
+          error.value = "";
+        } while (refreshAgain);
+        return true;
+      } catch (reason) {
+        if (generation !== sessionGeneration) return false;
+        if (reason instanceof ApiError && reason.status === 401) {
+          clearWorkspace();
+          sessionState.value = "signed_out";
+        } else error.value = (reason as Error).message;
+        return false;
+      } finally {
+        if (refreshFlight === flight) refreshFlight = undefined;
+        if (generation === sessionGeneration) loading.value = false;
+      }
+    });
+    refreshFlight = flight;
+    return flight;
   }
   async function initialize() {
     if (sessionState.value === "checking") return;
     clearWorkspace();
+    const generation = sessionGeneration;
     sessionState.value = "checking";
     loading.value = true;
     try {
-      user.value = (await api.session()).actor;
+      if (lightweight) {
+        const result = await api.bootstrap();
+        if (generation !== sessionGeneration) return;
+        user.value = result.actor;
+        applyCore(result.core);
+        coreLoaded = true;
+        versions.value = { ...result.versions, notifications: "", usage: "" };
+        followedIds.value = result.followingIds;
+        lastSynced.value = new Date();
+      } else {
+        const session = await api.session();
+        if (generation !== sessionGeneration) return;
+        user.value = session.actor;
+        await refresh();
+      }
       sessionState.value = "authenticated";
-      await refresh();
+      resumeSync();
     } catch (e) {
+      if (generation !== sessionGeneration) return;
       if (e instanceof ApiError && e.status === 401)
         sessionState.value = "signed_out";
       else {
@@ -415,7 +695,7 @@ export const useWorkspace = defineStore("workspace", () => {
         error.value = (e as Error).message;
       }
     } finally {
-      loading.value = false;
+      if (generation === sessionGeneration) loading.value = false;
     }
   }
   async function login(email: string, password: string) {
@@ -424,6 +704,9 @@ export const useWorkspace = defineStore("workspace", () => {
     user.value = actor;
     sessionState.value = "authenticated";
     await refresh();
+    versions.value.notifications = "";
+    versions.value.usage = "";
+    resumeSync();
   }
   async function logout() {
     const draftKey = user.value && intakeDraftKey(api.mode, user.value);
@@ -449,8 +732,34 @@ export const useWorkspace = defineStore("workspace", () => {
     try {
       const result = await fn();
       if (generation !== sessionGeneration) return result;
-      await refresh(true);
+      snapshotRequest++; // Invalidate reads started before this acknowledged mutation.
+      // Merge acknowledged entities before resolving the save; calibration runs independently.
+      const entities = savedWorkspaceEntities(result);
+      for (const item of entities) {
+        if ("projectId" in item) acceptTask(item as Task);
+        else {
+          const old = data.value.projects.find(
+            (project) => project.id === item.id,
+          );
+          if (!old) data.value.projects.push(item as Project);
+          else if (old.version <= item.version)
+            data.value.projects = data.value.projects.map((project) =>
+              project.id === item.id ? (item as Project) : project,
+            );
+        }
+      }
+      if (entities.length)
+        void loadReceipts(
+          entities.map((item) => ({
+            kind: "projectId" in item ? "task" : "project",
+            id: item.id,
+            version: item.version,
+          })),
+        ).catch(() => {});
       if (generation === sessionGeneration) notify(message);
+      void refresh(true);
+      if (lightweight) sync.hint();
+      else void refreshNotifications(true);
       return result;
     } finally {
       if (generation === sessionGeneration) busy.value = false;
@@ -589,7 +898,12 @@ export const useWorkspace = defineStore("workspace", () => {
       data.value.tasks.push(task);
       return;
     }
-    if (current.version > task.version) return;
+    if (
+      current.version > task.version ||
+      (current.version === task.version &&
+        JSON.stringify(current) === JSON.stringify(task))
+    )
+      return;
     data.value.tasks = data.value.tasks.map((old) =>
       old.id === task.id ? task : old,
     );
@@ -691,6 +1005,19 @@ export const useWorkspace = defineStore("workspace", () => {
     }
   }
   return {
+    coreVersion: computed(() => versions.value.core),
+    directory,
+    projectMembers,
+    receipts,
+    resourceErrors,
+    usage,
+    loadUsage,
+    loadDirectory,
+    loadProjectMembers,
+    loadReceipts,
+    refreshTaskReceipt,
+    resumeSync,
+    stopSync,
     following,
     followingBusy,
     toggleFollowing,

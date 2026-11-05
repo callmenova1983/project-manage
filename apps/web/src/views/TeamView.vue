@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from "vue";
+import { watch, computed, defineAsyncComponent } from "vue";
 import { onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 import { confirmDiscard } from "../composables/unsaved";
 import { t } from "../locales";
@@ -9,6 +9,15 @@ const PeopleWorkView = defineAsyncComponent(
 );
 const StatisticsView = defineAsyncComponent(
   () => import("./StatisticsView.vue"),
+);
+import { useWorkspace } from "../stores/workspace";
+const store = useWorkspace();
+watch(
+  () => store.user?.id,
+  () => {
+    if (store.user) void store.loadDirectory().catch(() => {});
+  },
+  { immediate: true },
 );
 const route = useRoute(),
   router = useRouter();

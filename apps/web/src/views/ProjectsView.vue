@@ -11,7 +11,11 @@ import {
   selectProjects,
   projectOwnerKey,
 } from "../../../../packages/domain/project-view";
-import { currentDay, currentWeek } from "../composables/calendar";
+import {
+  currentDay,
+  currentWeek,
+  useCalendarNow,
+} from "../composables/calendar";
 import {
   channelEntries,
   projectChannel,
@@ -30,7 +34,9 @@ const ProjectCollectionLayout = defineAsyncComponent(
   () => import("../components/ProjectCollectionLayout.vue"),
 );
 import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router";
-import ProjectBulkFill from "../components/ProjectBulkFill.vue";
+const ProjectBulkFill = defineAsyncComponent(
+  () => import("../components/ProjectBulkFill.vue"),
+);
 import {
   PhMagnifyingGlass,
   PhPlus,
@@ -57,7 +63,9 @@ import {
 import { stageLabels } from "../locales/en";
 import { confirmDiscard } from "../composables/unsaved";
 import StatusBadge from "../components/StatusBadge.vue";
-import ProjectEditor from "../components/ProjectEditor.vue";
+const ProjectEditor = defineAsyncComponent(
+  () => import("../components/ProjectEditor.vue"),
+);
 import ClientLabel from "../components/ClientLabel.vue";
 import ProjectQuickActions from "../components/ProjectQuickActions.vue";
 import { api } from "../services/api";
@@ -71,7 +79,9 @@ import ProjectFollow from "../components/ProjectFollow.vue";
 import ProjectOwner from "../components/ProjectOwner.vue";
 import TaskList from "../components/TaskList.vue";
 import InlineUpdate from "../components/InlineUpdate.vue";
-import PasteTasks from "../components/PasteTasks.vue";
+const PasteTasks = defineAsyncComponent(
+  () => import("../components/PasteTasks.vue"),
+);
 import { t, formatDate, formatNumber } from "../locales";
 import TaskDistribution from "../components/TaskDistribution.vue";
 import ProjectStages from "../components/ProjectStages.vue";
@@ -313,12 +323,13 @@ onBeforeRouteLeave(() => {
   store.projectNavigation.returnFocus =
     record?.dataset.projectRecord ?? expanded.value;
 });
+const calendarNow = useCalendarNow();
 const scopeDate = computed(() => {
   const format = (date: string) =>
     formatDate(date, { month: "short", day: "numeric" });
   if (scope.value === "today")
-    return `${format(currentDay())}, ${currentDay().slice(0, 4)} · ${store.timeZone}`;
-  const start = currentWeek();
+    return `${format(currentDay(calendarNow.value))}, ${currentDay(calendarNow.value).slice(0, 4)} · ${store.timeZone}`;
+  const start = currentWeek(calendarNow.value);
   const end = new Date(Date.parse(start) + 6 * 86400000)
     .toISOString()
     .slice(0, 10);
@@ -328,14 +339,14 @@ const scopeStats = computed(() =>
   statistics(
     selectedProjectTasks.value,
     scope.value,
-    new Date(),
+    calendarNow.value,
     store.timeZone,
   ),
 );
 const overviewTasks = computed(() => {
   const tasks = leafTasks(selectedProjectTasks.value),
-    day = currentDay(),
-    week = currentWeek();
+    day = currentDay(calendarNow.value),
+    week = currentWeek(calendarNow.value);
   return tasks.filter((task) =>
     scope.value === "week"
       ? task.workWeek === week
@@ -441,6 +452,7 @@ function clear() {
   category.value = "";
   channel.value = "";
 }
+let previousGroups = new Map<string, Task[]>();
 const tasksByProject = computed(() => {
   const grouped = new Map<string, Task[]>();
   for (const task of store.data.tasks) {
@@ -448,27 +460,60 @@ const tasksByProject = computed(() => {
     if (group) group.push(task);
     else grouped.set(task.projectId, [task]);
   }
+  for (const [id, tasks] of grouped) {
+    const previous = previousGroups.get(id);
+    if (
+      previous?.length === tasks.length &&
+      tasks.every((task, index) => task === previous[index])
+    )
+      grouped.set(id, previous);
+  }
+  previousGroups = grouped;
   return grouped;
 });
+let scopeCache = new Map<
+  string,
+  {
+    source: Task[];
+    key: string;
+    value: { tasks: Task[]; summary: ReturnType<typeof statistics> };
+  }
+>();
 const scopedByProject = computed(() => {
-  // Snapshot refresh invalidates this map, so local-day/week boundaries refresh too.
+  // Clock changes invalidate date scopes independently of network activity.
   const groups = tasksByProject.value,
-    day = currentDay(),
-    week = currentWeek();
-  return new Map(
+    day = currentDay(calendarNow.value),
+    week = currentWeek(calendarNow.value);
+  const key = `${scope.value}:${day}:${week}`;
+  const nextCache = new Map<
+    typeof scopeCache extends Map<infer K, unknown> ? K : never,
+    typeof scopeCache extends Map<string, infer V> ? V : never
+  >();
+  const result = new Map(
     [...groups].map(([id, tasks]) => {
+      const previous = scopeCache.get(id);
+      if (previous?.source === tasks && previous.key === key) {
+        nextCache.set(id, previous);
+        return [id, previous.value];
+      }
       const scoped = leafTasks(tasks).filter((task) =>
         scope.value === "week"
           ? task.workWeek === week
           : task.workDates.includes(day),
       );
-      return [id, { tasks: scoped, summary: statistics(scoped) }];
+      const value = { tasks: scoped, summary: statistics(scoped) };
+      nextCache.set(id, { source: tasks, key, value });
+      return [id, value];
     }),
   );
+  scopeCache = nextCache;
+  return result;
 });
 const emptySummary = statistics([]);
-const tasks = (id: string) => tasksByProject.value.get(id) ?? [];
-const scopedTasks = (id: string) => scopedByProject.value.get(id)?.tasks ?? [];
+const emptyTasks: Task[] = [];
+const tasks = (id: string) => tasksByProject.value.get(id) ?? emptyTasks;
+const scopedTasks = (id: string) =>
+  scopedByProject.value.get(id)?.tasks ?? emptyTasks;
 const summary = (id: string) =>
   scopedByProject.value.get(id)?.summary ?? emptySummary;
 function reportTime(p: Project) {
@@ -501,10 +546,10 @@ const portfolioTasks = computed(() => {
 });
 const portfolioStats = computed(() => statistics(portfolioTasks.value));
 const portfolioToday = computed(() =>
-  statistics(portfolioTasks.value, "today", new Date(), store.timeZone),
+  statistics(portfolioTasks.value, "today", calendarNow.value, store.timeZone),
 );
 const portfolioWeek = computed(() =>
-  statistics(portfolioTasks.value, "week", new Date(), store.timeZone),
+  statistics(portfolioTasks.value, "week", calendarNow.value, store.timeZone),
 );
 const inbox = computed(() => store.data.projects.find((p) => p.intakeInbox));
 async function toggle(id: string) {

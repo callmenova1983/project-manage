@@ -1,4 +1,11 @@
 import type {
+  Bootstrap,
+  CoreResponse,
+  SyncVersions,
+  ReceiptInput,
+} from "../../../../packages/domain/workspace-sync";
+import type { ProjectMember } from "../../../../packages/domain/directory";
+import type {
   WorkspaceDataArchive,
   WorkspaceDataImportResult,
 } from "../../../../packages/domain/workspace-transfer";
@@ -273,6 +280,11 @@ export class HttpApi implements WorkspaceApi {
         headers: {
           "Content-Type": "application/json",
           "x-csrf-token": sentToken,
+          ...(!path.startsWith("/auth/") &&
+          path !== "/bootstrap" &&
+          this.actorKey
+            ? { "x-workspace-account": encodeURIComponent(this.actorKey) }
+            : {}),
           "idempotency-key": key,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -307,6 +319,11 @@ export class HttpApi implements WorkspaceApi {
         response.status,
       );
     }
+    if (epoch !== this.sessionEpoch && path !== "/auth/login")
+      throw new ApiError(
+        "Your session changed. Refresh the page before trying again.",
+        401,
+      );
     // This response is emitted by the authentication hook before any route or
     // mutation runs. Only this exact rejection is safe to replay automatically.
     // Keep the original idempotency key and payload throughout recovery.
@@ -356,6 +373,30 @@ export class HttpApi implements WorkspaceApi {
         taskBulkConflictsInput.safeParse(json.conflicts).data,
       );
     return json as T;
+  }
+  async bootstrap() {
+    const result = await this.call<Bootstrap>("/bootstrap");
+    this.csrf = result.csrf;
+    this.actorKey = this.identity(result.actor);
+    this.sessionEpoch++;
+    this.restorePending(result.actor);
+    return result;
+  }
+  core(knownVersion?: string) {
+    return this.call<CoreResponse>(
+      `/workspace/core${knownVersion ? `?knownVersion=${encodeURIComponent(knownVersion)}` : ""}`,
+    );
+  }
+  meta() {
+    return this.call<SyncVersions>("/workspace/meta");
+  }
+  receipts(input: ReceiptInput) {
+    return this.call<Activity[]>("/activity/receipts", "POST", input);
+  }
+  projectMembers(id: string) {
+    return this.call<{ version: string; members: ProjectMember[] }>(
+      `/projects/${encodeURIComponent(id)}/members`,
+    );
   }
   async session() {
     const result = await this.call<{ actor: Actor; csrf: string }>(

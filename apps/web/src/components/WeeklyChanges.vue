@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { currentWeek } from "../composables/calendar";
+import { currentWeek, useCalendarNow } from "../composables/calendar";
 import { calendarWeek } from "../../../../packages/domain/time-zone";
 import { computed, ref, useId } from "vue";
 import {
@@ -30,10 +30,9 @@ const props = defineProps<{
 const expanded = ref(true);
 const sectionId = useId();
 const store = useWorkspace();
+const now = useCalendarNow();
 const selectedWeek = ref<string | null>(null);
-const week = computed(
-  () => selectedWeek.value ?? currentWeek(store.lastSynced ?? new Date()),
-);
+const week = computed(() => selectedWeek.value ?? currentWeek(now.value));
 const history = useActivityHistory(() => ({
   weekStart: week.value,
   projectIds: props.projectIds,

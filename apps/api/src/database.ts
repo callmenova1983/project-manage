@@ -1,3 +1,11 @@
+import { timedAssembly } from "./performance.js";
+import { activityScope } from "../../../packages/domain/activity-query.js";
+import {
+  emptyVersions,
+  type SyncVersions,
+  type WorkspaceCore,
+  type ReceiptInput,
+} from "../../../packages/domain/workspace-sync.js";
 import { retainTaskSchedule } from "../../../packages/domain/task-schedule.js";
 import { assertProjectWritable } from "../../../packages/domain/project-lifecycle.js";
 import {
@@ -25,10 +33,7 @@ import {
   projectMembers,
   taskMember,
 } from "../../../packages/domain/members.js";
-import {
-  queryActivities,
-  type ActivityQuery,
-} from "../../../packages/domain/activity-query.js";
+import { type ActivityQuery } from "../../../packages/domain/activity-query.js";
 import {
   catalogsInput,
   defaultCatalogs,
@@ -184,6 +189,62 @@ export class Repository {
     });
   }
 
+  async syncVersions(ws: string, userId: string): Promise<SyncVersions> {
+    const versions = emptyVersions();
+    let globalNotifications = "0",
+      userNotifications = "0";
+    for (const row of await this.db
+      .prepare(
+        "SELECT domain,user_id,version::text FROM workspace_sync_versions WHERE workspace_id=? AND user_id IN ('',?)",
+      )
+      .all(ws, userId)) {
+      if (row.domain === "notifications") {
+        if (row.user_id) userNotifications = String(row.version);
+        else globalNotifications = String(row.version);
+      } else if (row.domain in versions)
+        versions[row.domain as keyof SyncVersions] = String(row.version);
+    }
+    versions.notifications = `${globalNotifications}.${userNotifications}`;
+    return versions;
+  }
+  async core(workspaceId: string): Promise<WorkspaceCore> {
+    return timedAssembly(() =>
+      this.db.readSnapshot(async () => {
+        const row = await this.db
+          .prepare("SELECT revision FROM workspaces WHERE id=?")
+          .get(workspaceId);
+        if (!row) throw new HttpError(404, "Workspace not found");
+        const projects = await this.read<Project>("projects", workspaceId);
+        return {
+          schemaVersion: 3,
+          revision: Number(row.revision),
+          projects,
+          tasks: await this.read<Task>("tasks", workspaceId),
+          catalogs: await this.catalogs(workspaceId),
+          settings: await this.settings(workspaceId),
+          members: await this.members(workspaceId),
+          projectOrder: await this.projectOrder(workspaceId, projects),
+        };
+      }),
+    );
+  }
+  async receipts(ws: string, input: ReceiptInput): Promise<Activity[]> {
+    if (!input.entities.length) return [];
+    const rows = await this.db
+      .prepare(
+        `SELECT a.data FROM activities a
+      WHERE EXISTS (SELECT 1 FROM jsonb_to_recordset(?::jsonb) AS requested(kind text,id text,version text)
+        WHERE a.data::jsonb->>'kind'=requested.kind AND a.data::jsonb->>'entityId'=requested.id
+        AND a.data::jsonb->'after'->>'version'=requested.version)
+      AND a.workspace_id=? ORDER BY a.occurred_at DESC,a.id COLLATE "C" ASC`,
+      )
+      .all(JSON.stringify(input.entities), ws);
+    return rows.map((row) => ({
+      ...JSON.parse(String(row.data)),
+      progressSource: undefined,
+    }));
+  }
+
   async snapshot(
     workspaceId: string,
     includeSources = false,
@@ -196,26 +257,22 @@ export class Repository {
     workspaceId: string,
     includeSources: boolean,
   ): Promise<Snapshot> {
-    const row = await this.db
-      .prepare("SELECT revision FROM workspaces WHERE id=?")
-      .get(workspaceId);
-    if (!row) throw new HttpError(404, "Workspace not found");
+    const core = await this.core(workspaceId);
+    const directory = await this.directory(workspaceId);
     return {
-      schemaVersion: 3,
-      catalogs: await this.catalogs(workspaceId),
-      settings: await this.settings(workspaceId),
-      members: await this.members(workspaceId),
-      revision: Number(row.revision),
-      projects: await this.read<Project>("projects", workspaceId),
-      tasks: await this.read<Task>("tasks", workspaceId),
+      ...core,
       activities: (await this.read<Activity>("activities", workspaceId)).map(
         (a) => (includeSources ? a : { ...a, progressSource: undefined }),
       ),
-      directory: await this.directory(workspaceId),
-      projectMembers: await this.projectMembers(workspaceId),
-      projectOrder: await this.projectOrder(workspaceId),
+      directory,
+      projectMembers: await this.projectMembers(
+        workspaceId,
+        undefined,
+        directory,
+      ),
     };
   }
+
   async catalogs(workspaceId: string): Promise<Catalogs> {
     const row = await this.db
       .prepare("SELECT data FROM workspace_catalogs WHERE workspace_id=?")
@@ -232,23 +289,27 @@ export class Repository {
       ? directorySchema.parse(JSON.parse(String(row.data)))
       : emptyDirectory();
   }
-  async projectOrder(ws: string) {
+  async projectOrder(ws: string, projects?: Project[]) {
     const row = await this.db
       .prepare("SELECT data FROM workspace_project_order WHERE workspace_id=?")
       .get(ws);
     return orderedProjectIds(
-      await this.read<Project>("projects", ws),
+      projects ?? (await this.read<Project>("projects", ws)),
       row ? JSON.parse(String(row.data)) : [],
     );
   }
-  async projectMembers(workspaceId: string): Promise<ProjectMember[]> {
-    const directory = await this.directory(workspaceId);
+  async projectMembers(
+    workspaceId: string,
+    projectId?: string,
+    cachedDirectory?: CompanyDirectory,
+  ): Promise<ProjectMember[]> {
+    const directory = cachedDirectory ?? (await this.directory(workspaceId));
     return (
       await this.db
         .prepare(
-          "SELECT project_id,user_id,users.name,joined_at,last_edited_at FROM project_members JOIN users ON users.id=project_members.user_id WHERE project_members.workspace_id=? ORDER BY joined_at,user_id",
+          "SELECT project_id,user_id,users.name,joined_at,last_edited_at FROM project_members JOIN users ON users.id=project_members.user_id WHERE project_members.workspace_id=? AND (?::text IS NULL OR project_id=?) ORDER BY joined_at,user_id",
         )
-        .all(workspaceId)
+        .all(workspaceId, projectId ?? null, projectId ?? null)
     ).map((row) => {
       const employee = directory.employees.find(
         (e) => e.userId === row.user_id,
@@ -326,16 +387,107 @@ export class Repository {
       : null;
     const start = bounds?.start ?? "0001-01-01T00:00:00Z";
     const end = bounds?.end ?? "9999-12-31T23:59:59.999Z";
+    const scope = activityScope(query);
+    if (
+      [query.cursor, query.checkpoint].some(
+        (point) => point && point.scope !== scope,
+      )
+    )
+      throw new HttpError(
+        400,
+        "Activity filters changed. Reload the first page.",
+      );
+    if (Date.parse(asOf) > Date.now())
+      throw new HttpError(400, "History cutoff cannot be in the future");
+    const where = `workspace_id=? AND rowid<=? AND occurred_at>=?::timestamptz
+      AND occurred_at<?::timestamptz AND occurred_at<=?::timestamptz
+      AND (NOT ?::boolean OR data::jsonb->>'source' IS DISTINCT FROM 'Synthetic demo seed')
+      AND (?::text[] IS NULL OR data::jsonb->>'projectId'=ANY(?::text[]))
+      AND (?='' OR strpos(lower(concat(data::jsonb->>'actor',' ',data::jsonb->>'action',' ',data::jsonb->>'source',' ',
+        CASE WHEN data::jsonb->'after'='null'::jsonb THEN '""' ELSE (data::json->'after')::text END)),?)>0)`;
+    const search = query.search?.trim().toLowerCase() ?? "";
+    const values = [
+      workspaceId,
+      through,
+      start,
+      end,
+      asOf,
+      !!query.excludeSeed,
+      query.projectIds ?? null,
+      query.projectIds ?? null,
+      search,
+      search,
+    ];
+    const completion = `data::jsonb->>'kind'='task'
+      AND data::jsonb->>'source' IS DISTINCT FROM 'History restore'
+      AND data::jsonb->>'action' IS DISTINCT FROM 'Restored previous version'
+      AND data::jsonb->'before'->>'id'=data::jsonb->>'entityId'
+      AND data::jsonb->'after'->>'id'=data::jsonb->>'entityId'
+      AND data::jsonb->'before'->>'projectId'=data::jsonb->'after'->>'projectId'
+      AND data::jsonb->'after'->>'projectId'=COALESCE(data::jsonb->>'originalProjectId',data::jsonb->>'projectId')
+      AND (data::jsonb->'after'->>'version')::bigint>(data::jsonb->'before'->>'version')::bigint
+      AND data::jsonb->'before'->>'status'<>'done' AND data::jsonb->'after'->>'status'='done'`;
+    const counts = (await this.db
+      .prepare(
+        `SELECT COUNT(*) AS total,
+      COUNT(DISTINCT NULLIF(data::jsonb->>'projectId','')) AS projects,
+      COUNT(DISTINCT CASE WHEN ${completion} THEN concat(data::jsonb->>'entityId',':',data::jsonb->'before'->>'version',':',data::jsonb->'after'->>'version') END) AS completions
+      FROM activities WHERE ${where}`,
+      )
+      .get(...values))!;
+    if (exportAll && Number(counts.total) > 10000)
+      throw new HttpError(
+        400,
+        "Export up to 10000 events at a time. Narrow the history filters.",
+      );
+    const limit = exportAll ? 10000 : (query.limit ?? 25);
+    const cursor = !exportAll && query.cursor;
     const rows = await this.db
       .prepare(
-        "SELECT data FROM activities WHERE workspace_id=? AND rowid<=? AND created_at::timestamptz>=?::timestamptz AND created_at::timestamptz<?::timestamptz AND created_at::timestamptz<=?::timestamptz ORDER BY created_at::timestamptz DESC,id ASC",
+        `SELECT data FROM activities WHERE ${where}
+      ${cursor ? 'AND (occurred_at<?::timestamptz OR (occurred_at=?::timestamptz AND id COLLATE "C">?))' : ""}
+      ORDER BY occurred_at DESC,id COLLATE "C" ASC LIMIT ?`,
       )
-      .all(workspaceId, through, start, end, asOf);
-    function* events() {
-      for (const row of rows) yield JSON.parse(String(row.data)) as Activity;
+      .all(
+        ...values,
+        ...(cursor ? [cursor.createdAt, cursor.createdAt, cursor.id] : []),
+        limit + 1,
+      );
+    const more = rows.length > limit;
+    const events = rows
+      .slice(0, limit)
+      .map((row) => JSON.parse(String(row.data)) as Activity);
+    const days = bounds ? bounds.days.map((date) => ({ date, count: 0 })) : [];
+    if (bounds) {
+      const dayRows = await this.db
+        .prepare(
+          `SELECT to_char(occurred_at AT TIME ZONE ?, 'YYYY-MM-DD') AS day, COUNT(*) AS count FROM activities WHERE ${where} GROUP BY day`,
+        )
+        .all(timeZone, ...values);
+      for (const day of days)
+        day.count = Number(
+          dayRows.find((row) => row.day === day.date)?.count ?? 0,
+        );
     }
-    return queryActivities(events(), query, through, new Date(), exportAll);
+    const last = events.at(-1);
+    return {
+      events,
+      total: Number(counts.total),
+      projectCount: Number(counts.projects),
+      completionActions: Number(counts.completions),
+      days,
+      weekStart: query.weekStart ?? null,
+      timeZone,
+      bounds: bounds ? { start: bounds.start, end: bounds.end } : null,
+      checkpoint: { scope, through, asOf },
+      asOf,
+      nextCursor:
+        more && last
+          ? { scope, through, asOf, createdAt: last.createdAt, id: last.id }
+          : null,
+    };
   }
+
   async activity(workspaceId: string, id: string): Promise<Activity> {
     const row = await this.db
       .prepare("SELECT data FROM activities WHERE workspace_id=? AND id=?")

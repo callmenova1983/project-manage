@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from "vue";
 import {
   computed,
   nextTick,
@@ -17,7 +18,7 @@ import { useWorkspace } from "../stores/workspace";
 import { dialogContextKey } from "../composables/dialog-context";
 import { confirmDiscard } from "../composables/unsaved";
 import { t, formatDate } from "../locales";
-import TaskEditor from "./TaskEditor.vue";
+const TaskEditor = defineAsyncComponent(() => import("./TaskEditor.vue"));
 const props = defineProps<{
   date: string;
   basis: CalendarBasis;

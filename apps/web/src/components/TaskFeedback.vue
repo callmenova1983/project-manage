@@ -103,7 +103,7 @@ async function dismiss() {
     <button
       v-else-if="store.undoState === 'sync'"
       :disabled="store.busy || store.loading"
-      @click="store.refresh()"
+      @click="store.refreshTaskReceipt()"
     >
       {{ t("Refresh history") }}
     </button>

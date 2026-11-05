@@ -1,4 +1,8 @@
 import {
+  workspaceCore,
+  emptyVersions,
+} from "../../../../packages/domain/workspace-sync";
+import {
   createWorkspaceDataArchive,
   planWorkspaceDataImport,
 } from "../../../../packages/domain/workspace-transfer";
@@ -192,6 +196,7 @@ export function createLocalApi(): WorkspaceApi {
         catalogs: structuredClone(defaultCatalogs),
       };
       localStorage.setItem(KEY, JSON.stringify(state));
+      window.dispatchEvent(new Event("pm:local-workspace-changed"));
     } else {
       try {
         const data = JSON.parse(raw);
@@ -245,6 +250,7 @@ export function createLocalApi(): WorkspaceApi {
     state.revision++;
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
+      window.dispatchEvent(new Event("pm:local-workspace-changed"));
     } catch {
       throw new ApiError(
         "Browser storage is full or unavailable. Export your work and free some space.",
@@ -585,7 +591,17 @@ export function createLocalApi(): WorkspaceApi {
   }
   function persistNotifications(value: ReturnType<typeof notificationState>) {
     try {
-      localStorage.setItem(notificationKey, JSON.stringify(value));
+      const serialized = JSON.stringify(value);
+      if (localStorage.getItem(notificationKey) !== serialized) {
+        localStorage.setItem(notificationKey, serialized);
+        localStorage.setItem(
+          notificationKey + ":version",
+          String(
+            Number(localStorage.getItem(notificationKey + ":version") ?? 0) + 1,
+          ),
+        );
+        window.dispatchEvent(new Event("pm:local-workspace-changed"));
+      }
     } catch {
       throw new ApiError("提醒未保存，浏览器存储不可用或空间不足。", 503);
     }
@@ -945,6 +961,52 @@ export function createLocalApi(): WorkspaceApi {
     },
 
     mode: "local",
+    async bootstrap() {
+      const snapshot = await this.snapshot();
+      const notifications = await this.notifications();
+      return {
+        actor,
+        csrf: "",
+        core: workspaceCore(snapshot),
+        followingIds: notifications.followingIds,
+        versions: await this.meta(),
+      };
+    },
+    async core(knownVersion) {
+      const snapshot = await this.snapshot(),
+        version = String(snapshot.revision);
+      return version === knownVersion
+        ? { version, unchanged: true }
+        : { version, unchanged: false, core: workspaceCore(snapshot) };
+    },
+    async meta() {
+      const snapshot = read(),
+        version = String(snapshot.revision);
+      const versions = Object.fromEntries(
+        Object.keys(emptyVersions()).map((key) => [key, version]),
+      ) as ReturnType<typeof emptyVersions>;
+      versions.notifications = `${version}.${localStorage.getItem(notificationKey + ":version") ?? "0"}`;
+      return versions;
+    },
+    async receipts(input) {
+      return (await this.snapshot()).activities.filter((event) =>
+        input.entities.some(
+          (entity) =>
+            event.kind === entity.kind &&
+            event.entityId === entity.id &&
+            event.after?.version === entity.version,
+        ),
+      );
+    },
+    async projectMembers(id) {
+      const snapshot = await this.snapshot();
+      return {
+        version: String(snapshot.revision),
+        members: (snapshot.projectMembers ?? []).filter(
+          (member) => member.projectId === id,
+        ),
+      };
+    },
     async session() {
       return { actor };
     },

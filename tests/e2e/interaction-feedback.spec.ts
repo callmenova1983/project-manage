@@ -86,12 +86,16 @@ for (const width of [1536, 390])
         (button as HTMLElement).click();
       });
     await expect(page.locator(".task-feedback")).toContainText("Change undone");
+    await page.getByRole("button", { name: "Projects", exact: true }).click();
     await expect(page.locator(".workspace-totals")).toContainText(
       "90 completed",
     );
     await expect(row.getByLabel(`Status for ${task.title}`)).toHaveValue(
       "blocked",
     );
+    await page
+      .getByRole("button", { name: "Changes & next work", exact: true })
+      .click();
     await expect(
       page.locator(".weekly-changes .change-metrics strong").first(),
     ).toHaveText("2");
@@ -115,7 +119,7 @@ for (const width of [1536, 390])
             (animation) =>
               animation.effect?.getTiming().iterations !== Infinity,
           )
-          .map(async (animation) => (await animation.finished.catch(() => {}))),
+          .map(async (animation) => await animation.finished.catch(() => {})),
       );
     });
     expect(
@@ -142,7 +146,7 @@ test("mobile collapse cancels safely, restores focus and retains project context
   const notes = page.getByLabel("Original notes for Atlas Customer Portal");
   const old = await notes.inputValue();
   await notes.fill("Synthetic unsaved interaction check");
-  page.once("dialog", async (d) => (await d.dismiss()));
+  page.once("dialog", async (d) => await d.dismiss());
   await page
     .getByRole("button", {
       name: "Collapse Atlas Customer Portal",
@@ -150,7 +154,7 @@ test("mobile collapse cancels safely, restores focus and retains project context
     })
     .click();
   await expect(notes).toHaveValue("Synthetic unsaved interaction check");
-  page.once("dialog", async (d) => (await d.accept()));
+  page.once("dialog", async (d) => await d.accept());
   await page
     .getByRole("button", {
       name: "Collapse Atlas Customer Portal",
@@ -263,12 +267,12 @@ test("a failed completion keeps the original status and retry reuses its write i
   await page.route(`**/api/tasks/${task.id}`, async (route) => {
     keys.push(route.request().headers()["idempotency-key"]!);
     return fail
-      ? (await route.fulfill({
+      ? await route.fulfill({
           status: 503,
           contentType: "application/json",
           body: JSON.stringify({ message: "Synthetic completion outage" }),
-        }))
-      : (await route.continue());
+        })
+      : await route.continue();
   });
   await page.goto(`/tasks?scope=all&project=${task.projectId}`);
   const checkbox = page.getByRole("checkbox", {
@@ -313,7 +317,7 @@ test("planned cards select by keyboard and scrolling, expose more work and prese
     "true",
   );
   await expect
-    .poll(async () => (await rail.evaluate((el) => el.scrollLeft)))
+    .poll(async () => await rail.evaluate((el) => el.scrollLeft))
     .toBeGreaterThan(0);
   await rail.press("Home");
   await expect(cards.first().locator(".work-select")).toHaveAttribute(
@@ -345,7 +349,7 @@ test("planned cards select by keyboard and scrolling, expose more work and prese
   await page
     .getByLabel("Notes or pasted table", { exact: true })
     .fill("项目：合成交互验收；任务：检查恢复");
-  page.once("dialog", async (d) => (await d.accept()));
+  page.once("dialog", async (d) => await d.accept());
   await page.goBack();
   await expect(page.locator(".next-work")).toBeVisible();
   await page

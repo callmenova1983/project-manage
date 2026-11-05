@@ -63,7 +63,14 @@ import { t, locale, formatDate, formatNumber } from "../locales";
 
 const store = useWorkspace();
 const { theme } = useTheme();
-const directory = ref<CompanyDirectory>(emptyDirectory());
+const accountKey = `${store.user?.workspaceId}:${store.user?.id}`;
+const directory = computed({
+  get: () => store.directory ?? emptyDirectory(),
+  set: (value: CompanyDirectory) => {
+    if (accountKey === `${store.user?.workspaceId}:${store.user?.id}`)
+      store.directory = value;
+  },
+});
 const sync = ref<WecomSyncState>({
   configured: false,
   lastSyncedAt: null,
@@ -249,12 +256,11 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [data, state, users] = await Promise.all([
-      api.companyDirectory(),
+    const [, state, users] = await Promise.all([
+      store.loadDirectory(true),
       api.wecomSyncState(),
       api.directoryAccounts(),
     ]);
-    directory.value = data;
     sync.value = state;
     accounts.value = users;
   } catch (e) {

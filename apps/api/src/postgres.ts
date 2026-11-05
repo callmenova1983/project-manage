@@ -1,3 +1,4 @@
+import { timedQuery } from "./performance.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
@@ -113,6 +114,8 @@ export class PostgresDatabase {
   private readonly pool: pg.Pool;
   private readonly context = new AsyncLocalStorage<TransactionContext>();
   private initializing?: Promise<void>;
+  private readonly configuredClients = new WeakSet<PoolClient>();
+  private readonly listenerConfig: pg.ClientConfig;
 
   constructor(config: PostgresConfig) {
     this.schema = config.schema ?? "public";
@@ -124,6 +127,7 @@ export class PostgresDatabase {
       throw new Error("Invalid application database schema");
     const connection = { ...config };
     delete connection.schema;
+    this.listenerConfig = connection;
     this.pool = new pg.Pool({
       max: 10,
       connectionTimeoutMillis: 10000,
@@ -146,9 +150,12 @@ export class PostgresDatabase {
   private async connect(): Promise<PoolClient> {
     const client = await this.pool.connect();
     try {
-      await client.query("SELECT set_config('search_path', $1, false)", [
-        `${quoteIdentifier(this.schema)}, pg_catalog`,
-      ]);
+      if (!this.configuredClients.has(client)) {
+        await client.query("SELECT set_config('search_path', $1, false)", [
+          `${quoteIdentifier(this.schema)}, pg_catalog`,
+        ]);
+        this.configuredClients.add(client);
+      }
       return client;
     } catch (error) {
       client.release(true);
@@ -164,14 +171,32 @@ export class PostgresDatabase {
     if (transaction) {
       if (!transaction.active)
         throw new Error("Database transaction has ended");
-      return transaction.client.query<Row>(sql, values);
+      return timedQuery(() => transaction.client.query<Row>(sql, values));
     }
     const client = await this.connect();
     try {
-      return await client.query<Row>(sql, values);
+      return await timedQuery(() => client.query<Row>(sql, values));
     } finally {
       client.release();
     }
+  }
+
+  /** LISTEN owns a dedicated connection; it never occupies a query-pool slot. */
+  async listen(callback: (payload: string) => void, disconnected: () => void) {
+    const client = new pg.Client(this.listenerConfig);
+    client.on("error", disconnected);
+    client.on("end", disconnected);
+    client.on("notification", (message) => {
+      if (message.payload) callback(message.payload);
+    });
+    try {
+      await client.connect();
+      await client.query("LISTEN pm_workspace_sync");
+    } catch (error) {
+      await client.end().catch(() => {});
+      throw error;
+    }
+    return () => client.end();
   }
 
   prepare(sql: string) {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from "vue";
 import { t } from "../locales";
 import { onBeforeUnmount, ref, watch } from "vue";
 import {
@@ -16,7 +17,9 @@ import {
   projectFileUrl,
   type ProjectFile,
 } from "../../../../packages/domain/project-file";
-import ProjectFilePreview from "./ProjectFilePreview.vue";
+const ProjectFilePreview = defineAsyncComponent(
+  () => import("./ProjectFilePreview.vue"),
+);
 import { referenceLabels } from "../../../../packages/domain/capture-reference";
 
 const props = defineProps<{ projectId: string }>();

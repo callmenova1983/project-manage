@@ -4,7 +4,9 @@ COPY package.json package-lock.json ./
 RUN --mount=type=secret,id=npm_ca \
     if [ -f /run/secrets/npm_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/npm_ca; fi; npm ci --fetch-retries=1 --fetch-timeout=30000
 COPY . .
-RUN npm run build
+ARG VITE_WORKSPACE_CORE=1
+ARG VITE_WORKSPACE_SSE=1
+RUN VITE_WORKSPACE_CORE="$VITE_WORKSPACE_CORE" VITE_WORKSPACE_SSE="$VITE_WORKSPACE_SSE" npm run build
 
 FROM node:24.19.0-bookworm-slim
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3001

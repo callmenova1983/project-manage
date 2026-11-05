@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { useWorkspace } from "../stores/workspace";
 import { t, formatNumber } from "../locales";
 const props = defineProps<{ projectId: string }>();
 const store = useWorkspace();
+watch(
+  () => [props.projectId, store.user?.id],
+  () => {
+    if (store.user)
+      void store.loadProjectMembers(props.projectId).catch(() => {});
+  },
+  { immediate: true },
+);
 const members = computed(
   () =>
-    store.data.projectMembers?.filter((m) => m.projectId === props.projectId) ??
-    [],
+    store.projectMembers?.filter((m) => m.projectId === props.projectId) ?? [],
 );
 </script>
 <template>

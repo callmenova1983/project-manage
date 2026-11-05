@@ -2,11 +2,12 @@
 import { t } from "../locales";
 import { computed, onMounted, onBeforeUnmount, ref } from "vue";
 import { PhCpu, PhArrowClockwise } from "@phosphor-icons/vue";
-import type { ModelUsage } from "../../../../packages/domain/admin";
+import { useWorkspace } from "../stores/workspace";
 import { api } from "../services/api";
 import { formatDate, locale } from "../locales";
 
-const usage = ref<ModelUsage>(),
+const store = useWorkspace();
+const usage = computed(() => store.usage),
   error = ref(false),
   busy = ref(false);
 const panel = ref<HTMLDetailsElement>();
@@ -26,7 +27,7 @@ async function refresh() {
   if (busy.value || document.hidden) return;
   busy.value = true;
   try {
-    usage.value = await api.modelUsage();
+    await store.loadUsage();
     error.value = false;
   } catch {
     error.value = true;
@@ -49,16 +50,13 @@ function escape(event: KeyboardEvent) {
     event.stopPropagation();
   }
 }
-let timer: ReturnType<typeof setInterval>;
 onMounted(() => {
   void refresh();
-  timer = setInterval(() => void refresh(), 20000);
   window.addEventListener("pm:ai-usage-changed", refresh);
   document.addEventListener("visibilitychange", refresh);
   document.addEventListener("pointerdown", outside);
 });
 onBeforeUnmount(() => {
-  clearInterval(timer);
   window.removeEventListener("pm:ai-usage-changed", refresh);
   document.removeEventListener("visibilitychange", refresh);
   document.removeEventListener("pointerdown", outside);

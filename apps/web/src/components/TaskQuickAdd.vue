@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from "vue";
 import { computed, onMounted, ref } from "vue";
 import { PhX } from "@phosphor-icons/vue";
 import { useWorkspace } from "../stores/workspace";
 import { currentWeek, currentDay } from "../composables/calendar";
 import { useUnsaved } from "../composables/unsaved";
 import { t } from "../locales";
-import TaskEditor from "./TaskEditor.vue";
+const TaskEditor = defineAsyncComponent(() => import("./TaskEditor.vue"));
 import TaskPlanningImpact from "./TaskPlanningImpact.vue";
 import { taskPlanningImpact } from "../../../../packages/domain/task-planning-impact";
 const props = defineProps<{

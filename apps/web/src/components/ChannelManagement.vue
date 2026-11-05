@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from "vue";
 import { t } from "../locales";
 import { computed, ref, watch, onBeforeUnmount, nextTick } from "vue";
 import type { Catalogs } from "../../../../packages/domain/admin";
@@ -17,7 +18,7 @@ import { api } from "../services/api";
 import { useWorkspace } from "../stores/workspace";
 import { confirmDiscard } from "../composables/unsaved";
 import { stageLabels } from "../locales/en";
-import ProjectEditor from "./ProjectEditor.vue";
+const ProjectEditor = defineAsyncComponent(() => import("./ProjectEditor.vue"));
 const props = defineProps<{ catalog: Catalogs }>();
 const emit = defineEmits<{ saved: [Catalogs]; dirty: [boolean] }>();
 const store = useWorkspace();

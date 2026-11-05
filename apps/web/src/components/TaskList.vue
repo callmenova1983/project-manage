@@ -35,7 +35,7 @@ import { taskDetailsKey } from "../composables/task-details";
 import { currentDay, useCalendarNow } from "../composables/calendar";
 import { taskIsOverdue } from "../../../../packages/domain/task-view";
 import { useTaskRowMove } from "../composables/task-row-move";
-import TaskEditor from "./TaskEditor.vue";
+const TaskEditor = defineAsyncComponent(() => import("./TaskEditor.vue"));
 import TaskQuickField from "./TaskQuickField.vue";
 import TaskFieldCopy from "./TaskFieldCopy.vue";
 import TaskReviewPanel from "./TaskReviewPanel.vue";

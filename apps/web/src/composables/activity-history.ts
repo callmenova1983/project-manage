@@ -57,7 +57,7 @@ export function useActivityHistory(input: () => ActivityQuery) {
     }
   }
   watch(
-    () => [JSON.stringify(query.value), store.data.revision, store.user?.id],
+    () => [JSON.stringify(query.value), store.coreVersion, store.user?.id],
     (next, previous) => {
       if (
         previous &&

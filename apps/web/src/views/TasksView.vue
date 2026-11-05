@@ -60,7 +60,9 @@ import TaskQueryEmpty from "../components/TaskQueryEmpty.vue";
 import TaskSavedViews from "../components/TaskSavedViews.vue";
 import TaskBoard from "../components/TaskBoard.vue";
 import TaskCollectionList from "../components/TaskCollectionList.vue";
-import TaskEditor from "../components/TaskEditor.vue";
+const TaskEditor = defineAsyncComponent(
+  () => import("../components/TaskEditor.vue"),
+);
 import TaskDetailPanel from "../components/TaskDetailPanel.vue";
 import WorkspaceDialog from "../components/WorkspaceDialog.vue";
 import VoidedTasks from "../components/VoidedTasks.vue";

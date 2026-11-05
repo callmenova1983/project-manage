@@ -34,7 +34,7 @@ const text = (key: string) =>
   typeof route.query[key] === "string" ? (route.query[key] as string) : "";
 const projection = computed(() =>
   projectPeopleWork(
-    store.data,
+    { ...store.data, directory: store.directory },
     filters.value,
     {
       department: text("department"),
@@ -71,7 +71,7 @@ const projectNames = computed(
 const taskNames = computed(
   () => new Map(store.data.tasks.map((task) => [task.id, task.title])),
 );
-const departments = computed(() => store.data.directory?.departments ?? []);
+const departments = computed(() => store.directory?.departments ?? []);
 const scopeLabels = { today: "Today", week: "This week", all: "All time" };
 const stateOptions: { value: TaskState; label: string }[] = [
   { value: "all", label: "All" },

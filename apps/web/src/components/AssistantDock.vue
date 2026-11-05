@@ -2,6 +2,7 @@
 import { t } from "../locales";
 import {
   computed,
+  defineAsyncComponent,
   nextTick,
   onBeforeUnmount,
   onMounted,
@@ -18,8 +19,10 @@ import {
   PhArrowsInSimple,
   PhBroom,
 } from "@phosphor-icons/vue";
-import MeetingsView from "../views/MeetingsView.vue";
-import AiAccess from "./AiAccess.vue";
+const MeetingsView = defineAsyncComponent(
+  () => import("../views/MeetingsView.vue"),
+);
+const AiAccess = defineAsyncComponent(() => import("./AiAccess.vue"));
 import {
   assistantPanel,
   openAssistant,

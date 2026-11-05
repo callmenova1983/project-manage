@@ -1,3 +1,5 @@
+import { registerWorkspaceSync } from "./workspace-sync.js";
+import { registerPerformance, requestTiming } from "./performance.js";
 import { registerWecomLogin, publicWecomLoginPaths } from "./wecom-login.js";
 import { registerSpeechRoutes } from "./ai/speech.js";
 import {
@@ -225,6 +227,7 @@ export async function buildApp(options: {
     bodyLimit: 2 * 1024 * 1024,
     trustProxy: false,
   });
+  registerPerformance(app);
   const dummyHash = await passwordHash(randomBytes(32).toString("hex"));
   await app.register(cookie);
   await app.register(helmet, {
@@ -253,6 +256,13 @@ export async function buildApp(options: {
   await app.register(rateLimit, {
     max: 300,
     timeWindow: "1 minute",
+    // Authenticate first: users behind the same office proxy must not share the
+    // fallback synchronization quota. Public login attempts remain IP limited.
+    hook: "preHandler",
+    keyGenerator: (req) => {
+      const account = identity.get(req)?.actor;
+      return account ? `${account.workspaceId}:${account.id}` : req.ip;
+    },
     // Public runtime chunks must not consume the shared API/login quota.
     // Several fresh browser sessions can request hundreds of split assets.
     allowList: (request) => {
@@ -338,6 +348,20 @@ export async function buildApp(options: {
       return;
     const session = await sessionActor(repo, req.cookies.pm_session);
     identity.set(req, session);
+    const accountKey = encodeURIComponent(
+      `${session.actor.workspaceId}:${session.actor.id}`,
+    );
+    reply.header("X-Workspace-Account", accountKey);
+    if (
+      req.headers["x-workspace-account"] &&
+      req.headers["x-workspace-account"] !== accountKey
+    )
+      throw new HttpError(
+        401,
+        "Your session changed. Refresh the page before trying again.",
+      );
+    const timing = requestTiming.getStore();
+    if (timing) timing.auth = performance.now() - timing.start;
     if (mutation && req.headers["x-csrf-token"] !== session.csrf)
       throw new HttpError(403, "Invalid request token");
   });
@@ -441,13 +465,17 @@ export async function buildApp(options: {
           );
         return JSON.parse(String(old.response)) as T;
       }
+      const suppress =
+        req.url.startsWith("/api/import") ||
+        req.url.includes("/restore") ||
+        req.url.includes("/undo");
+      if (suppress)
+        await repo.db.exec("SET LOCAL pm.suppress_notifications = 'on'");
       const result = await fn(a);
-      await notifications.reconcileWorkspace(a.workspaceId, {
-        suppress:
-          req.url.startsWith("/api/import") ||
-          req.url.includes("/restore") ||
-          req.url.includes("/undo"),
-      });
+      if (!notifications.background)
+        await notifications.reconcileWorkspace(a.workspaceId, { suppress });
+      else await notifications.enqueueWorkspace(a.workspaceId);
+
       await repo.db
         .prepare(
           "INSERT INTO idempotency(key,user_id,request_hash,response,created_at) VALUES(?,?,?,?,?)",
@@ -459,6 +487,12 @@ export async function buildApp(options: {
       return result;
     });
   }
+  registerWorkspaceSync(
+    app,
+    repo,
+    (req) => identity.get(req)!,
+    () => notifications.wake(),
+  );
   registerAssistantRoutes(app, repo, actor, mutate);
   registerSpeechRoutes(
     app,
@@ -1744,7 +1778,11 @@ export async function buildApp(options: {
         const html = basename(file) === "index.html";
         response.header(
           "Cache-Control",
-          html ? "no-store" : "public, max-age=0, must-revalidate",
+          html
+            ? "no-store"
+            : /\/assets\/.+-[A-Za-z0-9_-]{8,}\.[^.]+$/.test(file)
+              ? "public, max-age=31536000, immutable"
+              : "public, max-age=0, must-revalidate",
         );
         if (html) response.header("Content-Disposition", "inline");
       },

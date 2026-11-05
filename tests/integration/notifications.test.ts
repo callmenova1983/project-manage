@@ -342,7 +342,15 @@ describe("account notification inbox", () => {
     );
     expect(unread.statusCode).toBe(200);
     expect((await state(recipient)).unreadCount).toBe(0);
+    const notificationVersion = (
+      await ctx.repo.syncVersions("team", actors.recipient.id)
+    ).notifications;
     clock = new Date(until);
+    await ctx.notifications.tick();
+    expect(
+      (await ctx.repo.syncVersions("team", actors.recipient.id)).notifications,
+    ).not.toBe(notificationVersion);
+    expect((await state(recipient)).items[0]!.snoozedUntil).toBeNull();
     expect((await state(recipient)).unreadCount).toBe(1);
     expect((await state(recipient)).pendingCount).toBe(1);
   });

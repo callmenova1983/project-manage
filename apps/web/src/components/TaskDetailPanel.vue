@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from "vue";
 import { computed, ref, watch } from "vue";
 import { useWorkspace } from "../stores/workspace";
 import { confirmDiscard } from "../composables/unsaved";
 import { statuses, type Task } from "../../../../packages/domain/types";
 import { statusLabels } from "../locales/en";
 import { t, formatDate } from "../locales";
-import TaskEditor from "./TaskEditor.vue";
+const TaskEditor = defineAsyncComponent(() => import("./TaskEditor.vue"));
 import TaskReviewPanel from "./TaskReviewPanel.vue";
 import TaskVoidAction from "./TaskVoidAction.vue";
 import StatusBadge from "./StatusBadge.vue";

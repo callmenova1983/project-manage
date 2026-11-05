@@ -64,6 +64,9 @@ function position() {
 }
 function show() {
   if (!props.disabled) {
+    void store.loadDirectory().catch(() => {});
+    if (props.projectId)
+      void store.loadProjectMembers(props.projectId).catch(() => {});
     open.value = true;
     position();
   }
@@ -94,8 +97,23 @@ watch(
 const matches = computed(() =>
   searchPeople(
     props.linkMembers
-      ? assignmentChoices(store.data, props.projectId, props.memberId)
-      : peopleChoices(store.data, props.projectId),
+      ? assignmentChoices(
+          {
+            ...store.data,
+            directory: store.directory,
+            projectMembers: store.projectMembers,
+          },
+          props.projectId,
+          props.memberId,
+        )
+      : peopleChoices(
+          {
+            ...store.data,
+            directory: store.directory,
+            projectMembers: store.projectMembers,
+          },
+          props.projectId,
+        ),
     query.value,
   ),
 );

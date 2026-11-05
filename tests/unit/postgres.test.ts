@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const state = vi.hoisted(() => ({
   clients: [] as Array<{
@@ -219,14 +219,19 @@ describe("PostgreSQL connections and transactions", () => {
 
   it("checks migration checksums and leaves an initialized schema untouched", async () => {
     const db = new PostgresDatabase({ schema: "known" });
-    const checksum = createHash("sha256")
-      .update(readFileSync("apps/api/migrations-postgres/001_baseline.sql"))
-      .digest("hex");
+    const migrations = readdirSync("apps/api/migrations-postgres")
+      .filter((file) => /^\d+_.+\.sql$/.test(file))
+      .map((file) => ({
+        version: Number(file.split("_")[0]),
+        checksum: createHash("sha256")
+          .update(readFileSync(`apps/api/migrations-postgres/${file}`))
+          .digest("hex"),
+      }));
     state.respond = (sql) => ({
       rows: sql.includes("FROM pg_class")
         ? [{ name: "pm_schema_migrations" }]
         : sql.includes("FROM pm_schema_migrations")
-          ? [{ version: 1, checksum }]
+          ? migrations
           : [],
       rowCount: 0,
     });

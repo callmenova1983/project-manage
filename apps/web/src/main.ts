@@ -6,11 +6,6 @@ import { t } from "./locales";
 import { routerBase } from "./services/mode";
 import App from "./App.vue";
 import ProjectHomeView from "./views/ProjectHomeView.vue";
-import ProjectDetail from "./views/ProjectDetail.vue";
-import TasksView from "./views/TasksView.vue";
-import ActivityView from "./views/ActivityView.vue";
-import SettingsView from "./views/SettingsView.vue";
-import AdminView from "./views/AdminView.vue";
 import "@fontsource/inter/latin-400.css";
 import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
@@ -25,23 +20,26 @@ const router = createRouter({
       path: "/project-map",
       component: () => import("./views/ProjectMapView.vue"),
     },
-    { path: "/projects/:id", component: ProjectDetail },
-    { path: "/tasks", component: TasksView },
+    {
+      path: "/projects/:id",
+      component: () => import("./views/ProjectDetail.vue"),
+    },
+    { path: "/tasks", component: () => import("./views/TasksView.vue") },
     {
       path: "/messages/:id",
       component: () => import("./components/NotificationLanding.vue"),
     },
-    { path: "/activity", component: ActivityView },
+    { path: "/activity", component: () => import("./views/ActivityView.vue") },
     {
       path: "/meetings",
       redirect: { path: "/projects", query: { intake: "1" } },
     },
-    { path: "/settings", component: SettingsView },
+    { path: "/settings", component: () => import("./views/SettingsView.vue") },
     {
       path: "/intake",
       redirect: { path: "/projects", query: { intake: "1" } },
     },
-    { path: "/admin", component: AdminView },
+    { path: "/admin", component: () => import("./views/AdminView.vue") },
     {
       path: "/directory",
       component: () => import("./views/TeamView.vue"),

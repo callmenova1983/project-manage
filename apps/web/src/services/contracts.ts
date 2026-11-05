@@ -1,4 +1,11 @@
 import type {
+  Bootstrap,
+  CoreResponse,
+  SyncVersions,
+  ReceiptInput,
+} from "../../../../packages/domain/workspace-sync";
+import type { ProjectMember } from "../../../../packages/domain/directory";
+import type {
   WorkspaceDataArchive,
   WorkspaceDataImportResult,
 } from "../../../../packages/domain/workspace-transfer";
@@ -132,6 +139,13 @@ export function safeNotificationPath(path: string): string {
   return url.pathname + url.search + url.hash;
 }
 export interface WorkspaceApi {
+  bootstrap(): Promise<Bootstrap>;
+  core(knownVersion?: string): Promise<CoreResponse>;
+  meta(): Promise<SyncVersions>;
+  receipts(input: ReceiptInput): Promise<Activity[]>;
+  projectMembers(
+    id: string,
+  ): Promise<{ version: string; members: ProjectMember[] }>;
   speechCapabilities(): Promise<SpeechCapabilities>;
   transcribeSpeech(input: SpeechInput): Promise<SpeechTranscript>;
   assistantSession(): Promise<AssistantSession>;

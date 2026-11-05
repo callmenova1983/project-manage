@@ -201,7 +201,7 @@ function valueFor(task: Task) {
         : t("No due date");
 }
 function historyLink(task: Task) {
-  const activity = store.data.activities.find(
+  const activity = store.receipts.find(
     (activity) =>
       activity.entityId === task.id &&
       activity.after?.version === task.version &&
